@@ -29,7 +29,9 @@ just content:
 
 - **Tabs live in the topmost window bar**: sleek glass pills in the title-bar
   strip. Drag the empty strip to move the window, double-click to maximize;
-  real Windows min / max / close buttons sit at the top right
+  our own Windows min / max / close buttons sit at the top right — the native
+  title bar and its buttons are fully removed (WM_NCCALCSIZE frameless
+  technique), so ours is the only top bar
 - **The address bar is a tiny glass bubble** floating at the bottom center
   (iOS-style). It stays out of sight; hover or click it (or press `Ctrl+L`)
   and it liquidly expands into the full address capsule with back / forward /
@@ -72,6 +74,12 @@ just content:
 | `Ctrl+P` | Print |
 | `F11` | Fullscreen |
 | `F12` | DevTools |
+
+## Diagnostics
+
+Run `OKBrowser.exe --selftest` to check all navigation paths end to end
+(typed URL, link click, new-tab popup). It writes `selftest.txt` next to the
+exe and exits 0 only when everything passes. CI runs this on every build.
 
 ## Build from source
 

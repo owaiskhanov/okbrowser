@@ -46,15 +46,24 @@ func main() {
 	// (used when spawning new windows for target=_blank links).
 	// Dragging a file onto the exe opens that local file.
 	startURL := ""
-	if len(os.Args) > 1 {
-		if arg := os.Args[1]; arg != "" && !strings.HasPrefix(arg, "-") {
+	selfTest := false
+	for _, arg := range os.Args[1:] {
+		if arg == "--selftest" {
+			selfTest = true
+		} else if arg != "" && !strings.HasPrefix(arg, "-") && startURL == "" {
 			startURL = localFileOrURL(arg)
 		}
+	}
+	if selfTest {
+		startURL = "https://example.com"
 	}
 
 	app, ok := NewApp(startURL)
 	if !ok {
 		os.Exit(1)
+	}
+	if selfTest {
+		app.startSelfTest()
 	}
 	app.Run()
 }

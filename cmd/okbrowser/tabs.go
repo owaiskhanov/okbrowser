@@ -57,6 +57,15 @@ func (a *app) newTab(url string, activate bool) *tab {
 	c.DataPath = dataPath()
 	c.MessageCallback = func(msg string) { a.onWebMessage(t, msg) }
 	c.AcceleratorKeyCallback = a.onAccelerator
+	// The engine-level safety net for new windows (target=_blank,
+	// window.open) - covers cases the page-side bridge cannot see (e.g.
+	// links inside closed shadow DOMs).
+	c.NewWindowRequestedCallback = func(args *edge.ICoreWebView2NewWindowRequestedEventArgs) {
+		_ = args.PutHandled(true)
+		if uri, err := args.GetUri(); err == nil && uri != "" && a.allowSpawn() {
+			a.postTask(func() { a.newTab(uri, true) })
+		}
+	}
 	c.NavigationStartingCallback = func(_ *edge.ICoreWebView2, args *edge.ICoreWebView2NavigationStartingEventArgs) {
 		a.onNavStarting(t, args)
 	}
@@ -217,6 +226,7 @@ func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompleted
 	a.applyZoomTab(t)
 	a.pushBarState()
 	a.scheduleBarPush(false)
+	a.selftestNavHook(t)
 	t.chromium.Eval(`window.__ok && window.__ok({ t: "nav", u: location.href, d: document.title })`)
 }
 

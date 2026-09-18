@@ -441,7 +441,10 @@ func (a *app) onWebMessage(t *tab, msg string) {
 	switch m.T {
 	case "open": // link explicitly asking for a new window
 		if m.U != "" && a.allowSpawn() {
-			a.newTab(m.U, true)
+			// Never create engines from inside the message callback: post
+			// the work to the window-proc context instead.
+			url := m.U
+			a.postTask(func() { a.newTab(url, true) })
 		}
 
 	case "go": // address bubble (or start page) - parsed the same way
@@ -496,17 +499,22 @@ func (a *app) onWebMessage(t *tab, msg string) {
 				t.chromium.Focus()
 			}
 		case "new":
-			a.newTab("", true)
-			a.scheduleBarPush(true) // focus the address bubble once ready
+			a.postTask(func() {
+				a.newTab("", true)
+				a.scheduleBarPush(true) // focus the address bubble once ready
+			})
 			return
 		case "close":
-			a.closeTab(m.I)
+			i := m.I
+			a.postTask(func() { a.closeTab(i) })
 			return
 		case "switch":
-			a.switchToTab(m.I)
+			i := m.I
+			a.postTask(func() { a.switchToTab(i) })
 			return
 		case "wdrag", "wmaxtoggle", "wmin", "wclose":
-			a.windowAction(m.A)
+			act := m.A
+			a.postTask(func() { a.windowAction(act) })
 			return
 		}
 		a.pushBarState()

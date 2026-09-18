@@ -3,7 +3,9 @@
 package main
 
 import (
+	"os"
 	"runtime"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -59,6 +61,18 @@ type app struct {
 	// lastSpawn throttles popup storms from web pages.
 	lastSpawn time.Time
 
+	// taskMu + taskQueue: work posted from engine callbacks, executed in
+	// the normal window-proc context via WM_APP. Engine callbacks must not
+	// create or destroy engines inline (their nested message pumps clash
+	// with the active COM callback), so they post here instead.
+	taskMu    sync.Mutex
+	taskQueue []func()
+
+	// self test state (--selftest).
+	inSelfTest   bool
+	selfPhase    int
+	selfTestFile *os.File
+
 	// Fullscreen (F11) state.
 	fullscreen     bool
 	savedStyle     int32
@@ -95,6 +109,40 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		switch win.HIWORD(uint32(wp)) {
 		case 0, 1:
 			a.onCommand(int(win.LOWORD(uint32(wp))))
+		}
+		return 0
+
+	case win.WM_APP:
+		// Run tasks posted from engine callbacks (see postTask).
+		for {
+			a.taskMu.Lock()
+			var f func()
+			if len(a.taskQueue) > 0 {
+				f, a.taskQueue = a.taskQueue[0], a.taskQueue[1:]
+			}
+			a.taskMu.Unlock()
+			if f == nil {
+				break
+			}
+			f()
+		}
+		return 0
+
+	case win.WM_NCCALCSIZE:
+		// Remove the native caption band so Windows draws NO title bar,
+		// buttons or menu of its own - the glass shell bar is the only one.
+		// Left/right/bottom resize borders are kept.
+		if wp != 0 {
+			p := (*ncCalcSizeParams)(lp)
+			if win.IsZoomed(hwnd) {
+				// Maximized windows overhang the monitor by the frame size;
+				// keep the frame inset so content is not clipped off-screen.
+				frameY := win.GetSystemMetrics(win.SM_CYFRAME) + 92 /*SM_CXPADDEDBORDER*/
+				p.Rc0.Top = frameY
+			} else {
+				p.Rc0.Top = 0
+			}
+			return 0
 		}
 		return 0
 
@@ -155,11 +203,12 @@ func NewApp(startURL string) (*app, bool) {
 
 	cn, _ := syscall.UTF16PtrFromString(mainClassName)
 	tn, _ := syscall.UTF16PtrFromString(appName)
-	// Frameless: no native title bar - the glass shell bar IS the window
-	// bar. Keep the thick frame for edge resizing, Aero Snap and shadow.
-	const framelessStyle = win.WS_OVERLAPPEDWINDOW&^win.WS_CAPTION | win.WS_CLIPCHILDREN
+	// The window keeps the standard styles (so resizing, Aero Snap and the
+	// DWM shadow all work), but WM_NCCALCSIZE removes the caption band:
+	// no native title bar, no Windows-drawn min/max/close - the glass shell
+	// bar is the only top bar.
 	a.hwnd = win.CreateWindowEx(0, cn, tn,
-		framelessStyle,
+		win.WS_OVERLAPPEDWINDOW|win.WS_CLIPCHILDREN,
 		win.CW_USEDEFAULT, win.CW_USEDEFAULT,
 		a.scaled(1180), a.scaled(820),
 		0, 0, a.instance, nil)
@@ -289,6 +338,19 @@ func (a *app) layout() {
 			}
 		}
 	}
+}
+
+// postTask schedules f to run in the normal window-proc context. Engine
+// callbacks (web messages, new-window requests) must not do UI work inline;
+// they post here and WM_APP executes it.
+func (a *app) postTask(f func()) {
+	if a.hwnd == 0 {
+		return
+	}
+	a.taskMu.Lock()
+	a.taskQueue = append(a.taskQueue, f)
+	a.taskMu.Unlock()
+	win.PostMessage(a.hwnd, win.WM_APP, 0, 0)
 }
 
 // onAccelerator handles hotkeys pressed while a web page has focus (the

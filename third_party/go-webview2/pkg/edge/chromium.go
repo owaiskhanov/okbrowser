@@ -28,6 +28,7 @@ type Chromium struct {
 	acceleratorKeyPressed *ICoreWebView2AcceleratorKeyPressedEventHandler
 	navigationCompleted   *ICoreWebView2NavigationCompletedEventHandler
 	navigationStarting    *ICoreWebView2NavigationStartingEventHandler // OK Browser addition
+	newWindowRequested    *ICoreWebView2NewWindowRequestedEventHandler // OK Browser addition
 
 	environment *ICoreWebView2Environment
 
@@ -43,6 +44,7 @@ type Chromium struct {
 	WebResourceRequestedCallback func(request *ICoreWebView2WebResourceRequest, args *ICoreWebView2WebResourceRequestedEventArgs)
 	NavigationCompletedCallback  func(sender *ICoreWebView2, args *ICoreWebView2NavigationCompletedEventArgs)
 	NavigationStartingCallback   func(sender *ICoreWebView2, args *ICoreWebView2NavigationStartingEventArgs) // OK Browser addition
+	NewWindowRequestedCallback   func(args *ICoreWebView2NewWindowRequestedEventArgs)                        // OK Browser addition
 	AcceleratorKeyCallback       func(uint) bool
 }
 
@@ -225,6 +227,11 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 		uintptr(unsafe.Pointer(e.navigationStarting)),
 		uintptr(unsafe.Pointer(&token)),
 	)
+	_, _, _ = e.webview.vtbl.AddNewWindowRequested.Call( // OK Browser addition
+		uintptr(unsafe.Pointer(e.webview)),
+		uintptr(unsafe.Pointer(e.newWindowRequested)),
+		uintptr(unsafe.Pointer(&token)),
+	)
 
 	_ = e.controller.AddAcceleratorKeyPressed(e.acceleratorKeyPressed, &token)
 
@@ -355,6 +362,16 @@ func (e *Chromium) NavigationCompleted(sender *ICoreWebView2, args *ICoreWebView
 func (e *Chromium) NavigationStarting(sender *ICoreWebView2, args *ICoreWebView2NavigationStartingEventArgs) uintptr {
 	if e.NavigationStartingCallback != nil {
 		e.NavigationStartingCallback(sender, args)
+	}
+	return 0
+}
+
+// NewWindowRequested is raised when page content asks for a new window
+// (target=_blank, window.open). The host marks it handled and opens a tab.
+// (OK Browser addition.)
+func (e *Chromium) NewWindowRequested(sender *ICoreWebView2, args *ICoreWebView2NewWindowRequestedEventArgs) uintptr {
+	if e.NewWindowRequestedCallback != nil {
+		e.NewWindowRequestedCallback(args)
 	}
 	return 0
 }

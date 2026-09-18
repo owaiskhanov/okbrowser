@@ -35,6 +35,12 @@ var (
 	procGetDpiForWindow         = modUser32.NewProc("GetDpiForWindow")
 )
 
+// ncCalcSizeParams mirrors the Win32 NCCALCSIZE_PARAMS structure.
+type ncCalcSizeParams struct {
+	Rc0, Rc1, Rc2 win.RECT
+	Lppos         uintptr // WINDOWPOS*
+}
+
 // keyDown reports whether the virtual key is currently pressed. Used to read
 // modifier state inside the engine's accelerator-key callback.
 func keyDown(vk uintptr) bool {

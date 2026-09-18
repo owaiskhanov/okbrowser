@@ -87,6 +87,26 @@ try {
     $wv = @(Get-Process msedgewebview2 -ErrorAction SilentlyContinue)
     Log "WebView2 engine processes: $($wv.Count)"
     if ($wv.Count -eq 0 -and $fail -eq "") { $fail = "no WebView2 engine processes started" }
+
+    # Phase 3: built-in self test - typed load, link click (renderer-initiated
+    # same-tab navigation) and window.open (renderer-initiated new tab).
+    $stFile = Join-Path (Split-Path $Exe -Parent) "selftest.txt"
+    if (Test-Path $stFile) { Remove-Item $stFile -Force }
+    Log "running self test..."
+    $stProc = Start-Process -FilePath $full -ArgumentList "--selftest" -PassThru
+    $exited = $stProc.WaitForExit(120000)
+    if (-not $exited) {
+        Stop-Process -Id $stProc.Id -Force -ErrorAction SilentlyContinue
+        if ($fail -eq "") { $fail = "self test timed out" }
+    } else {
+        if (Test-Path $stFile) {
+            Get-Content $stFile | ForEach-Object { Log "selftest: $_" }
+        } else {
+            Log "selftest: no output file written"
+        }
+        Log ("selftest exit code: " + $stProc.ExitCode)
+        if ($stProc.ExitCode -ne 0 -and $fail -eq "") { $fail = "self test failed" }
+    }
 }
 catch {
     $fail = $_.Exception.Message
