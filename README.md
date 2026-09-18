@@ -11,8 +11,9 @@ A **very light and very fast** web browser for **Windows 10 and later**.
 
 ## Download
 
-Grab `OKBrowser.exe` from the latest [GitHub Actions run](../../actions) (artifact
-`OKBrowser-windows-amd64`) or build it yourself in one command (see below).
+Download `OKBrowser.exe` from the [Releases](../../releases) page, or build it
+yourself in one command (see below). Every release is built **and smoke-tested
+on a real Windows machine** by CI before it is published.
 
 ## Requirements
 
