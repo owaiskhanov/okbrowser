@@ -29,10 +29,18 @@ type accel struct {
 var (
 	modUser32                   = syscall.NewLazyDLL("user32.dll")
 	procSetWindowTextW          = modUser32.NewProc("SetWindowTextW")
+	procGetAsyncKeyState        = modUser32.NewProc("GetAsyncKeyState")
 	procCreateAcceleratorTableW = modUser32.NewProc("CreateAcceleratorTableW")
 	procTranslateAcceleratorW   = modUser32.NewProc("TranslateAcceleratorW")
 	procGetDpiForWindow         = modUser32.NewProc("GetDpiForWindow")
 )
+
+// keyDown reports whether the virtual key is currently pressed. Used to read
+// modifier state inside the engine's accelerator-key callback.
+func keyDown(vk uintptr) bool {
+	r, _, _ := procGetAsyncKeyState.Call(vk)
+	return r&0x8000 != 0
+}
 
 // setWindowText sets a window's text (used for the window title).
 func setWindowText(hwnd win.HWND, text string) {

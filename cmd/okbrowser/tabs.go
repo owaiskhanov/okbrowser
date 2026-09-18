@@ -53,6 +53,7 @@ func (a *app) newTab(url string, activate bool) *tab {
 	c := edge.NewChromium()
 	c.DataPath = dataPath()
 	c.MessageCallback = func(msg string) { a.onWebMessage(t, msg) }
+	c.AcceleratorKeyCallback = a.onAccelerator
 	c.NavigationStartingCallback = func(_ *edge.ICoreWebView2, args *edge.ICoreWebView2NavigationStartingEventArgs) {
 		a.onNavStarting(t, args)
 	}

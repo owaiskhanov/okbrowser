@@ -80,6 +80,7 @@ const barJS = `
   var root = host.attachShadow({ mode: 'closed' });
 
   var css = [
+    ":host{all:initial}",
     "*{-webkit-user-select:none}",
     ".strip{position:fixed;top:0;left:0;right:0;height:34px;z-index:2147483647;",
     "display:flex;align-items:center;gap:5px;padding:0 2px 0 8px;pointer-events:none;",
@@ -307,9 +308,34 @@ const barJS = `
     input.select();
   };
 
-  (document.body || document.documentElement).appendChild(host);
   render();
   sync();
+
+  // Mount the shell. This script runs at document-start, when the page may
+  // not have a root element yet - so attach as soon as one exists, and
+  // re-attach if a page ever removes the host node.
+  function mount() {
+    var target = document.body || document.documentElement;
+    if (target && !host.parentNode) {
+      try { target.appendChild(host); } catch (e) {}
+    }
+  }
+  if (document.documentElement) {
+    mount();
+  } else {
+    document.addEventListener('readystatechange', function onrs() {
+      if (document.documentElement) {
+        document.removeEventListener('readystatechange', onrs);
+        mount();
+      }
+    });
+  }
+  document.addEventListener('DOMContentLoaded', function () { mount(); });
+  var tries = 0;
+  var iv = setInterval(function () {
+    if (!host.parentNode) mount();
+    if (++tries > 15) clearInterval(iv);
+  }, 800);
 })();
 `
 

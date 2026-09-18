@@ -108,7 +108,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > notes.md <<'EOF'
-          **OK Browser 1.5.0** — a very light and very fast web browser for Windows 10 and later.
+          **OK Browser 1.5.1** — a very light and very fast web browser for Windows 10 and later.
 
           - Single **3.7 MB** `OKBrowser.exe`, no installer needed
           - Renders with the system's Microsoft Edge WebView2 (Chromium) engine
@@ -116,11 +116,11 @@ jobs:
 
           **Requirements:** Windows 10 (1607+) or Windows 11, 64-bit. The WebView2 Runtime is pre-installed on Windows 11 and updated Windows 10; if missing, OK Browser offers to open Microsoft's official download page.
           EOF
-          if gh release view v1.5.0 >/dev/null 2>&1; then
-            gh release upload v1.5.0 dist/OKBrowser.exe --clobber
+          if gh release view v1.5.1 >/dev/null 2>&1; then
+            gh release upload v1.5.1 dist/OKBrowser.exe --clobber
           else
-            gh release create "v1.5.0" dist/OKBrowser.exe \
-              --title "OK Browser 1.5.0" \
+            gh release create "v1.5.1" dist/OKBrowser.exe \
+              --title "OK Browser 1.5.1" \
               --notes-file notes.md \
               --target "$GITHUB_SHA"
           fi

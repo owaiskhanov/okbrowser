@@ -291,6 +291,87 @@ func (a *app) layout() {
 	}
 }
 
+// onAccelerator handles hotkeys pressed while a web page has focus (the
+// common case now that the whole UI lives inside the page). The engine
+// raises this callback for every non-repeat key-down; returning true marks
+// the key as handled so the page never sees it.
+func (a *app) onAccelerator(vk uint) bool {
+	const (
+		vkShift   = 0x10
+		vkControl = 0x11
+		vkMenu    = 0x12 // Alt
+	)
+	ctrl := keyDown(vkControl)
+	shift := keyDown(vkShift)
+	alt := keyDown(vkMenu)
+
+	switch {
+	case ctrl && !shift && !alt:
+		switch vk {
+		case 'T':
+			a.onCommand(cmdNewTab)
+			return true
+		case 'W':
+			a.onCommand(cmdCloseTab)
+			return true
+		case 'L':
+			a.onCommand(cmdFocusAddress)
+			return true
+		case 'N':
+			a.onCommand(cmdNewWindow)
+			return true
+		case 'R':
+			a.onCommand(cmdReload)
+			return true
+		case 'P':
+			a.onCommand(cmdPrint)
+			return true
+		case '0':
+			a.onCommand(cmdZoomReset)
+			return true
+		case win.VK_TAB:
+			a.onCommand(cmdNextTab)
+			return true
+		case win.VK_OEM_PLUS, win.VK_ADD:
+			a.onCommand(cmdZoomIn)
+			return true
+		case win.VK_OEM_MINUS, win.VK_SUBTRACT:
+			a.onCommand(cmdZoomOut)
+			return true
+		}
+
+	case ctrl && shift && !alt:
+		if vk == win.VK_TAB {
+			a.onCommand(cmdPrevTab)
+			return true
+		}
+
+	case alt && !ctrl:
+		switch vk {
+		case win.VK_LEFT:
+			a.onCommand(cmdBack)
+			return true
+		case win.VK_RIGHT:
+			a.onCommand(cmdForward)
+			return true
+		case win.VK_HOME:
+			a.onCommand(cmdHome)
+			return true
+		}
+
+	case !ctrl && !shift && !alt:
+		switch vk {
+		case win.VK_F5:
+			a.onCommand(cmdReload)
+			return true
+		case win.VK_F11:
+			a.onCommand(cmdFullscreen)
+			return true
+		}
+	}
+	return false
+}
+
 // execActive runs JavaScript in the active tab.
 func (a *app) execActive(js string) {
 	if t := a.active(); t != nil && t.chromium != nil {

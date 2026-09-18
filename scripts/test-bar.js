@@ -26,7 +26,7 @@ class FakeElement {
   }
   set textContent(v) { this._text = v; this.children = []; }
   get textContent() { return this._text; }
-  appendChild(c) { this.children.push(c); return c; }
+  appendChild(c) { c.parentNode = this; this.children.push(c); return c; }
   addEventListener(t, f) { (this._listeners[t] = this._listeners[t] || []).push(f); }
   dispatch(t, ev) {
     ev = Object.assign({ stopPropagation() {}, preventDefault() {} }, ev);
@@ -50,20 +50,26 @@ class FakeElement {
 
 const EV = { stopPropagation() {}, preventDefault() {}, button: 0 };
 const sent = [];
+let createdHost = null;
+const docListeners = {};
+global.setInterval = () => 0;
+global.clearInterval = () => {};
 const win = { __ok: o => sent.push(o), __okBarInstalled: false };
 win.top = win; // act as the top frame
 global.window = win;
 global.document = {
   activeElement: null,
-  createElement: t => new FakeElement(t),
-  addEventListener() {},
-  body: { appendChild() {} },
-  documentElement: { appendChild() {} },
+  createElement: t => { const e = new FakeElement(t); if (t === 'div' && !createdHost) createdHost = e; return e; },
+  addEventListener(t, f) { (docListeners[t] = docListeners[t] || []).push(f); },
+  removeEventListener(t, f) { docListeners[t] = (docListeners[t] || []).filter(g => g !== f); },
+  body: new FakeElement('body'),
+  documentElement: new FakeElement('html'),
 };
 global.CSSStyleSheet = class { replaceSync() {} };
 
 new Function(js)();
 const shadow = global.__shadow;
+assert.strictEqual(createdHost.parentNode, global.document.body, 'shell should mount immediately when the document is ready');
 assert.strictEqual(typeof win.__okBar, 'function', 'shell API not installed');
 assert.strictEqual(typeof win.__okBubbleFocus, 'function', 'bubble focus API not installed');
 
@@ -124,5 +130,36 @@ assert.ok(!okb.className.includes('open'), 'bubble collapses after submit');
 
 win.__okBubbleFocus();
 assert.ok(okb.className.includes('open') && input.focused, 'Ctrl+L opens and focuses the bubble');
+
+// --- deferred mounting: document-start before <html> exists ---
+{
+  const sent2 = [];
+  let host2 = null;
+  const listeners2 = {};
+  const win2 = { __ok: o => sent2.push(o), __okBarInstalled: false };
+  win2.top = win2;
+  const doc2 = {
+    activeElement: null,
+    createElement: t => { const e = new FakeElement(t); if (t === 'div' && !host2) host2 = e; return e; },
+    addEventListener(t, f) { (listeners2[t] = listeners2[t] || []).push(f); },
+    removeEventListener(t, f) { listeners2[t] = (listeners2[t] || []).filter(g => g !== f); },
+    body: null,
+    documentElement: null, // <-- document-start: no root element yet
+  };
+  const prevWindow = global.window, prevDocument = global.document;
+  global.window = win2; global.document = doc2;
+  try {
+    new Function(js)();
+    assert.strictEqual(typeof win2.__okBar, 'function', 'APIs must install even before the document root exists');
+    assert.ok(!host2.parentNode, 'host must not be mounted yet');
+    // the page's <html> appears; the script mounts as soon as it does
+    const html = new FakeElement('html');
+    doc2.documentElement = html;
+    (listeners2['readystatechange'] || []).forEach(f => f({}));
+    assert.strictEqual(host2.parentNode, html, 'host must mount once documentElement exists');
+  } finally {
+    global.window = prevWindow; global.document = prevDocument;
+  }
+}
 
 console.log('shell UI logic tests: ALL PASSED');
