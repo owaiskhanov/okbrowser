@@ -362,6 +362,7 @@ func humanSize(n int64) string {
 func DownloadsHTML(files []dlFile) string {
 	var b strings.Builder
 	b.WriteString(pageBase)
+	b.WriteString(toastMount)
 	b.WriteString(`<div class="wrap fade"><h1>Downloads</h1>`)
 	if len(files) == 0 {
 		b.WriteString(`<div class="card"><div class="row"><div class="meta"><div class="tt">No downloads yet</div><div class="uu">Files you download appear here</div></div></div></div>`)
