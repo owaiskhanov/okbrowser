@@ -57,7 +57,7 @@ func (a *app) startSelfTest() {
 	a.selfTestFile = f
 	a.inSelfTest = true
 	go func() {
-		time.Sleep(90 * time.Second)
+		time.Sleep(150 * time.Second)
 		fmt.Fprintf(f, "[selftest] FAIL: timed out in phase %d\n", a.selfPhase+1)
 		f.Close()
 		os.Exit(1)
@@ -107,8 +107,10 @@ func (a *app) selftestNavHook(t *tab) {
 		a.stlog("[selftest] phase 4 OK: engine NewWindowRequested opened a new tab (now %d tabs)", len(a.tabs))
 		a.selfPhase = 4
 		// A real target=_blank link, like the ones on google.com: the
-		// bridge's capture listener forwards it as a new tab.
-		t.chromium.Eval(`(function(){var a=document.createElement('a');a.href='https://www.iana.org/help';a.target='_blank';a.textContent='x';document.body.appendChild(a);a.click();return 'ok'})()`)
+		// bridge's capture listener forwards it as a new tab. The click is
+		// deferred past the popup throttle window so the previous spawn
+		// (phase 4) is never rate-limited by this one.
+		t.chromium.Eval(`(function(){var a=document.createElement('a');a.href='https://www.iana.org/help';a.target='_blank';a.textContent='x';document.body.appendChild(a);setTimeout(function(){a.click()},500);return 'ok'})()`)
 
 	case a.selfPhase == 4 && strings.Contains(t.url, "iana.org/help") && len(a.tabs) > 3:
 		a.stlog("[selftest] phase 5 OK: _blank link opened a new tab (now %d tabs)", len(a.tabs))

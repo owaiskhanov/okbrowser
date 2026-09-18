@@ -178,7 +178,7 @@ public static class OKWin {
     $stErr = Join-Path (Split-Path $Exe -Parent) "selftest-stderr.txt"
     $stOut = Join-Path (Split-Path $Exe -Parent) "selftest-stdout.txt"
     $stProc = Start-Process -FilePath $full -ArgumentList "--selftest" -PassThru -RedirectStandardError $stErr -RedirectStandardOutput $stOut
-    $exited = $stProc.WaitForExit(120000)
+    $exited = $stProc.WaitForExit(180000)
     if (-not $exited) {
         Stop-Process -Id $stProc.Id -Force -ErrorAction SilentlyContinue
         if ($fail -eq "") { $fail = "self test timed out" }

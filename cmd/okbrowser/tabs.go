@@ -49,6 +49,9 @@ func (a *app) newTab(url string, activate bool) *tab {
 	h := win.CreateWindowEx(0, tn, nil, win.WS_CHILD,
 		0, 0, 0, 0, a.hwnd, win.HMENU(uintptr(a.hostSeq)), a.instance, nil)
 	if h == 0 {
+		if selfTestMode {
+			selfTestFileInit(fmt.Sprintf("[selftest] FAIL: tab host window creation failed (seq %d)\n", a.hostSeq))
+		}
 		return nil
 	}
 
@@ -68,7 +71,16 @@ func (a *app) newTab(url string, activate bool) *tab {
 			a.stlog("[selftest] engine NewWindowRequested: uri=%s user=%v", uri, user)
 		}
 		_ = args.PutHandled(true)
-		if uri != "" && a.allowSpawn() {
+		if uri == "" {
+			return
+		}
+		if user {
+			// A trusted user gesture (a real click on a _blank link) must
+			// always open its tab - never eat a user action.
+			a.postTask(func() { a.newTab(uri, true) })
+			return
+		}
+		if a.allowSpawn() {
 			a.postTask(func() { a.newTab(uri, true) })
 		}
 	}

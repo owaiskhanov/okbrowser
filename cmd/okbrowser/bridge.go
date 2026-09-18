@@ -582,6 +582,9 @@ func (a *app) windowAction(act string) {
 func (a *app) allowSpawn() bool {
 	now := time.Now()
 	if now.Sub(a.lastSpawn) < 300*time.Millisecond {
+		if a.inSelfTest {
+			a.stlog("[selftest] spawn throttled (last spawn %v ago)", now.Sub(a.lastSpawn))
+		}
 		return false
 	}
 	a.lastSpawn = now
@@ -621,6 +624,9 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			// Never create engines from inside the message callback: post
 			// the work to the window-proc context instead.
 			url := m.U
+			if a.inSelfTest {
+				a.stlog("[selftest] open accepted, posting new tab for %s", url)
+			}
 			a.postTask(func() { a.newTab(url, true) })
 		}
 

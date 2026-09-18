@@ -176,6 +176,50 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		}
 		return 0
 
+	case win.WM_NCHITTEST:
+		// WS_POPUP borderless windows: DefWindowProc does not hit-test the
+		// resize frame (probing the left border returned HTCLIENT), so do
+		// it ourselves - same technique as the classic BorderlessWindow
+		// sample. Only the frame band outside the client area reaches the
+		// main window (the webview child covers the client), plus the top
+		// edge before the engine has mounted.
+		if placementMaximized(hwnd) {
+			break // maximized: no resize borders, DefWindowProc decides
+		}
+		{
+			lv := uintptr(lp)
+			x, y := int32(int16(lv&0xFFFF)), int32(int16((lv>>16)&0xFFFF))
+			var wr win.RECT
+			if !win.GetWindowRect(hwnd, &wr) {
+				break
+			}
+			bx := int32(win.GetSystemMetrics(win.SM_CXFRAME) + win.GetSystemMetrics(smCXPaddedBorder))
+			by := int32(win.GetSystemMetrics(win.SM_CYFRAME) + win.GetSystemMetrics(smCXPaddedBorder))
+			left := x < wr.Left+bx
+			right := x >= wr.Right-bx
+			top := y < wr.Top+by
+			bottom := y >= wr.Bottom-by
+			switch {
+			case left && top:
+				return win.HTTOPLEFT
+			case right && top:
+				return win.HTTOPRIGHT
+			case left && bottom:
+				return win.HTBOTTOMLEFT
+			case right && bottom:
+				return win.HTBOTTOMRIGHT
+			case left:
+				return win.HTLEFT
+			case right:
+				return win.HTRIGHT
+			case top:
+				return win.HTTOP
+			case bottom:
+				return win.HTBOTTOM
+			}
+		}
+		break // client area: DefWindowProc
+
 	case win.WM_TIMER:
 		if wp == 1 {
 			win.KillTimer(a.hwnd, 1)
