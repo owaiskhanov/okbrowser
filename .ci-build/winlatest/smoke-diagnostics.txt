@@ -2,11 +2,14 @@ launching D:\a\okbrowser\okbrowser\dist\OKBrowser.exe https://example.com
 OS: Microsoft Windows NT 10.0.26100.0
 WebView2 runtime registry (HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}): pv=152.0.4191.66
 WebView2 runtime registry missing: HKCU:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}
-main window up after 268 ms, title: 'OK Browser'
-navigation OK after 4011 ms, title: 'Example Domain - OK Browser'
+main window up after 269 ms, title: 'OK Browser'
+navigation OK after 4834 ms, title: 'Example Domain - OK Browser'
 WebView2 engine processes: 6
 running self test...
-selftest: [selftest] FAIL: timed out
+selftest: [selftest] phase 1 OK: host-initiated navigation loaded https://example.com/
+selftest: [selftest] phase 2 OK: link-click navigation loaded https://www.iana.org/help/example-domains
+selftest: [selftest] phase 3 OK: window.open opened a new tab (now 2 tabs)
+selftest: [selftest] FAIL: timed out in phase 4
 selftest exit code: 1
 stopped test process
 STDERR: (empty)
