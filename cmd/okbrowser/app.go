@@ -3,7 +3,9 @@
 package main
 
 import (
+	"fmt"
 	"runtime"
+	"strconv"
 	"syscall"
 	"time"
 	"unsafe"
@@ -38,6 +40,11 @@ const (
 	cmdFocusAddress = 205
 	cmdNewWindow    = 206
 	cmdCloseWindow  = 207
+	cmdZoomIn       = 208
+	cmdZoomOut      = 209
+	cmdZoomReset    = 210
+	cmdPrint        = 211
+	cmdFullscreen   = 212
 )
 
 // Segoe MDL2 Assets glyphs - the icon font built into Windows 10+.
@@ -73,6 +80,16 @@ type app struct {
 	home    win.HWND
 	address win.HWND
 	goBtn   win.HWND
+
+	// Fullscreen (F11) state.
+	fullscreen     bool
+	savedStyle     int32
+	savedPlacement win.WINDOWPLACEMENT
+
+	// zoom is the page zoom factor applied via CSS (1.0 = 100%). The
+	// engine's controller zoom API takes a raw double parameter, which
+	// cannot be called safely from Go, so zoom is applied with a script.
+	zoom float64
 
 	// host is the child window the WebView2 engine renders into.
 	host win.HWND
@@ -118,6 +135,16 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		a.onDpiChanged(int(win.HIWORD(uint32(wp))), (*win.RECT)(lp))
 		return 0
 
+	case win.WM_XBUTTONDOWN:
+		// Extra mouse buttons: back / forward, like every other browser.
+		switch win.HIWORD(uint32(wp)) {
+		case 1:
+			a.onCommand(idcBack)
+		case 2:
+			a.onCommand(idcForward)
+		}
+		return 0
+
 	case win.WM_DESTROY:
 		win.PostQuitMessage(0)
 		return 0
@@ -134,6 +161,7 @@ func NewApp(startURL string) (*app, bool) {
 
 	a := &app{}
 	a.scale = float64(dpiOf(0)) / 96.0
+	a.zoom = 1.0
 	theApp = a
 
 	a.instance = win.GetModuleHandle(nil)
@@ -324,6 +352,13 @@ func (a *app) createAccelerators() {
 		{fVirtKey | fAlt, win.VK_LEFT, cmdBack},
 		{fVirtKey | fAlt, win.VK_RIGHT, cmdForward},
 		{fVirtKey | fAlt, win.VK_HOME, cmdHome},
+		{fVirtKey | fControl, win.VK_OEM_PLUS, cmdZoomIn},
+		{fVirtKey | fControl, win.VK_ADD, cmdZoomIn},
+		{fVirtKey | fControl, win.VK_OEM_MINUS, cmdZoomOut},
+		{fVirtKey | fControl, win.VK_SUBTRACT, cmdZoomOut},
+		{fVirtKey | fControl, '0', cmdZoomReset},
+		{fVirtKey | fControl, 'P', cmdPrint},
+		{fVirtKey, win.VK_F11, cmdFullscreen},
 	})
 }
 
@@ -388,17 +423,17 @@ func (a *app) onCommand(id int) {
 	switch id {
 	case idcBack, cmdBack:
 		if !a.isStart {
-			a.chromium.Eval("history.back()")
+			a.chromium.GoBack()
 		}
 	case idcForward, cmdForward:
 		if !a.isStart {
-			a.chromium.Eval("history.forward()")
+			a.chromium.GoForward()
 		}
 	case idcReload, cmdReload:
 		if a.isStart {
 			a.goHome()
 		} else {
-			a.chromium.Eval("location.reload()")
+			a.chromium.Reload()
 		}
 	case idcHome, cmdHome:
 		a.goHome()
@@ -411,7 +446,79 @@ func (a *app) onCommand(id int) {
 		spawnNewWindow("")
 	case cmdCloseWindow:
 		win.DestroyWindow(a.hwnd)
+	case cmdZoomIn:
+		a.setZoom(a.zoom * 1.25)
+	case cmdZoomOut:
+		a.setZoom(a.zoom / 1.25)
+	case cmdZoomReset:
+		a.setZoom(1.0)
+	case cmdPrint:
+		a.chromium.Eval("window.print()")
+	case cmdFullscreen:
+		a.toggleFullscreen()
 	}
+}
+
+// setZoom clamps and applies the page zoom (25%..500%).
+func (a *app) setZoom(f float64) {
+	if f < 0.25 {
+		f = 0.25
+	}
+	if f > 5.0 {
+		f = 5.0
+	}
+	a.zoom = f
+	a.applyZoom()
+}
+
+// applyZoom (re)applies the current zoom to the loaded page. Called after
+// every navigation too, because each new document starts at 100%.
+func (a *app) applyZoom() {
+	if a.zoom == 1.0 || a.chromium == nil {
+		return
+	}
+	a.chromium.Eval(fmt.Sprintf("document.documentElement.style.zoom=%q",
+		strconv.FormatFloat(a.zoom, 'f', -1, 64)))
+}
+
+// updateNavButtons enables/disables back and forward to reflect real history.
+func (a *app) updateNavButtons() {
+	canBack := !a.isStart && a.chromium != nil && a.chromium.CanGoBack()
+	canFwd := !a.isStart && a.chromium != nil && a.chromium.CanGoForward()
+	win.EnableWindow(a.back, canBack)
+	win.EnableWindow(a.forward, canFwd)
+}
+
+// toggleFullscreen enters or leaves borderless fullscreen (F11).
+func (a *app) toggleFullscreen() {
+	if !a.fullscreen {
+		a.savedStyle = win.GetWindowLong(a.hwnd, win.GWL_STYLE)
+		a.savedPlacement.Length = uint32(unsafe.Sizeof(win.WINDOWPLACEMENT{}))
+		win.GetWindowPlacement(a.hwnd, &a.savedPlacement)
+
+		var mi win.MONITORINFO
+		mi.CbSize = uint32(unsafe.Sizeof(mi))
+		mon := win.MonitorFromWindow(a.hwnd, win.MONITOR_DEFAULTTONEAREST)
+		if mon != 0 && win.GetMonitorInfo(mon, &mi) {
+			win.SetWindowLong(a.hwnd, win.GWL_STYLE,
+				a.savedStyle&^(win.WS_CAPTION|win.WS_THICKFRAME))
+			win.SetWindowPos(a.hwnd, 0,
+				mi.RcMonitor.Left, mi.RcMonitor.Top,
+				mi.RcMonitor.Right-mi.RcMonitor.Left,
+				mi.RcMonitor.Bottom-mi.RcMonitor.Top,
+				win.SWP_NOZORDER|win.SWP_FRAMECHANGED)
+			a.fullscreen = true
+		}
+		return
+	}
+	win.SetWindowLong(a.hwnd, win.GWL_STYLE, a.savedStyle)
+	win.SetWindowPlacement(a.hwnd, &a.savedPlacement)
+	var rc win.RECT
+	win.GetWindowRect(a.hwnd, &rc)
+	win.SetWindowPos(a.hwnd, 0, rc.Left, rc.Top,
+		rc.Right-rc.Left, rc.Bottom-rc.Top,
+		win.SWP_NOZORDER|win.SWP_FRAMECHANGED)
+	a.fullscreen = false
 }
 
 // navigateFromAddressBar reads the address bar and navigates.
@@ -422,6 +529,7 @@ func (a *app) navigateFromAddressBar() {
 		return
 	}
 	a.isStart = false
+	setWindowText(a.address, u) // show the final URL immediately
 	a.chromium.Navigate(u)
 	a.chromium.Focus()
 }
@@ -432,6 +540,7 @@ func (a *app) goHome() {
 	setWindowText(a.hwnd, appName)
 	setWindowText(a.address, "")
 	a.chromium.NavigateToString(nav.StartHTML)
+	a.updateNavButtons()
 }
 
 // scaled scales a 96-DPI design pixel value to the current DPI.

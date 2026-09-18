@@ -38,10 +38,10 @@ func TestParse(t *testing.T) {
 		{"//example.com/x", "https://example.com/x"},
 
 		// Search queries.
-		{"how to boil rice", "https://duckduckgo.com/?q=how+to+boil+rice"},
-		{"giraffe", "https://duckduckgo.com/?q=giraffe"},
-		{"what is 2 + 2?", "https://duckduckgo.com/?q=what+is+2+%2B+2%3F"},
-		{"c# generics", "https://duckduckgo.com/?q=c%23+generics"},
+		{"how to boil rice", "https://www.google.com/search?q=how+to+boil+rice"},
+		{"giraffe", "https://www.google.com/search?q=giraffe"},
+		{"what is 2 + 2?", "https://www.google.com/search?q=what+is+2+%2B+2%3F"},
+		{"c# generics", "https://www.google.com/search?q=c%23+generics"},
 	}
 	for _, c := range cases {
 		if got := Parse(c.in); got != c.want {

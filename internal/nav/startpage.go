@@ -14,6 +14,13 @@ const StartHTML = `<!doctype html>
     --bg: #fafafa; --fg: #202124; --muted: #5f6368;
     --brand: #1a73e8; --card: #ffffff; --border: #e3e3e3;
   }
+  /* Follow Windows dark / light app mode automatically */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #202124; --fg: #e8eaed; --muted: #9aa0a6;
+      --brand: #8ab4f8; --card: #292a2d; --border: #3c4043;
+    }
+  }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
@@ -61,6 +68,7 @@ const StartHTML = `<!doctype html>
     width: 38px; height: 38px; border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
     font-weight: 700; font-size: 16px; color: #fff;
+    box-shadow: inset 0 0 0 1px rgba(128,128,128,.35); /* keeps dark dots visible in dark mode */
   }
   @media (max-width: 560px) { .links { grid-template-columns: repeat(2, 1fr); } }
 </style>

@@ -27,6 +27,7 @@ type Chromium struct {
 	webResourceRequested  *iCoreWebView2WebResourceRequestedEventHandler
 	acceleratorKeyPressed *ICoreWebView2AcceleratorKeyPressedEventHandler
 	navigationCompleted   *ICoreWebView2NavigationCompletedEventHandler
+	navigationStarting    *ICoreWebView2NavigationStartingEventHandler // OK Browser addition
 
 	environment *ICoreWebView2Environment
 
@@ -41,6 +42,7 @@ type Chromium struct {
 	MessageCallback              func(string)
 	WebResourceRequestedCallback func(request *ICoreWebView2WebResourceRequest, args *ICoreWebView2WebResourceRequestedEventArgs)
 	NavigationCompletedCallback  func(sender *ICoreWebView2, args *ICoreWebView2NavigationCompletedEventArgs)
+	NavigationStartingCallback   func(sender *ICoreWebView2, args *ICoreWebView2NavigationStartingEventArgs) // OK Browser addition
 	AcceleratorKeyCallback       func(uint) bool
 }
 
@@ -218,6 +220,11 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 		uintptr(unsafe.Pointer(e.navigationCompleted)),
 		uintptr(unsafe.Pointer(&token)),
 	)
+	_, _, _ = e.webview.vtbl.AddNavigationStarting.Call( // OK Browser addition
+		uintptr(unsafe.Pointer(e.webview)),
+		uintptr(unsafe.Pointer(e.navigationStarting)),
+		uintptr(unsafe.Pointer(&token)),
+	)
 
 	_ = e.controller.AddAcceleratorKeyPressed(e.acceleratorKeyPressed, &token)
 
@@ -342,6 +349,64 @@ func (e *Chromium) NavigationCompleted(sender *ICoreWebView2, args *ICoreWebView
 	}
 	return 0
 }
+
+// NavigationStarting is invoked as soon as a navigation begins, before any
+// network activity. (OK Browser addition.)
+func (e *Chromium) NavigationStarting(sender *ICoreWebView2, args *ICoreWebView2NavigationStartingEventArgs) uintptr {
+	if e.NavigationStartingCallback != nil {
+		e.NavigationStartingCallback(sender, args)
+	}
+	return 0
+}
+
+// CanGoBack reports whether there is back history. (OK Browser addition.)
+func (e *Chromium) CanGoBack() bool {
+	if e.webview == nil {
+		return false
+	}
+	r, _, _ := e.webview.vtbl.GetCanGoBack.Call(uintptr(unsafe.Pointer(e.webview)))
+	return r != 0
+}
+
+// CanGoForward reports whether there is forward history. (OK Browser addition.)
+func (e *Chromium) CanGoForward() bool {
+	if e.webview == nil {
+		return false
+	}
+	r, _, _ := e.webview.vtbl.GetCanGoForward.Call(uintptr(unsafe.Pointer(e.webview)))
+	return r != 0
+}
+
+// GoBack navigates back one step using the engine API. (OK Browser addition.)
+func (e *Chromium) GoBack() {
+	if e.webview == nil {
+		return
+	}
+	e.webview.vtbl.GoBack.Call(uintptr(unsafe.Pointer(e.webview)))
+}
+
+// GoForward navigates forward one step using the engine API. (OK Browser addition.)
+func (e *Chromium) GoForward() {
+	if e.webview == nil {
+		return
+	}
+	e.webview.vtbl.GoForward.Call(uintptr(unsafe.Pointer(e.webview)))
+}
+
+// Reload reloads the page using the engine API. (OK Browser addition.)
+func (e *Chromium) Reload() {
+	if e.webview == nil {
+		return
+	}
+	e.webview.vtbl.Reload.Call(uintptr(unsafe.Pointer(e.webview)))
+}
+
+// NOTE (OK Browser): the controller's PutZoomFactor takes a raw `double`
+// parameter. Go's syscall ABI on windows/amd64 passes arguments in integer
+// registers only, so a double argument would arrive as garbage (the runtime
+// explicitly does not spill float args to XMM registers). Zoom is therefore
+// applied from the application side via CSS (ExecuteScript), which only ever
+// passes strings.
 
 func (e *Chromium) NotifyParentWindowPositionChanged() error {
 	//It looks like the wndproc function is called before the controller initialization is complete.

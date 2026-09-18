@@ -73,9 +73,24 @@ func (a *app) embedWebView() bool {
 	return true
 }
 
+// onNavStarting fires the instant a navigation begins - before any network
+// activity - so the address bar updates immediately instead of waiting for
+// the page to finish loading.
+func (a *app) onNavStarting(_ *edge.ICoreWebView2, args *edge.ICoreWebView2NavigationStartingEventArgs) {
+	uri, err := args.GetUri()
+	if err != nil || uri == "" || uri == "about:blank" {
+		return // our built-in start page (NavigateToString) or unknown
+	}
+	a.isStart = false
+	setWindowText(a.address, uri)
+	a.updateNavButtons()
+}
+
 // onNavCompleted fires after each navigation; it asks the page to report its
 // final URL and title so the address bar and window title stay in sync.
 func (a *app) onNavCompleted(*edge.ICoreWebView2, *edge.ICoreWebView2NavigationCompletedEventArgs) {
+	a.updateNavButtons()
+	a.applyZoom() // new documents start at 100%; restore the window's zoom
 	a.chromium.Eval(`window.__ok && window.__ok({ t: "nav", u: location.href, d: document.title })`)
 }
 
@@ -109,6 +124,7 @@ func (a *app) onWebMessage(msg string) {
 	case "go": // start page search box - parsed exactly like the address bar
 		if u := nav.Parse(m.U); u != "" {
 			a.isStart = false
+			setWindowText(a.address, u) // instant feedback
 			a.chromium.Navigate(u)
 		}
 

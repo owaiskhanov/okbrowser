@@ -10,7 +10,7 @@ import (
 )
 
 // SearchEngine is the search provider used when input is not a URL.
-const SearchEngine = "https://duckduckgo.com/?q="
+const SearchEngine = "https://www.google.com/search?q="
 
 // Parse converts raw address-bar input into a URL to navigate to.
 //
@@ -21,8 +21,8 @@ const SearchEngine = "https://duckduckgo.com/?q="
 //	"localhost:3000"       -> http://localhost:3000
 //	"192.168.1.5:8080"     -> http://192.168.1.5:8080
 //	"[::1]:8080"           -> http://[::1]:8080
-//	"how to boil rice"     -> https://duckduckgo.com/?q=how+to+boil+rice
-//	"giraffe"              -> https://duckduckgo.com/?q=giraffe
+//	"how to boil rice"     -> https://www.google.com/search?q=how+to+boil+rice
+//	"giraffe"              -> https://www.google.com/search?q=giraffe
 func Parse(input string) string {
 	s := strings.TrimSpace(input)
 	s = strings.Trim(s, "\"'")

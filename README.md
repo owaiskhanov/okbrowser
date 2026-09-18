@@ -24,11 +24,13 @@ on a real Windows machine** by CI before it is published.
 
 ## Features
 
-- Address bar with smart parsing: `example.com` → `https://example.com`, plain words → DuckDuckGo search, `localhost:3000` / `192.168.x.x` → `http://`
-- Back, forward, reload, home buttons + an offline, instant start page
+- Address bar with smart parsing: `example.com` → `https://example.com`, plain words → **Google** search, `localhost:3000` / `192.168.x.x` → `http://`
+- The address bar updates **the instant** you navigate (not after the page loads), and shows the final URL after redirects
+- Back, forward, reload, home buttons that enable/disable with real history + an offline start page (with automatic dark mode)
 - `target="_blank"` links, middle-click and `window.open()` open a **new OK Browser window** (one window per process — each stays feather-light)
 - Per-window web engine isolation; a crashed page never takes the browser down
-- Right-click context menus, F12 DevTools, Ctrl+mouse-wheel zoom, hover link preview — the browser basics you expect
+- Zoom (`Ctrl+ +` / `Ctrl+-` / `Ctrl+0` / Ctrl+mouse-wheel), print (`Ctrl+P`), fullscreen (`F11`), mouse back/forward buttons
+- Right-click context menus, F12 DevTools, hover link preview, downloads (the engine's download UI) — the browser basics you expect
 - High-DPI aware (crisp on any monitor, follows the window between screens)
 - Persistent profile: logins and cookies are kept in `%LOCALAPPDATA%\OKBrowser`
 - Proper Windows app icon, version info and GUI subsystem (no console flash)
@@ -40,11 +42,14 @@ on a real Windows machine** by CI before it is published.
 | `Ctrl+L` / `Alt+D` | Focus the address bar (selects all) |
 | `Enter` | Navigate to what you typed |
 | `Alt+←` / `Alt+→` | Back / forward |
+| Mouse button 4 / 5 | Back / forward |
 | `F5` / `Ctrl+R` | Reload |
 | `Alt+Home` | Start page |
 | `Ctrl+N` / `Ctrl+T` | New window |
 | `Ctrl+W` | Close window |
-| `Ctrl+` / `Ctrl-` / Ctrl+wheel | Zoom (wheel is handled by the engine) |
+| `Ctrl+ +` / `Ctrl+-` / `Ctrl+0` | Zoom in / out / reset |
+| `Ctrl+P` | Print |
+| `F11` | Fullscreen |
 | `F12` | DevTools |
 
 ## Build from source
