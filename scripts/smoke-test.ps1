@@ -1,0 +1,227 @@
+# Smoke test: launches OKBrowser.exe on a real Windows machine and verifies
+# that (1) the window appears, (2) the WebView2 engine starts, and (3) a REAL
+# navigation succeeds - the app is launched with https://example.com and the
+# window title must become the page title. Writes a diagnostics report next
+# to the exe so CI can publish it even when this script fails.
+param(
+    [string]$Exe = (Join-Path $PSScriptRoot "..\dist\OKBrowser.exe"),
+    [string]$DiagFile = ""
+)
+
+$ErrorActionPreference = "Continue"
+if ($DiagFile -eq "") { $DiagFile = Join-Path (Split-Path $Exe -Parent) "smoke-diagnostics.txt" }
+$diag = New-Object System.Collections.Generic.List[string]
+function Log($m) { Write-Host "[smoke] $m"; $diag.Add("$m") }
+
+$fail = ""
+$proc = $null
+$errFile = Join-Path (Split-Path $Exe -Parent) "smoke-stderr.txt"
+try {
+    if (-not (Test-Path $Exe)) { throw "Executable not found: $Exe" }
+    $full = (Resolve-Path $Exe).Path
+    Log "launching $full https://example.com"
+    Log ("OS: " + [System.Environment]::OSVersion.VersionString)
+
+    # Report the installed WebView2 runtime from the registry.
+    $regPaths = @(
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+        "HKCU:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+    )
+    foreach ($rp in $regPaths) {
+        if (Test-Path $rp) {
+            $pv = (Get-ItemProperty $rp -ErrorAction SilentlyContinue).pv
+            Log "WebView2 runtime registry ($rp): pv=$pv"
+        } else {
+            Log "WebView2 runtime registry missing: $rp"
+        }
+    }
+
+    $outFile = Join-Path (Split-Path $Exe -Parent) "smoke-stdout.txt"
+    $proc = Start-Process -FilePath $full -ArgumentList "https://example.com" -PassThru -RedirectStandardError $errFile -RedirectStandardOutput $outFile
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+
+    # Phase 1: window appears.
+    $sawWindow = $false
+    $title = ""
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline) {
+        if ($proc.HasExited) {
+            Log "process exited early after $($sw.ElapsedMilliseconds) ms, code $($proc.ExitCode)"
+            throw "FAIL: process exited early (code $($proc.ExitCode))"
+        }
+        $proc.Refresh()
+        if ($proc.MainWindowHandle -ne 0) {
+            $sawWindow = $true
+            $title = $proc.MainWindowTitle
+            Log "main window up after $($sw.ElapsedMilliseconds) ms, title: '$title'"
+            break
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    if (-not $sawWindow) { $fail = "no main window appeared within 30 seconds" }
+
+    # Phase 2: the real navigation must complete - the window title becomes
+    # the page title ("Example Domain"). This is the end-to-end test that a
+    # URL actually loads and reports back.
+    $navOk = $false
+    $deadline = (Get-Date).AddSeconds(60)
+    while ((Get-Date) -lt $deadline) {
+        if ($proc.HasExited) { $fail = "process exited during navigation (code $($proc.ExitCode))"; break }
+        $proc.Refresh()
+        $title = $proc.MainWindowTitle
+        if ($title -like "*Example Domain*") {
+            $navOk = $true
+            Log "navigation OK after $($sw.ElapsedMilliseconds) ms, title: '$title'"
+            break
+        }
+        Start-Sleep -Milliseconds 300
+    }
+    if (-not $navOk -and $fail -eq "") {
+        $fail = "navigation to https://example.com did not complete; title stayed: '$title'"
+    }
+
+    Start-Sleep -Seconds 2
+    $proc.Refresh()
+    if ($proc.HasExited -and $fail -eq "") { $fail = "process exited after startup (code $($proc.ExitCode))" }
+
+    $wv = @(Get-Process msedgewebview2 -ErrorAction SilentlyContinue)
+    Log "WebView2 engine processes: $($wv.Count)"
+    if ($wv.Count -eq 0 -and $fail -eq "") { $fail = "no WebView2 engine processes started" }
+
+    # Phase 2.5: the app's own glass bar is the only top bar. Hit-test the
+    # real window in every state: no native caption/button hit areas may
+    # exist, the resize borders must survive, and maximize -> restore must
+    # leave the client flush with the window top (a stale-rect
+    # WM_NCCALCSIZE once pushed the whole bar above the visible window).
+    if ($fail -eq "") {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public struct OKRECT { public int Left, Top, Right, Bottom; }
+public struct OKPT { public int X, Y; }
+public static class OKWin {
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, ref OKRECT r);
+    [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, ref OKRECT r);
+    [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref OKPT p);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+}
+"@
+        function ProbeHT([IntPtr]$h, [int]$x, [int]$y) {
+            $lp = ($x -band 0xFFFF) -bor (($y -band 0xFFFF) -shl 16)
+            return [OKWin]::SendMessage($h, 0x0084, [IntPtr]::Zero, [IntPtr]$lp).ToInt64()
+        }
+        $badHT = @(2, 3, 8, 9, 20)  # HTCAPTION HTSYSMENU HTMINBUTTON HTMAXBUTTON HTCLOSE
+        $proc.Refresh()
+        $h = $proc.MainWindowHandle
+        if ($h -ne [IntPtr]::Zero) {
+            $wr = New-Object OKRECT; $cr = New-Object OKRECT; $pt = New-Object OKPT
+            [OKWin]::GetWindowRect($h, [ref]$wr) | Out-Null
+            [OKWin]::GetClientRect($h, [ref]$cr) | Out-Null
+            [OKWin]::ClientToScreen($h, [ref]$pt) | Out-Null
+            Log ("windowed: window " + ($wr.Right - $wr.Left) + "x" + ($wr.Bottom - $wr.Top) + ", top band: " + ($pt.Y - $wr.Top) + " px (expect 0)")
+
+            # windowed: no native caption/button hit areas near the top
+            foreach ($dx in @(30, 70, 110)) {
+                $ht = ProbeHT $h ($pt.X + $cr.Right - $dx) ($pt.Y + 12)
+                if ($badHT -contains $ht) { $fail = "native caption/button hit area at windowed top-right (HT=$ht)" }
+            }
+            $ht = ProbeHT $h ($pt.X + [int]($cr.Right / 2)) ($pt.Y + 8)
+            if ($badHT -contains $ht) { $fail = "native caption hit area at windowed top-center (HT=$ht)" }
+            # the side resize borders must survive
+            $htL = ProbeHT $h ($wr.Left + 2) ([int](($wr.Top + $wr.Bottom) / 2))
+            Log "windowed hit-test: left edge HT=$htL (expect 10 = HTLEFT)"
+            if ($htL -ne 10) { $fail = "left resize border lost (HT=$htL)" }
+
+            # maximized: still no native bar, client pinned to the work area
+            [OKWin]::PostMessage($h, 0x0112, [IntPtr]0xF030, [IntPtr]::Zero) | Out-Null  # WM_SYSCOMMAND SC_MAXIMIZE
+            Start-Sleep -Milliseconds 1500
+            $proc.Refresh(); $h = $proc.MainWindowHandle
+            [OKWin]::GetWindowRect($h, [ref]$wr) | Out-Null
+            [OKWin]::GetClientRect($h, [ref]$cr) | Out-Null
+            [OKWin]::ClientToScreen($h, [ref]$pt) | Out-Null
+            $band = $pt.Y - $wr.Top
+            Log ("maximized: window " + ($wr.Right - $wr.Left) + "x" + ($wr.Bottom - $wr.Top) + ", client " + ($cr.Right - $cr.Left) + "x" + ($cr.Bottom - $cr.Top) + ", top band: $band px")
+            if ($band -ge 40) { $fail = "native caption band still visible when maximized ($band px)" }
+            foreach ($dx in @(30, 70, 110)) {
+                $ht = ProbeHT $h ($pt.X + $cr.Right - $dx) ($pt.Y + 12)
+                if ($badHT -contains $ht) { $fail = "native caption/button hit area at maximized top-right (HT=$ht)" }
+            }
+            $ht = ProbeHT $h ($pt.X + [int]($cr.Right / 2)) ($pt.Y + 8)
+            if ($badHT -contains $ht) { $fail = "native caption hit area at maximized top-center (HT=$ht)" }
+
+            # restore: the bar must come back exactly flush with the top
+            [OKWin]::PostMessage($h, 0x0112, [IntPtr]0xF120, [IntPtr]::Zero) | Out-Null  # WM_SYSCOMMAND SC_RESTORE
+            Start-Sleep -Milliseconds 900
+            $proc.Refresh(); $h = $proc.MainWindowHandle
+            [OKWin]::GetWindowRect($h, [ref]$wr) | Out-Null
+            [OKWin]::GetClientRect($h, [ref]$cr) | Out-Null
+            [OKWin]::ClientToScreen($h, [ref]$pt) | Out-Null
+            $band = $pt.Y - $wr.Top
+            Log ("after restore: window " + ($wr.Right - $wr.Left) + "x" + ($wr.Bottom - $wr.Top) + ", top band: $band px (expect ~0)")
+            if ($band -gt 6) { $fail = "client detached from window top after restore ($band px) - the bar would vanish" }
+            $htL = ProbeHT $h ($wr.Left + 2) ([int](($wr.Top + $wr.Bottom) / 2))
+            if ($htL -ne 10) { $fail = "left resize border lost after restore (HT=$htL)" }
+        } else {
+            Log "frameless checks skipped: no window handle"
+        }
+    }
+
+    # Phase 3: built-in self test - typed load, link click (renderer-initiated
+    # same-tab navigation) and window.open (renderer-initiated new tab).
+    $stFile = Join-Path (Split-Path $Exe -Parent) "selftest.txt"
+    if (Test-Path $stFile) { Remove-Item $stFile -Force }
+    Start-Sleep -Seconds 5  # let the killed instance's engine processes exit
+    Get-Process msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    $engDeadline = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $engDeadline) {
+        if (@(Get-Process msedgewebview2 -ErrorAction SilentlyContinue).Count -eq 0) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    Start-Sleep -Seconds 2  # let the shared profile be released
+    Log "running self test..."
+    $stErr = Join-Path (Split-Path $Exe -Parent) "selftest-stderr.txt"
+    $stOut = Join-Path (Split-Path $Exe -Parent) "selftest-stdout.txt"
+    $stProc = Start-Process -FilePath $full -ArgumentList "--selftest" -PassThru -RedirectStandardError $stErr -RedirectStandardOutput $stOut
+    $exited = $stProc.WaitForExit(180000)
+    if (-not $exited) {
+        Stop-Process -Id $stProc.Id -Force -ErrorAction SilentlyContinue
+        if ($fail -eq "") { $fail = "self test timed out" }
+    } else {
+        if (Test-Path $stFile) {
+            Get-Content $stFile | ForEach-Object { Log "selftest: $_" }
+        } else {
+            Log "selftest: no output file written"
+        }
+        Log ("selftest exit code: " + $stProc.ExitCode)
+        if ($stProc.ExitCode -ne 0 -and $fail -eq "") { $fail = "self test failed" }
+    }
+    foreach ($sf in @($stErr, $stOut)) {
+        if (Test-Path $sf) {
+            $t = (Get-Content $sf -Raw -ErrorAction SilentlyContinue)
+            if ($t) { Log ("selftest io " + (Split-Path $sf -Leaf) + ": " + $t.Trim()) }
+        }
+    }
+}
+catch {
+    $fail = $_.Exception.Message
+}
+finally {
+    if ($proc -and -not $proc.HasExited) {
+        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+        Log "stopped test process"
+    }
+    if (Test-Path $errFile) {
+        $errText = (Get-Content $errFile -Raw -ErrorAction SilentlyContinue)
+        if ($errText) { Log "STDERR: $errText" } else { Log "STDERR: (empty)" }
+    }
+}
+
+if ($fail -ne "") {
+    Log "FAIL: $fail"
+    $diag | Set-Content -Encoding UTF8 $DiagFile
+    exit 1
+}
+Log "PASS: window, web engine and real navigation all OK."
+$diag | Set-Content -Encoding UTF8 $DiagFile
+exit 0

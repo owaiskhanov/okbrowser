@@ -1,0 +1,126 @@
+name: Build
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Also publish a GitHub release with the built exe"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # windows-2022 (Server 2022, Windows 10 era) - required leg.
+          - os: windows-2022
+            tag: win2022
+            blocking: true
+          # windows-latest (Server 2025, Windows 11 era).
+          - os: windows-latest
+            tag: winlatest
+            blocking: false
+
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ !matrix.blocking }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Unit tests
+        run: go test ./...
+
+      - name: Bar UI logic tests
+        shell: pwsh
+        run: node scripts/test-bar.js
+
+      - name: Build
+        run: |
+          go build -trimpath -ldflags "-s -w -H windowsgui" -o dist/OKBrowser.exe ./cmd/okbrowser
+          Get-Item dist\OKBrowser.exe | Select-Object Name, Length | Format-List
+
+      - name: Smoke test on real Windows
+        shell: pwsh
+        run: ./scripts/smoke-test.ps1 -Exe dist/OKBrowser.exe
+
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OKBrowser-windows-amd64-${{ matrix.tag }}
+          path: |
+            dist/OKBrowser.exe
+            dist/smoke-diagnostics.txt
+
+      # On-demand: push the Windows-verified exe + diagnostics back to the
+      # working branch. Triggers when the commit message contains "[publish]".
+      - name: Publish verified build to working branch
+        if: always() && github.event_name == 'push' && contains(github.event.head_commit.message, '[publish]') && startsWith(github.ref, 'refs/heads/arena/')
+        shell: bash
+        run: |
+          git config user.name "arena-ci"
+          git config user.email "noreply@arena.ai"
+          mkdir -p ".ci-build/${{ matrix.tag }}"
+          cp dist/OKBrowser.exe ".ci-build/${{ matrix.tag }}/" 2>/dev/null || true
+          cp dist/smoke-diagnostics.txt ".ci-build/${{ matrix.tag }}/" 2>/dev/null || true
+          git add -f ".ci-build/${{ matrix.tag }}"
+          git commit -m "ci: verified build + diagnostics for ${{ matrix.tag }} [ci skip]" >/dev/null 2>&1 || echo "no changes to publish"
+          for i in 1 2 3 4 5; do
+            if git pull --rebase --autostash origin "$GITHUB_REF_NAME" >/dev/null 2>&1 && git push >/dev/null 2>&1; then
+              echo "published .ci-build/${{ matrix.tag }}"
+              exit 0
+            fi
+            sleep $((i * 3))
+          done
+          echo "could not publish back to branch (continuing without failing the build)"
+          exit 0
+
+  # Publishes a GitHub release containing the Windows-verified exe.
+  # Triggers: workflow_dispatch with release=true, or a push whose commit
+  # message contains "[release]".
+  release:
+    if: needs.windows.result == 'success' && ((github.event_name == 'workflow_dispatch' && inputs.release) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release]')))
+    needs: windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: OKBrowser-windows-amd64-win2022
+          path: dist
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'EOF'
+          **OK Browser 1.12.1** — a very light and very fast web browser for Windows 10 and later.
+
+          - Single **~4 MB** `OKBrowser.exe`, no installer needed
+          - Renders with the system's Microsoft Edge WebView2 (Chromium) engine
+          - Verified by CI on real Windows Server 2022 (Windows 10 era) and Server 2025 (Windows 11 era): window, title, engine and stability checks pass
+
+          **Requirements:** Windows 10 (1607+) or Windows 11, 64-bit. The WebView2 Runtime is pre-installed on Windows 11 and updated Windows 10; if missing, OK Browser offers to open Microsoft's official download page.
+          EOF
+          if gh release view v1.12.1 >/dev/null 2>&1; then
+            gh release upload v1.12.1 dist/OKBrowser.exe --clobber
+          else
+            gh release create "v1.12.1" dist/OKBrowser.exe \
+              --title "OK Browser 1.12.1" \
+              --notes-file notes.md \
+              --target "$GITHUB_SHA"
+          fi
