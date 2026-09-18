@@ -2,10 +2,11 @@ launching D:\a\okbrowser\okbrowser\dist\OKBrowser.exe https://example.com
 OS: Microsoft Windows NT 10.0.26100.0
 WebView2 runtime registry (HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}): pv=152.0.4191.66
 WebView2 runtime registry missing: HKCU:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}
-main window up after 530 ms, title: 'OK Browser'
-navigation OK after 4285 ms, title: 'Example Domain - OK Browser'
+main window up after 273 ms, title: 'OK Browser'
+navigation OK after 3705 ms, title: 'Example Domain - OK Browser'
 WebView2 engine processes: 6
 running self test...
+selftest: [selftest] starting (pid 1920)
 selftest: [selftest] phase 1 OK: host-initiated navigation loaded https://example.com/
 selftest: [selftest] phase 2 OK: link-click navigation loaded https://www.iana.org/help/example-domains
 selftest: [selftest] bridge open request: https://www.iana.org/about
@@ -13,6 +14,7 @@ selftest: [selftest] tab 2 created (url=https://www.iana.org/about)
 selftest: [selftest] phase 3 OK: window.open opened a new tab (now 2 tabs)
 selftest: [selftest] FAIL: timed out in phase 4
 selftest exit code: 1
+selftest io selftest-stderr.txt: [0918/122423.191:ERROR:ui\gfx\win\window_impl.cc:172] Failed to unregister class Chrome_WidgetWin_0. Error = 1411
 stopped test process
 STDERR: (empty)
 FAIL: self test failed
