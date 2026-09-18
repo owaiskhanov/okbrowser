@@ -104,6 +104,12 @@ func (a *app) newTab(url string, activate bool) *tab {
 		return nil
 	}
 
+	// Dark engine background: what the engine paints before the page's own
+	// CSS applies - WebView2 defaults to white, which flashed on every new
+	// tab and every navigation in dark mode. Must run AFTER Embed: the
+	// controller only exists once the engine has been created.
+	c.SetDefaultBackgroundColor(edge.COREWEBVIEW2_COLOR{A: 255, R: 28, G: 28, B: 30})
+
 	if st, err := c.GetSettings(); err == nil {
 		_ = st.PutAreDefaultContextMenusEnabled(true)
 		_ = st.PutAreDevToolsEnabled(true)
@@ -115,11 +121,15 @@ func (a *app) newTab(url string, activate bool) *tab {
 
 	a.tabs = append(a.tabs, t)
 	if activate || len(a.tabs) == 1 {
+		// The fade state MUST be armed BEFORE the tab is shown: layout()
+		// keeps a pending fade host hidden until its first paint. Setting
+		// it afterwards (the old order) let layout() show the unpainted
+		// host for one full-opacity frame - the white flash.
 		prev := a.active()
-		a.switchToTab(len(a.tabs) - 1)
 		if prev != nil && prev != t && isWnd(prev.host) {
 			a.beginTabFade(t, prev.host)
 		}
+		a.switchToTab(len(a.tabs) - 1)
 	} else {
 		a.pushBarState() // update the visible tab strip
 	}

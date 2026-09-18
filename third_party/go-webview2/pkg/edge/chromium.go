@@ -410,6 +410,35 @@ func (e *Chromium) CallDevToolsProtocol(method, paramsJSON string) {
 	_ = e.webview.CallDevToolsProtocolMethod(method, paramsJSON, h)
 }
 
+// iidController2 is ICoreWebView2Controller2
+// {C979903E-D4CA-4228-92EB-47EE3FA96EAB}, verified against Microsoft's
+// official .NET interop dumps. (OK Browser addition.)
+var iidController2 = windows.GUID{
+	Data1: 0xC979903E, Data2: 0xD4CA, Data3: 0x4228,
+	Data4: [8]byte{0x92, 0xEB, 0x47, 0xEE, 0x3F, 0xA9, 0x6E, 0xAB},
+}
+
+// SetDefaultBackgroundColor sets the color the engine paints BEFORE any
+// web content has rendered (WebView2's default is white - the classic
+// white-flash on tab creation and dark-mode navigation). (OK Browser
+// addition.)
+func (e *Chromium) SetDefaultBackgroundColor(col COREWEBVIEW2_COLOR) {
+	if e.controller == nil {
+		return
+	}
+	var c2 *ICoreWebView2Controller2
+	r, _, _ := e.controller.vtbl.QueryInterface.Call(
+		uintptr(unsafe.Pointer(e.controller)),
+		uintptr(unsafe.Pointer(&iidController2)),
+		uintptr(unsafe.Pointer(&c2)),
+	)
+	if r != 0 || c2 == nil {
+		return
+	}
+	defer c2.vtbl.Release.Call(uintptr(unsafe.Pointer(c2)))
+	_ = c2.PutDefaultBackgroundColor(col)
+}
+
 // OpenDevTools opens the engine's DevTools window. (OK Browser addition.)
 func (e *Chromium) OpenDevTools() {
 	if e.webview == nil {

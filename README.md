@@ -48,9 +48,12 @@ just content:
 - Light and dark glass follow Windows automatically; everything hides during
   fullscreen video and printing
 
-- **Liquid new tabs**: a new tab doesn't flash — it opens as a soft
-  translucent layer over the previous tab and liquidly fades to full once
-  its first page has painted
+- **Liquid new tabs, zero flash**: a new tab stays completely hidden while
+  its engine starts and paints — you keep seeing the previous tab — then
+  appears as a soft translucent layer and liquidly fades to full. The
+  engine's pre-paint background and every window erase are **dark** (not
+  WebView2's default white), so nothing can ever flash white — including
+  in dark mode
 - **Tabs with favicons**: each tab shows the site's own icon (letter
   avatar as fallback). Pills **auto-collapse to favicon-only** when the tab
   strip gets crowded and grow back when there's room; hover a collapsed

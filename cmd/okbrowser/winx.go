@@ -70,6 +70,16 @@ type ncCalcSizeParams struct {
 	Lppos         uintptr // WINDOWPOS*
 }
 
+// procCreateSolidBrush makes the dark window-class brush (gdi32).
+var procCreateSolidBrush = syscall.NewLazyDLL("gdi32.dll").NewProc("CreateSolidBrush")
+
+// darkBrush returns the brush used to erase tab-host (and main) windows:
+// dark, so a shown-but-unpainted window can never flash white.
+func darkBrush() win.HBRUSH {
+	c, _, _ := procCreateSolidBrush.Call(0x001E1C1C) // COLORREF 0x00BBGGRR = #1C1C1E
+	return win.HBRUSH(c)
+}
+
 // procSetLayeredWindowAttributes and procIsWindow cover two user32 calls
 // lxn/win does not expose (whole-window alpha and window liveness).
 var (

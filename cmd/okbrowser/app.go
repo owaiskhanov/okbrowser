@@ -57,7 +57,7 @@ const (
 )
 
 // appVersion is shown in the settings page.
-const appVersion = "1.11.2"
+const appVersion = "1.12.0"
 
 // app is the browser window. The entire UI - the Liquid Glass bar with tabs,
 // address field and buttons - is rendered inside the web engine as a frosted
@@ -434,6 +434,9 @@ func (a *app) registerClass(name string, proc uintptr, icon win.HANDLE, cursor w
 		HCursor:       cursor,
 		LpszClassName: cn,
 		HIconSm:       win.HICON(icon),
+		// Dark erase: a shown-but-unpainted window must never flash white
+		// (the default COLOR_WINDOW erase is white).
+		HbrBackground: darkBrush(),
 	}
 	return win.RegisterClassEx(&wc) != 0
 }
