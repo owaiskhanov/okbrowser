@@ -2,7 +2,7 @@
 
 A **very light and very fast** web browser for **Windows 10 and later**.
 
-- **~3.7 MB** single `OKBrowser.exe` — no installer, no framework, no bloat
+- **~4 MB** single `OKBrowser.exe` — no installer, no framework, no bloat
 - Renders with **Microsoft's Edge WebView2 engine** (the Chromium engine built into Windows) — full modern web support with native speed
 - **Native Win32 chrome** — one toolbar, one address bar, instant startup
 - **No telemetry, no accounts, no background services**
@@ -158,7 +158,7 @@ OK Browser deliberately trades “features” for **lightness and speed**:
 
 - **Pure Go** (~4k lines including a vendored Win32 binding) — no Electron, no CEF, no .NET
 - The whole UI is **raw Win32**: a toolbar of native controls and a host window. There is no UI framework to load, so the window appears instantly
-- Web content is rendered by the **system's** WebView2 runtime — the engine is not shipped in the exe (that's why it's 3.7 MB) and is kept updated/patched by Windows Update
+- Web content is rendered by the **system's** WebView2 runtime — the engine is not shipped in the exe (that's why it's only ~4 MB) and is kept updated/patched by Windows Update
 - **One window per process**: `Ctrl+N` (or a `_blank` link) starts a fresh, tiny process. Windows are isolated; closing one frees everything
 - Address-bar parsing lives in `internal/nav` and is pure Go with unit tests, so the URL logic is verified on every platform
 

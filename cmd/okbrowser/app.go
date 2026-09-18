@@ -57,7 +57,7 @@ const (
 )
 
 // appVersion is shown in the settings page.
-const appVersion = "1.12.0"
+const appVersion = "1.12.1"
 
 // app is the browser window. The entire UI - the Liquid Glass bar with tabs,
 // address field and buttons - is rendered inside the web engine as a frosted
@@ -281,6 +281,16 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 	case win.WM_ERASEBKGND:
 		return 1 // the webview covers everything
 
+	case win.WM_ENDSESSION:
+		// Windows is logging off or shutting down: WM_DESTROY is not
+		// guaranteed to run, so persist the session and the store now.
+		if wp != 0 {
+			a.saveSession()
+			if a.store != nil {
+				a.store.Flush()
+			}
+		}
+		return 0
 	case win.WM_DESTROY:
 		a.saveSession()
 		if a.store != nil {
@@ -916,9 +926,4 @@ func (a *app) scaled(v int32) int32 {
 		return v
 	}
 	return int32(float64(v)*a.scale + 0.5)
-}
-
-// send sends a window message with plain integer parameters.
-func send(hwnd win.HWND, msg uint32, wp, lp uintptr) uintptr {
-	return win.SendMessage(hwnd, msg, wp, lp)
 }
