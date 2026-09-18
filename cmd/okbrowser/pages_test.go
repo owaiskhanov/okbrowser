@@ -3,6 +3,9 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -89,4 +92,45 @@ func TestDownloadsPageStructure(t *testing.T) {
 	if !strings.Contains(html, `id="toast"`) {
 		t.Fatal("toast mount missing")
 	}
+}
+
+// TestListDownloads verifies the downloads page data path: files are read
+// from USERPROFILE\Downloads, newest first, directories skipped.
+func TestListDownloads(t *testing.T) {
+	parent := t.TempDir()
+	dl := filepath.Join(parent, "Downloads")
+	if err := os.MkdirAll(dl, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"a.bin", "b.bin", "c.bin"}
+	for _, n := range want {
+		if err := os.WriteFile(filepath.Join(dl, n), []byte("data"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(dl, "subdir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("USERPROFILE", parent)
+
+	got := listDownloads()
+	if len(got) != len(want) {
+		t.Fatalf("expected %d downloads, got %d", len(want), len(got))
+	}
+	seen := map[string]bool{}
+	for _, g := range got {
+		if filepath.Dir(g.Path) != dl {
+			t.Errorf("bad path %q", g.Path)
+		}
+		if g.Size != 4 {
+			t.Errorf("bad size for %q: %d", g.Name, g.Size)
+		}
+		seen[g.Name] = true
+	}
+	for _, n := range want {
+		if !seen[n] {
+			t.Errorf("missing %q", n)
+		}
+	}
+	_ = fmt.Sprint(seen)
 }

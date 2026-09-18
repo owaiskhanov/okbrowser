@@ -415,6 +415,22 @@ setTimeout(() => {
   setTimeout(() => {
     assert.ok(!strip.classList.contains('open'), 'bar hides again after the mouse leaves');
     assert.ok(shadow.getElementById('wcap').classList.contains('hid'), 'the capsule hides with the bar');
-    console.log('shell UI logic tests: ALL PASSED');
+
+    // the bar must never retire while the mouse is INSIDE the menu
+    (docListeners['mousemove'] || []).forEach(f => f({ clientY: 2 })); // reveal
+    wmenu.dispatch('click', { stopPropagation() {} });
+    assert.ok(menu.classList.contains('open'), 'menu opens');
+    strip.dispatch('mouseleave', {});   // heading down into the menu...
+    menu.dispatch('mouseenter', {});    // ...and hovering it: pin!
+    setTimeout(() => {
+      assert.ok(strip.classList.contains('open'), 'bar stays while the mouse is over the menu');
+      assert.ok(menu.classList.contains('open'), 'menu stays open while hovered');
+      menu.dispatch('mouseleave', {});  // leaving the menu retires both
+      setTimeout(() => {
+        assert.ok(!menu.classList.contains('open'), 'menu closes once the bar retires');
+        assert.ok(!strip.classList.contains('open'), 'bar retires after leaving the menu');
+        console.log('shell UI logic tests: ALL PASSED');
+      }, 600);
+    }, 600);
   }, 550);
 }, 550);

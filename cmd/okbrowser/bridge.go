@@ -355,8 +355,16 @@ const barJS = `
     closeMenu();
     closeCtx();
   }
+  function uiOpen(id) {
+    var el = root.getElementById(id);
+    return !!el && el.classList.contains('open');
+  }
   function hideIfIdle() {
-    if (!barPinned && document.activeElement !== input) hideBar();
+    if (barPinned || document.activeElement === input) return;
+    // Popovers anchored to the bar (menu, tab menu, suggestions, find)
+    // are part of it: the bar must never retire while one is open.
+    if (uiOpen('menu') || uiOpen('ctx') || uiOpen('sug') || uiOpen('find')) return;
+    hideBar();
   }
   function revealBar(brief) {
     strip.classList.add('open');
@@ -700,6 +708,28 @@ const barJS = `
     e.stopPropagation();
     menu.classList.toggle('open');
   });
+  // Hovering a popover anchored to the bar pins it (the capsule's
+  // mouseleave must not retire the bar while the user is INSIDE the menu).
+  // Leaving the popover retires it (and then the bar, if nothing else
+  // holds it) - otherwise the bar would wait for the menu forever.
+  function pinFromPopover(el, retire) {
+    el.addEventListener('mouseenter', function () {
+      barPinned = true;
+      if (hideTimer) { clearTimeout(hideTimer); hideTimer = 0; }
+      if (briefTimer) { clearTimeout(briefTimer); briefTimer = 0; }
+    });
+    el.addEventListener('mouseleave', function () {
+      barPinned = false;
+      if (hideTimer) clearTimeout(hideTimer);
+      hideTimer = setTimeout(function () {
+        if (retire) retire();
+        hideIfIdle();
+      }, 350);
+    });
+  }
+  pinFromPopover(menu, closeMenu);
+  pinFromPopover(ctx, closeCtx);
+
   var mids = ['m-newtab', 'm-incognito', 'm-bookmarks', 'm-history', 'm-downloads', 'm-settings'];
   for (var mi = 0; mi < mids.length; mi++) {
     var mrow = root.getElementById(mids[mi]);
