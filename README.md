@@ -77,8 +77,10 @@ just content:
 
 ## Diagnostics
 
-Run `OKBrowser.exe --selftest` to check all navigation paths end to end
-(typed URL, link click, new-tab popup). It writes `selftest.txt` next to the
+Run `OKBrowser.exe --selftest` to check every navigation path end to end:
+typed URL, plain link click, `window.open` via the bridge, native
+`window.open` via the engine's NewWindowRequested event, and `target=_blank`
+link clicks. It writes `selftest.txt` next to the
 exe and exits 0 only when everything passes. CI runs this on every build.
 
 ## Build from source

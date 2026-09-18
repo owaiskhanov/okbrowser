@@ -68,6 +68,8 @@ func NewChromium() *Chromium {
 	e.webResourceRequested = newICoreWebView2WebResourceRequestedEventHandler(e)
 	e.acceleratorKeyPressed = newICoreWebView2AcceleratorKeyPressedEventHandler(e)
 	e.navigationCompleted = newICoreWebView2NavigationCompletedEventHandler(e)
+	e.navigationStarting = newICoreWebView2NavigationStartingEventHandler(e) // OK Browser addition
+	e.newWindowRequested = newICoreWebView2NewWindowRequestedEventHandler(e) // OK Browser addition
 	e.permissions = make(map[CoreWebView2PermissionKind]CoreWebView2PermissionState)
 
 	return e
