@@ -93,6 +93,7 @@ const shadow = global.__shadow;
 assert.strictEqual(createdHost.parentNode, global.document.body, 'shell should mount immediately when the document is ready');
 assert.strictEqual(typeof win.__okBar, 'function', 'shell API not installed');
 assert.strictEqual(typeof win.__okBubbleFocus, 'function', 'bubble focus API not installed');
+assert.ok(!shadow.getElementById('strip').classList.contains('open'), 'bar starts hidden (immersive)');
 
 // --- tabs in the frameless top bar ---
 win.__okBar({ tabs: [{ t: 'A' }, { t: 'B' }, { t: 'C' }], a: 1, u: 'https://example.com/x', b: true, f: false, m: false });
@@ -205,4 +206,31 @@ assert.ok(!findEl.classList.contains('open'), 'Esc closes the find bar');
   }
 }
 
-console.log('shell UI logic tests: ALL PASSED');
+// --- immersive auto-hide bar ---
+const strip = shadow.getElementById('strip');
+assert.ok(strip, 'strip element exists');
+assert.ok(shadow.getElementById('edge'), 'top-edge tripwire exists');
+assert.ok(shadow.getElementById('wcap'), 'always-visible window capsule exists');
+
+// the bar may be open from the tests above; retire it first
+input.blur();
+strip.dispatch('mouseleave', {});
+setTimeout(() => {
+  assert.ok(!strip.classList.contains('open'), 'bar hides when the mouse leaves and nothing is focused');
+
+  (docListeners['mousemove'] || []).forEach(f => f({ clientY: 2 }));
+  assert.ok(strip.classList.contains('open'), 'mouse at the top edge reveals the bar');
+  strip.dispatch('mouseenter', {});
+  win.__okBar({ tabs: [{ t: 'A' }, { t: 'B' }, { t: 'C' }, { t: 'D' }], a: 3, u: '', b: false, f: false, m: false });
+  assert.ok(strip.classList.contains('open'), 'tab switch keeps the bar visible');
+  assert.ok(tz.children[3].classList.contains('in'), 'the new tab pill animates in');
+
+  win.__okBubbleFocus();
+  assert.ok(strip.classList.contains('open'), 'Ctrl+L reveals the bar');
+  input.blur();
+  strip.dispatch('mouseleave', {});
+  setTimeout(() => {
+    assert.ok(!strip.classList.contains('open'), 'bar hides again after the mouse leaves');
+    console.log('shell UI logic tests: ALL PASSED');
+  }, 550);
+}, 550);

@@ -85,9 +85,19 @@ const barJS = `
   var css = [
     ":host{all:initial}",
     "*{-webkit-user-select:none}",
-    ".strip{position:fixed;top:0;left:0;right:0;height:34px;z-index:2147483647;",
-    "display:flex;align-items:center;gap:5px;padding:0 2px 0 8px;pointer-events:none;",
-    "font-family:-apple-system,'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif}",
+    ".edge{position:fixed;top:0;left:0;right:0;height:4px;z-index:2147483645;",
+    "pointer-events:auto;cursor:default;",
+    "background:linear-gradient(90deg,transparent,rgba(120,120,128,.28),transparent)}",
+    ".strip{position:fixed;top:0;left:0;right:0;height:36px;z-index:2147483646;",
+    "display:flex;align-items:center;gap:5px;padding:0 152px 0 8px;pointer-events:none;",
+    "font-family:-apple-system,'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;",
+    "background:rgba(250,250,252,.52);",
+    "backdrop-filter:blur(26px) saturate(1.7);-webkit-backdrop-filter:blur(26px) saturate(1.7);",
+    "box-shadow:0 1px 12px rgba(0,0,0,.08),inset 0 -.5px 0 rgba(0,0,0,.07);",
+    "transform:translateY(-100%);transition:transform .24s cubic-bezier(.32,.72,.24,1)}",
+    ".strip.open{transform:translateY(0)}",
+    "@media (prefers-color-scheme:dark){.strip{background:rgba(24,24,28,.55);",
+    "box-shadow:0 1px 12px rgba(0,0,0,.32),inset 0 -.5px 0 rgba(255,255,255,.06)}}",
     ".tz{display:flex;gap:4px;align-items:center;min-width:0;height:100%;",
     "flex:0 1 auto;overflow:hidden;pointer-events:auto}",
     ".tab{display:flex;align-items:center;gap:2px;height:23px;min-width:0;flex:0 1 118px;",
@@ -131,8 +141,16 @@ const barJS = `
     ".plus:active{transform:scale(.86)}",
     ".plus svg{width:11px;height:11px}",
     ".drag{flex:1 1 auto;height:100%;pointer-events:auto}",
-    ".wbtns{display:flex;height:100%;pointer-events:auto}",
-    ".wbtn{width:42px;height:100%;display:grid;place-items:center;color:#3c4043;",
+    ".wcap{position:fixed;top:5px;right:6px;height:26px;display:flex;align-items:center;",
+    "padding:0 3px;border-radius:14px;z-index:2147483647;pointer-events:auto;",
+    "background:rgba(250,250,252,.5);",
+    "backdrop-filter:blur(24px) saturate(1.7);-webkit-backdrop-filter:blur(24px) saturate(1.7);",
+    "box-shadow:0 2px 12px rgba(0,0,0,.14),inset 0 1px 0 rgba(255,255,255,.5),",
+    "inset 0 0 0 .5px rgba(255,255,255,.28)}",
+    "@media (prefers-color-scheme:dark){.wcap{background:rgba(28,28,32,.55);",
+    "box-shadow:0 2px 12px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.09),",
+    "inset 0 0 0 .5px rgba(255,255,255,.08)}}",
+    ".wbtn{width:40px;height:22px;border-radius:11px;display:grid;place-items:center;color:#3c4043;",
     "cursor:default;transition:background .12s,opacity .12s}",
     "@media (prefers-color-scheme:dark){.wbtn{color:#e8eaed}}",
     ".wbtn svg{width:11px;height:11px}",
@@ -196,7 +214,7 @@ const barJS = `
     "@media (prefers-color-scheme:dark){.fb{color:#e8eaed}}",
     ".fb:hover{background:rgba(120,128,138,.16)}",
     ".fb svg{width:13px;height:13px}",
-    "@media print{.strip,.find{display:none !important}}"
+    "@media print{.strip,.wcap,.edge,.find{display:none !important}}"
   ].join("");
 
   var sheet = new CSSStyleSheet();
@@ -204,7 +222,8 @@ const barJS = `
   root.adoptedStyleSheets = [sheet];
 
   root.innerHTML =
-    '<div class="strip">' +
+    '<div class="edge" id="edge"></div>' +
+    '<div class="strip" id="strip">' +
       '<div class="tz" id="tz"></div>' +
       '<div class="plus" id="plus">' + I_PLUS + '</div>' +
       '<div class="okb" id="okb">' +
@@ -218,11 +237,11 @@ const barJS = `
         '</div>' +
       '</div>' +
       '<div class="drag" id="drag"></div>' +
-      '<div class="wbtns">' +
-        '<div class="wbtn" id="wmin" title="Minimize">' + I_MIN + '</div>' +
-        '<div class="wbtn" id="wmax" title="Maximize">' + I_MAX + '</div>' +
-        '<div class="wbtn close" id="wclose" title="Close">' + I_X + '</div>' +
-      '</div>' +
+    '</div>' +
+    '<div class="wcap" id="wcap">' +
+      '<div class="wbtn" id="wmin" title="Minimize">' + I_MIN + '</div>' +
+      '<div class="wbtn" id="wmax" title="Maximize">' + I_MAX + '</div>' +
+      '<div class="wbtn close" id="wclose" title="Close">' + I_X + '</div>' +
     '</div>' +
     '<div class="find" id="find">' +
       '<input id="fq" placeholder="Find in page" spellcheck="false">' +
@@ -238,10 +257,58 @@ const barJS = `
   var input = root.getElementById('q');
   var hovering = false;
 
+  // --- immersive auto-hide --------------------------------------------------
+  // The page fills the whole window. The glass bar hides away and glides
+  // back when the mouse touches the top edge (or on Ctrl+T / Ctrl+L /
+  // tab switches); the window buttons stay visible as a small floating
+  // capsule at the top right.
+  var strip = root.getElementById('strip');
+  var barPinned = false; // the mouse is over the bar area
+  var hideTimer = 0;
+  var briefTimer = 0;
+
+  function hideBar() { strip.classList.remove('open'); }
+  function hideIfIdle() {
+    if (!barPinned && document.activeElement !== input) hideBar();
+  }
+  function revealBar(brief) {
+    strip.classList.add('open');
+    if (hideTimer) { clearTimeout(hideTimer); hideTimer = 0; }
+    if (briefTimer) { clearTimeout(briefTimer); briefTimer = 0; }
+    if (brief && !barPinned) {
+      briefTimer = setTimeout(function () { briefTimer = 0; hideIfIdle(); }, 2000);
+    }
+  }
+  // Tripwires at the top edge. The .edge element is hit-tested above page
+  // content AND iframes; the document mousemove is the fast path.
+  root.getElementById('edge').addEventListener('mouseenter', function () { revealBar(false); });
+  document.addEventListener('mousemove', function (e) {
+    if (e.clientY <= 4) revealBar(false);
+  }, true);
+  strip.addEventListener('mouseenter', function () { barPinned = true; });
+  strip.addEventListener('mouseleave', function () {
+    barPinned = false;
+    if (hideTimer) clearTimeout(hideTimer);
+    hideTimer = setTimeout(hideIfIdle, 350);
+  });
+  var wcap = root.getElementById('wcap');
+  wcap.addEventListener('mouseenter', function () {
+    barPinned = true;
+    if (hideTimer) { clearTimeout(hideTimer); hideTimer = 0; }
+    revealBar(false);
+  });
+  wcap.addEventListener('mouseleave', function () {
+    barPinned = false;
+    if (hideTimer) clearTimeout(hideTimer);
+    hideTimer = setTimeout(hideIfIdle, 350);
+  });
+
   // Tabs render by keyed diff: existing pills are updated in place and only
   // genuinely new pills animate in - no rebuild, no flicker, no re-animation
   // of already-open tabs.
   var tabEls = [];
+  var prevA = 0;
+  var stateLive = false; // true once the first real state push rendered
   function buildTab() {
     var el = document.createElement('div');
     el.className = 'tab';
@@ -276,6 +343,7 @@ const barJS = `
         el.classList.add('in');
         tabEls[i] = el;
         tz.appendChild(el);
+        if (stateLive) revealBar(true); // show the new tab appearing
       }
       el.__idx = i;
       el.classList.toggle('on', i === S.a);
@@ -284,6 +352,8 @@ const barJS = `
     root.getElementById('bback').toggleAttribute('disabled', !S.b);
     root.getElementById('bfwd').toggleAttribute('disabled', !S.f);
     root.getElementById('wmax').innerHTML = S.m ? I_RST : I_MAX;
+    if (stateLive && prevA !== S.a) revealBar(true); // tab switched
+    prevA = S.a;
   }
 
   // --- the address bubble (in the top bar, beside the +) --------------------
@@ -301,6 +371,8 @@ const barJS = `
   });
   input.addEventListener('blur', function () {
     if (!hovering) setOpen(false);
+    if (hideTimer) clearTimeout(hideTimer);
+    hideTimer = setTimeout(hideIfIdle, 350);
   });
   input.addEventListener('focus', function () { setOpen(true); });
 
@@ -341,10 +413,13 @@ const barJS = `
   // The very top of the window (the bar's own backdrop) is a resize grip:
   // like any native window, drag it to resize from the top edge.
   document.addEventListener('mousedown', function (e) {
-    if (e.button === 0 && e.clientY < 6 && !document.fullscreenElement) {
-      e.preventDefault();
-      e.stopPropagation();
-      post({ t: 'ui', a: 'wtopresize' });
+    if (e.button === 0 && !document.fullscreenElement) {
+      var open = strip.classList.contains('open');
+      if (e.clientY < (open ? 3 : 6)) {
+        e.preventDefault();
+        e.stopPropagation();
+        post({ t: 'ui', a: 'wtopresize' });
+      }
     }
   }, true);
 
@@ -459,8 +534,9 @@ const barJS = `
     host.style.display = document.fullscreenElement ? 'none' : '';
   });
 
-  window.__okBar = function (s) { S = s; render(); sync(); };
+  window.__okBar = function (s) { S = s; render(); sync(); stateLive = true; };
   window.__okBubbleFocus = function () {
+    revealBar(false);
     setOpen(true);
     input.focus();
     input.select();

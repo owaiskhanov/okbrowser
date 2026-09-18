@@ -27,16 +27,18 @@ on a real Windows machine** by CI before it is published.
 **Liquid Glass UI, frameless** — the native title bar is gone; the app is
 just content:
 
-- **Tabs live in the topmost window bar**: small, extra-translucent glass
-  pills in the title-bar strip. A new tab animates in with a subtle pop
-  (existing pills never re-render, so no flicker). Drag the empty strip to
-  move the window, double-click to maximize; our own Windows min / max /
-  close buttons sit at the top right — the native title bar and its buttons
-  are fully removed, windowed *and* maximized (the classic borderless
-  `WS_POPUP | WS_THICKFRAME | WS_CAPTION` style + `WM_NCCALCSIZE`, with the
-  DWM shadow kept alive), so ours is the only top bar. CI hit-tests the real
-  window in both states to prove no native caption or button area exists,
-  and verifies the bar stays flush with the top after maximize → restore
+- **Immersive, content-first**: the page fills the whole window — nothing
+  sits on top of your content while you browse. The glass bar (tabs, `+`,
+  address bubble) hides away and glides back the instant your mouse touches
+  the top edge, and reveals itself on `Ctrl+T`, `Ctrl+L` and tab switches;
+  it slides away again when you leave it. Min / max / close live in a small
+  **always-visible glass capsule** at the top right. Drag the bar's empty
+  middle to move the window, double-click it to maximize; the top edge
+  resizes the window while the bar is hidden. No native title bar in any
+  state (borderless `WS_POPUP | WS_THICKFRAME | WS_CAPTION` style +
+  `WM_NCCALCSIZE`, DWM shadow kept alive) — CI hit-tests the real window in
+  both states to prove no native caption or button area exists, and
+  verifies the bar stays flush with the top after maximize → restore
 - **The address bar is a tiny glass bubble right beside the `+` button** in
   the top bar. It stays out of sight; hover or click it (or press `Ctrl+L`)
   and it liquidly expands in place into the full address capsule with back /
