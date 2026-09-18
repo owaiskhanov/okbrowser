@@ -400,6 +400,15 @@ func (e *Chromium) CallDevToolsProtocol(method, paramsJSON string) {
 	_ = e.webview.CallDevToolsProtocolMethod(method, paramsJSON, h)
 }
 
+// OpenDevTools opens the engine's DevTools window. (OK Browser addition.)
+func (e *Chromium) OpenDevTools() {
+	if e.webview == nil {
+		return
+	}
+	_, _, _ = e.webview.vtbl.OpenDevToolsWindow.Call(
+		uintptr(unsafe.Pointer(e.webview)))
+}
+
 // CanGoBack reports whether there is back history. (OK Browser addition.)
 func (e *Chromium) CanGoBack() bool {
 	if e.webview == nil {

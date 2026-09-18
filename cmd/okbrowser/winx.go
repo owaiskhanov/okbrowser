@@ -35,6 +35,30 @@ var (
 	procGetDpiForWindow         = modUser32.NewProc("GetDpiForWindow")
 )
 
+// procDwmExtendFrameIntoClientArea keeps the DWM frame (and with it the
+// soft drop shadow) alive for the borderless window.
+var procDwmExtendFrameIntoClientArea = syscall.NewLazyDLL("dwmapi.dll").NewProc("DwmExtendFrameIntoClientArea")
+
+// dwmExtendFrame applies the classic 1px DWM frame extension so a
+// borderless window keeps its drop shadow.
+func dwmExtendFrame(hwnd win.HWND) {
+	m := struct{ L, R, T, B int32 }{1, 1, 1, 1}
+	_, _, _ = procDwmExtendFrameIntoClientArea.Call(
+		uintptr(hwnd), uintptr(unsafe.Pointer(&m)))
+}
+
+// placementMaximized reports the committed maximize state. IsZoomed can
+// momentarily disagree with the actual placement during window-state
+// transitions, which must never leak into WM_NCCALCSIZE geometry.
+func placementMaximized(hwnd win.HWND) bool {
+	var wp win.WINDOWPLACEMENT
+	wp.Length = uint32(unsafe.Sizeof(wp))
+	if !win.GetWindowPlacement(hwnd, &wp) {
+		return false
+	}
+	return wp.ShowCmd == win.SW_SHOWMAXIMIZED
+}
+
 // smCXPaddedBorder is the GetSystemMetrics index of SM_CXPADDEDBORDER -
 // the invisible padding added to the resize frame. The ID is 92; the value
 // it returns is only a few pixels and must never be used as a pixel count.

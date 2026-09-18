@@ -27,6 +27,27 @@ class FakeElement {
   set textContent(v) { this._text = v; this.children = []; }
   get textContent() { return this._text; }
   appendChild(c) { c.parentNode = this; this.children.push(c); return c; }
+  remove() {
+    if (this.parentNode) {
+      const i = this.parentNode.children.indexOf(this);
+      if (i >= 0) this.parentNode.children.splice(i, 1);
+    }
+  }
+  get classList() {
+    const self = this;
+    const parts = () => self.className.split(/\s+/).filter(Boolean);
+    return {
+      add(c) { if (!parts().includes(c)) self.className = (self.className + ' ' + c).trim(); },
+      remove(c) { self.className = parts().filter(x => x !== c).join(' '); },
+      toggle(c, v) {
+        const has = parts().includes(c);
+        const want = v === undefined ? !has : v;
+        if (want && !has) this.add(c);
+        if (!want && has) this.remove(c);
+      },
+      contains(c) { return parts().includes(c); }
+    };
+  }
   addEventListener(t, f) { (this._listeners[t] = this._listeners[t] || []).push(f); }
   dispatch(t, ev) {
     ev = Object.assign({ stopPropagation() {}, preventDefault() {} }, ev);
@@ -130,6 +151,28 @@ assert.ok(!okb.className.includes('open'), 'bubble collapses after submit');
 
 win.__okBubbleFocus();
 assert.ok(okb.className.includes('open') && input.focused, 'Ctrl+L opens and focuses the bubble');
+
+// --- keyed rendering: pills update in place, only genuinely new ones animate ---
+const pill0 = tz.children[0];
+win.__okBar({ tabs: [{ t: 'A2' }, { t: 'B' }], a: 0, u: '', b: false, f: false, m: false });
+assert.strictEqual(tz.children[0], pill0, 'pills must be reused, not rebuilt');
+assert.strictEqual(tz.children[0].children[0]._text, 'A2', 'title updates in place');
+assert.strictEqual(tz.children.length, 2, 'removed pill is dropped');
+win.__okBar({ tabs: [{ t: 'A2' }, { t: 'B' }, { t: 'C' }], a: 2, u: '', b: false, f: false, m: false });
+assert.ok(tz.children[2].classList.contains('in'), 'new pill gets the subtle enter animation');
+tz.children[2].dispatch('animationend', {});
+assert.ok(!tz.children[2].classList.contains('in'), 'animation class removed after it ends');
+assert.ok(tz.children[2].classList.contains('on'), 'active pill marked via classList');
+
+// --- find in page ---
+assert.strictEqual(typeof win.__okFind, 'function', 'find API not installed');
+assert.strictEqual(typeof win.__okFindCycle, 'function', 'find-cycle API not installed');
+win.__okFind();
+const findEl = shadow.getElementById('find');
+assert.ok(findEl.classList.contains('open'), '__okFind opens the find bar');
+assert.ok(shadow.getElementById('fq').focused, 'find input focused');
+shadow.getElementById('fq').dispatch('keydown', { key: 'Escape', preventDefault() {} });
+assert.ok(!findEl.classList.contains('open'), 'Esc closes the find bar');
 
 // --- deferred mounting: document-start before <html> exists ---
 {

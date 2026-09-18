@@ -88,10 +88,11 @@ try {
     Log "WebView2 engine processes: $($wv.Count)"
     if ($wv.Count -eq 0 -and $fail -eq "") { $fail = "no WebView2 engine processes started" }
 
-    # Phase 2.5: maximized must show NO native caption band either - the
-    # app's own glass bar is the only top bar. Maximize the window and
-    # measure the non-client band above the client area (a kept caption
-    # band measures >= ~40 px; the resize frame alone is <= ~16 px).
+    # Phase 2.5: the app's own glass bar is the only top bar. Hit-test the
+    # real window in every state: no native caption/button hit areas may
+    # exist, the resize borders must survive, and maximize -> restore must
+    # leave the client flush with the window top (a stale-rect
+    # WM_NCCALCSIZE once pushed the whole bar above the visible window).
     if ($fail -eq "") {
         Add-Type -TypeDefinition @"
 using System;
@@ -103,28 +104,66 @@ public static class OKWin {
     [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, ref OKRECT r);
     [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref OKPT p);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
 }
 "@
+        function ProbeHT([IntPtr]$h, [int]$x, [int]$y) {
+            $lp = ($x -band 0xFFFF) -bor (($y -band 0xFFFF) -shl 16)
+            return [OKWin]::SendMessage($h, 0x0084, [IntPtr]::Zero, [IntPtr]$lp).ToInt64()
+        }
+        $badHT = @(2, 3, 8, 9, 20)  # HTCAPTION HTSYSMENU HTMINBUTTON HTMAXBUTTON HTCLOSE
         $proc.Refresh()
         $h = $proc.MainWindowHandle
         if ($h -ne [IntPtr]::Zero) {
-            [OKWin]::PostMessage($h, 0x0112, [IntPtr]0xF030, [IntPtr]::Zero) | Out-Null  # WM_SYSCOMMAND, SC_MAXIMIZE
+            $wr = New-Object OKRECT; $cr = New-Object OKRECT; $pt = New-Object OKPT
+            [OKWin]::GetWindowRect($h, [ref]$wr) | Out-Null
+            [OKWin]::GetClientRect($h, [ref]$cr) | Out-Null
+            [OKWin]::ClientToScreen($h, [ref]$pt) | Out-Null
+            Log ("windowed: window " + ($wr.Right - $wr.Left) + "x" + ($wr.Bottom - $wr.Top) + ", top band: " + ($pt.Y - $wr.Top) + " px (expect 0)")
+
+            # windowed: no native caption/button hit areas near the top
+            foreach ($dx in @(30, 70, 110)) {
+                $ht = ProbeHT $h ($pt.X + $cr.Right - $dx) ($pt.Y + 12)
+                if ($badHT -contains $ht) { $fail = "native caption/button hit area at windowed top-right (HT=$ht)" }
+            }
+            $ht = ProbeHT $h ($pt.X + [int]($cr.Right / 2)) ($pt.Y + 8)
+            if ($badHT -contains $ht) { $fail = "native caption hit area at windowed top-center (HT=$ht)" }
+            # the side resize borders must survive
+            $htL = ProbeHT $h ($wr.Left + 2) ([int](($wr.Top + $wr.Bottom) / 2))
+            Log "windowed hit-test: left edge HT=$htL (expect 10 = HTLEFT)"
+            if ($htL -ne 10) { $fail = "left resize border lost (HT=$htL)" }
+
+            # maximized: still no native bar, client pinned to the work area
+            [OKWin]::PostMessage($h, 0x0112, [IntPtr]0xF030, [IntPtr]::Zero) | Out-Null  # WM_SYSCOMMAND SC_MAXIMIZE
             Start-Sleep -Milliseconds 1500
-            $proc.Refresh()
-            $h = $proc.MainWindowHandle
-            $wr = New-Object OKRECT
-            $cr = New-Object OKRECT
-            $pt = New-Object OKPT
+            $proc.Refresh(); $h = $proc.MainWindowHandle
             [OKWin]::GetWindowRect($h, [ref]$wr) | Out-Null
             [OKWin]::GetClientRect($h, [ref]$cr) | Out-Null
             [OKWin]::ClientToScreen($h, [ref]$pt) | Out-Null
             $band = $pt.Y - $wr.Top
-            Log ("maximized check: window " + ($wr.Right - $wr.Left) + "x" + ($wr.Bottom - $wr.Top) + ", client " + ($cr.Right - $cr.Left) + "x" + ($cr.Bottom - $cr.Top) + ", top non-client band: $band px")
+            Log ("maximized: window " + ($wr.Right - $wr.Left) + "x" + ($wr.Bottom - $wr.Top) + ", client " + ($cr.Right - $cr.Left) + "x" + ($cr.Bottom - $cr.Top) + ", top band: $band px")
             if ($band -ge 40) { $fail = "native caption band still visible when maximized ($band px)" }
-            [OKWin]::PostMessage($h, 0x0112, [IntPtr]0xF120, [IntPtr]::Zero) | Out-Null  # WM_SYSCOMMAND, SC_RESTORE
-            Start-Sleep -Milliseconds 800
+            foreach ($dx in @(30, 70, 110)) {
+                $ht = ProbeHT $h ($pt.X + $cr.Right - $dx) ($pt.Y + 12)
+                if ($badHT -contains $ht) { $fail = "native caption/button hit area at maximized top-right (HT=$ht)" }
+            }
+            $ht = ProbeHT $h ($pt.X + [int]($cr.Right / 2)) ($pt.Y + 8)
+            if ($badHT -contains $ht) { $fail = "native caption hit area at maximized top-center (HT=$ht)" }
+
+            # restore: the bar must come back exactly flush with the top
+            [OKWin]::PostMessage($h, 0x0112, [IntPtr]0xF120, [IntPtr]::Zero) | Out-Null  # WM_SYSCOMMAND SC_RESTORE
+            Start-Sleep -Milliseconds 900
+            $proc.Refresh(); $h = $proc.MainWindowHandle
+            [OKWin]::GetWindowRect($h, [ref]$wr) | Out-Null
+            [OKWin]::GetClientRect($h, [ref]$cr) | Out-Null
+            [OKWin]::ClientToScreen($h, [ref]$pt) | Out-Null
+            $band = $pt.Y - $wr.Top
+            Log ("after restore: window " + ($wr.Right - $wr.Left) + "x" + ($wr.Bottom - $wr.Top) + ", top band: $band px (expect ~0)")
+            if ($band -gt 6) { $fail = "client detached from window top after restore ($band px) - the bar would vanish" }
+            $htL = ProbeHT $h ($wr.Left + 2) ([int](($wr.Top + $wr.Bottom) / 2))
+            if ($htL -ne 10) { $fail = "left resize border lost after restore (HT=$htL)" }
         } else {
-            Log "maximized check skipped: no window handle"
+            Log "frameless checks skipped: no window handle"
         }
     }
 

@@ -159,6 +159,13 @@ func (a *app) closeTab(i int) {
 		return
 	}
 	t := a.tabs[i]
+	if t.url != "" && !t.isStart {
+		// Remember it for Ctrl+Shift+T (reopen closed tab).
+		a.closedTabs = append(a.closedTabs, t.url)
+		if len(a.closedTabs) > 16 {
+			a.closedTabs = a.closedTabs[len(a.closedTabs)-16:]
+		}
+	}
 	t.chromium.Close()
 	win.DestroyWindow(t.host)
 	a.tabs = append(a.tabs[:i], a.tabs[i+1:]...)

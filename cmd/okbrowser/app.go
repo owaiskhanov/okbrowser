@@ -37,6 +37,17 @@ const (
 	cmdNextTab      = 213
 	cmdPrevTab      = 214
 	cmdNewTab       = 215
+
+	// Chrome-compatible additions.
+	cmdSelectTab   = 220 // +0..7 for Ctrl+1..8
+	cmdLastTab     = 230
+	cmdReopenTab   = 231
+	cmdHardReload  = 232
+	cmdCloseWindow = 233
+	cmdFind        = 234
+	cmdFindNext    = 235
+	cmdFindPrev    = 236
+	cmdDevTools    = 237
 )
 
 // app is the browser window. The entire UI - the Liquid Glass bar with tabs,
@@ -60,6 +71,9 @@ type app struct {
 
 	// lastSpawn throttles popup storms from web pages.
 	lastSpawn time.Time
+
+	// closedTabs remembers recently closed tab URLs for Ctrl+Shift+T.
+	closedTabs []string
 
 	// taskMu + taskQueue: work posted from engine callbacks, executed in
 	// the normal window-proc context via WM_APP. Engine callbacks must not
@@ -129,31 +143,35 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		return 0
 
 	case win.WM_NCCALCSIZE:
-		// Remove the native caption band in BOTH states - the glass shell
-		// bar is the only top bar, windowed or maximized.
-		//
-		// The rects are in SCREEN coordinates, so the top edge is derived
-		// from the real window rect (absolute values would only work by
-		// accident). Left/right/bottom keep the system-proposed frame
-		// insets, so the resize borders and the DWM shadow keep working.
+		// Frameless geometry - the glass shell bar is the only top bar,
+		// windowed or maximized. On entry rgrc[0] holds the PROPOSED
+		// window rect in screen coordinates; the client rect must be
+		// derived from THAT, never from GetWindowRect - its value can be
+		// stale during maximize/restore transitions, which once pushed
+		// the whole bar above the visible window after restoring.
 		if wp != 0 {
 			p := (*ncCalcSizeParams)(lp)
-			var wr win.RECT
-			win.GetWindowRect(hwnd, &wr)
-			// The resize frame = size frame + padded border. (The padded
-			// border's metric ID is 92; its VALUE is only a few pixels -
-			// do not confuse the two.)
-			frameY := win.GetSystemMetrics(win.SM_CYFRAME) +
-				win.GetSystemMetrics(smCXPaddedBorder)
-			if win.IsZoomed(hwnd) {
-				// A maximized window overhangs the monitor by the resize
-				// frame; keep exactly that inset so no content is clipped
-				// off-screen - but no caption band: our bar is the top bar.
-				p.Rc0.Top = wr.Top + frameY
-			} else {
-				// Client starts flush with the window's top edge.
-				p.Rc0.Top = wr.Top
+			if win.GetWindowLong(hwnd, win.GWL_STYLE)&win.WS_THICKFRAME == 0 {
+				return 0 // F11 fullscreen: the whole window is client
 			}
+			if placementMaximized(hwnd) {
+				// Maximized: the client area is the monitor work area,
+				// exactly - no caption band, nothing clipped, taskbar
+				// respected.
+				var mi win.MONITORINFO
+				mi.CbSize = uint32(unsafe.Sizeof(mi))
+				if mon := win.MonitorFromWindow(hwnd, win.MONITOR_DEFAULTTONEAREST); mon != 0 && win.GetMonitorInfo(mon, &mi) {
+					p.Rc0 = mi.RcWork
+				}
+				return 0
+			}
+			// Windowed: keep the resize frame on the sides and bottom
+			// (native resize borders + DWM shadow), but pull the client
+			// up to the window's top edge so the glass bar is flush.
+			fx := int32(win.GetSystemMetrics(win.SM_CXFRAME) + win.GetSystemMetrics(smCXPaddedBorder))
+			fy := int32(win.GetSystemMetrics(win.SM_CYFRAME) + win.GetSystemMetrics(smCXPaddedBorder))
+			r := p.Rc0
+			p.Rc0 = win.RECT{Left: r.Left + fx, Top: r.Top, Right: r.Right - fx, Bottom: r.Bottom - fy}
 			return 0
 		}
 		return 0
@@ -215,18 +233,32 @@ func NewApp(startURL string) (*app, bool) {
 
 	cn, _ := syscall.UTF16PtrFromString(mainClassName)
 	tn, _ := syscall.UTF16PtrFromString(appName)
-	// The window keeps the standard styles (so resizing, Aero Snap and the
-	// DWM shadow all work), but WM_NCCALCSIZE removes the caption band:
-	// no native title bar, no Windows-drawn min/max/close - the glass shell
-	// bar is the only top bar.
+	// The classic borderless "aero" style: WS_POPUP combined with
+	// WS_CAPTION suppresses the native title bar and DWM's own
+	// min/max/close buttons in EVERY window state (plain WS_OVERLAPPEDWINDOW
+	// + WM_NCCALCSIZE leaves DWM's floating caption buttons behind), while
+	// keeping the DWM animations and shadow, resizing (WS_THICKFRAME),
+	// Aero Snap and the system menu. WM_NCCALCSIZE above makes the glass
+	// bar the only top bar.
+	w, h := a.scaled(1180), a.scaled(820)
+	sw, sh := int32(win.GetSystemMetrics(win.SM_CXSCREEN)), int32(win.GetSystemMetrics(win.SM_CYSCREEN))
+	x, y := (sw-w)/2, (sh-h)/2 // WS_POPUP ignores CW_USEDEFAULT
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
 	a.hwnd = win.CreateWindowEx(0, cn, tn,
-		win.WS_OVERLAPPEDWINDOW|win.WS_CLIPCHILDREN,
-		win.CW_USEDEFAULT, win.CW_USEDEFAULT,
-		a.scaled(1180), a.scaled(820),
+		win.WS_POPUP|win.WS_THICKFRAME|win.WS_CAPTION|win.WS_SYSMENU|
+			win.WS_MINIMIZEBOX|win.WS_MAXIMIZEBOX|win.WS_CLIPCHILDREN,
+		x, y, w, h,
 		0, 0, a.instance, nil)
 	if a.hwnd == 0 {
 		return nil, false
 	}
+	// Keep the DWM drop shadow for the borderless window.
+	dwmExtendFrame(a.hwnd)
 	if d := dpiOf(a.hwnd); d > 0 && d != int(a.scale*96) {
 		a.scale = float64(d) / 96.0
 	}
@@ -318,6 +350,31 @@ func (a *app) createAccelerators() {
 		{fVirtKey | fControl, '0', cmdZoomReset},
 		{fVirtKey | fControl, 'P', cmdPrint},
 		{fVirtKey, win.VK_F11, cmdFullscreen},
+
+		// Chrome-compatible additions.
+		{fVirtKey | fControl, '1', cmdSelectTab},
+		{fVirtKey | fControl, '2', cmdSelectTab + 1},
+		{fVirtKey | fControl, '3', cmdSelectTab + 2},
+		{fVirtKey | fControl, '4', cmdSelectTab + 3},
+		{fVirtKey | fControl, '5', cmdSelectTab + 4},
+		{fVirtKey | fControl, '6', cmdSelectTab + 5},
+		{fVirtKey | fControl, '7', cmdSelectTab + 6},
+		{fVirtKey | fControl, '8', cmdSelectTab + 7},
+		{fVirtKey | fControl, '9', cmdLastTab},
+		{fVirtKey | fControl, 'K', cmdFocusAddress},
+		{fVirtKey | fControl, 'E', cmdFocusAddress},
+		{fVirtKey | fControl, 'F', cmdFind},
+		{fVirtKey | fControl, 'G', cmdFindNext},
+		{fVirtKey | fControl | fShift, 'T', cmdReopenTab},
+		{fVirtKey | fControl | fShift, 'R', cmdHardReload},
+		{fVirtKey | fControl | fShift, 'W', cmdCloseWindow},
+		{fVirtKey | fControl | fShift, 'G', cmdFindPrev},
+		{fVirtKey | fControl | fShift, 'I', cmdDevTools},
+		{fVirtKey, win.VK_F3, cmdFindNext},
+		{fVirtKey | fShift, win.VK_F3, cmdFindPrev},
+		{fVirtKey, win.VK_F12, cmdDevTools},
+		{fVirtKey | fControl, win.VK_NEXT, cmdNextTab},
+		{fVirtKey | fControl, win.VK_PRIOR, cmdPrevTab},
 	})
 }
 
@@ -400,6 +457,27 @@ func (a *app) onAccelerator(vk uint) bool {
 		case 'P':
 			a.onCommand(cmdPrint)
 			return true
+		case 'K', 'E':
+			a.onCommand(cmdFocusAddress)
+			return true
+		case 'F':
+			a.onCommand(cmdFind)
+			return true
+		case 'G':
+			a.onCommand(cmdFindNext)
+			return true
+		case '1', '2', '3', '4', '5', '6', '7', '8':
+			a.onCommand(cmdSelectTab + int(vk-'1'))
+			return true
+		case '9':
+			a.onCommand(cmdLastTab)
+			return true
+		case win.VK_NEXT:
+			a.onCommand(cmdNextTab)
+			return true
+		case win.VK_PRIOR:
+			a.onCommand(cmdPrevTab)
+			return true
 		case '0':
 			a.onCommand(cmdZoomReset)
 			return true
@@ -415,8 +493,27 @@ func (a *app) onAccelerator(vk uint) bool {
 		}
 
 	case ctrl && shift && !alt:
-		if vk == win.VK_TAB {
+		switch vk {
+		case win.VK_TAB:
 			a.onCommand(cmdPrevTab)
+			return true
+		case 'T':
+			a.onCommand(cmdReopenTab)
+			return true
+		case 'R':
+			a.onCommand(cmdHardReload)
+			return true
+		case 'W':
+			a.onCommand(cmdCloseWindow)
+			return true
+		case 'G':
+			a.onCommand(cmdFindPrev)
+			return true
+		case 'I':
+			a.onCommand(cmdDevTools)
+			return true
+		case win.VK_F3:
+			a.onCommand(cmdFindPrev)
 			return true
 		}
 
@@ -440,6 +537,12 @@ func (a *app) onAccelerator(vk uint) bool {
 			return true
 		case win.VK_F11:
 			a.onCommand(cmdFullscreen)
+			return true
+		case win.VK_F3:
+			a.onCommand(cmdFindNext)
+			return true
+		case win.VK_F12:
+			a.onCommand(cmdDevTools)
 			return true
 		}
 	}
@@ -512,6 +615,42 @@ func (a *app) onCommand(id int) {
 		}
 	case cmdFullscreen:
 		a.toggleFullscreen()
+
+	// Chrome-compatible additions.
+	case cmdSelectTab: // +0..7 = Ctrl+1..8
+		if n := id - cmdSelectTab; n >= 0 && n < len(a.tabs) {
+			a.switchToTab(n)
+		}
+	case cmdLastTab:
+		if len(a.tabs) > 0 {
+			a.switchToTab(len(a.tabs) - 1)
+		}
+	case cmdReopenTab:
+		if n := len(a.closedTabs); n > 0 {
+			url := a.closedTabs[n-1]
+			a.closedTabs = a.closedTabs[:n-1]
+			a.postNewTab(url)
+		}
+	case cmdHardReload:
+		if t != nil && t.chromium != nil {
+			if t.isStart {
+				a.showStartPage(t)
+			} else {
+				t.chromium.CallDevToolsProtocol("Page.reload", `{"ignoreCache":true}`)
+			}
+		}
+	case cmdCloseWindow:
+		win.DestroyWindow(a.hwnd)
+	case cmdFind:
+		a.execActive("window.__okFind&&window.__okFind()")
+	case cmdFindNext:
+		a.execActive("window.__okFindCycle&&window.__okFindCycle(1)")
+	case cmdFindPrev:
+		a.execActive("window.__okFindCycle&&window.__okFindCycle(-1)")
+	case cmdDevTools:
+		if t != nil && t.chromium != nil {
+			t.chromium.OpenDevTools()
+		}
 	}
 }
 

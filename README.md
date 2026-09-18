@@ -27,17 +27,20 @@ on a real Windows machine** by CI before it is published.
 **Liquid Glass UI, frameless** — the native title bar is gone; the app is
 just content:
 
-- **Tabs live in the topmost window bar**: sleek glass pills in the title-bar
-  strip. Drag the empty strip to move the window, double-click to maximize;
-  our own Windows min / max / close buttons sit at the top right — the native
-  title bar and its buttons are fully removed, windowed *and* maximized
-  (WM_NCCALCSIZE frameless; CI measures the maximized window to prove no
-  caption band ever comes back
-  technique), so ours is the only top bar
-- **The address bar is a tiny glass bubble** floating at the bottom center
-  (iOS-style). It stays out of sight; hover or click it (or press `Ctrl+L`)
-  and it liquidly expands into the full address capsule with back / forward /
-  reload / go — collapse happens automatically when you leave it
+- **Tabs live in the topmost window bar**: small, extra-translucent glass
+  pills in the title-bar strip. A new tab animates in with a subtle pop
+  (existing pills never re-render, so no flicker). Drag the empty strip to
+  move the window, double-click to maximize; our own Windows min / max /
+  close buttons sit at the top right — the native title bar and its buttons
+  are fully removed, windowed *and* maximized (the classic borderless
+  `WS_POPUP | WS_THICKFRAME | WS_CAPTION` style + `WM_NCCALCSIZE`, with the
+  DWM shadow kept alive), so ours is the only top bar. CI hit-tests the real
+  window in both states to prove no native caption or button area exists,
+  and verifies the bar stays flush with the top after maximize → restore
+- **The address bar is a tiny glass bubble right beside the `+` button** in
+  the top bar. It stays out of sight; hover or click it (or press `Ctrl+L`)
+  and it liquidly expands in place into the full address capsule with back /
+  forward / reload / go — collapse happens automatically when you leave it
 - Everything renders inside the web engine's GPU compositor with real
   `backdrop-filter` blur of the page beneath the glass
 - Light and dark glass follow Windows automatically; everything hides during
@@ -52,6 +55,7 @@ just content:
 - `target="_blank"` links, middle-click on links and `window.open()` open a **new tab**; `Ctrl+N` opens a new window
 - Zoom (`Ctrl+ +` / `Ctrl+-` / `Ctrl+0`), print (`Ctrl+P`), fullscreen (`F11`), mouse buttons 4/5 for back/forward
 - Right-click context menus, F12 DevTools, hover link preview, downloads (the engine's download UI)
+- **Find in page** (`Ctrl+F`) with a match counter, next / previous and highlight
 - High-DPI aware (crisp on any monitor, follows the window between screens); the bar reflows correctly at **any window size**
 - Persistent profile: logins and cookies are kept in `%LOCALAPPDATA%\OKBrowser`
 - Proper Windows app icon, version info and GUI subsystem (no console flash)
@@ -60,7 +64,7 @@ just content:
 
 | Keys | Action |
 |---|---|
-| `Ctrl+L` / `Alt+D` | Focus the address bar (selects all) |
+| `Ctrl+L` / `Ctrl+K` / `Ctrl+E` / `Alt+D` | Focus the address bar (selects all) |
 | `Enter` | Navigate to what you typed |
 | `Alt+←` / `Alt+→` | Back / forward |
 | Mouse button 4 / 5 | Back / forward |
@@ -70,8 +74,15 @@ just content:
 | Hover the bottom bubble | Expand the address bar |
 | `Ctrl+N` | New window |
 | `Ctrl+W` | Close tab (window when last tab) |
-| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
+| `Ctrl+Shift+W` | Close window |
+| `Ctrl+Shift+T` | Reopen last closed tab |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` (or `Ctrl+PgDn` / `Ctrl+PgUp`) | Next / previous tab |
+| `Ctrl+1` … `Ctrl+8` | Switch to tab 1 … 8 |
+| `Ctrl+9` | Switch to the last tab |
 | Middle-click a tab | Close tab |
+| `Ctrl+F` | Find in page (`Enter` / `Shift+Enter` next / previous, `F3` / `Ctrl+G` / `Ctrl+Shift+G` also cycle, `Esc` closes) |
+| `Ctrl+Shift+R` / `Shift+F5` | Hard reload (bypasses cache) |
+| `F12` / `Ctrl+Shift+I` | DevTools |
 | `Ctrl+ +` / `Ctrl+-` / `Ctrl+0` | Zoom in / out / reset |
 | `Ctrl+P` | Print |
 | `F11` | Fullscreen |
