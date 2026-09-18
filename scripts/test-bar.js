@@ -10,7 +10,7 @@ const path = require('path');
 const assert = require('assert');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'cmd', 'okbrowser', 'bridge.go'), 'utf8');
-const m = src.match(/const barJS = `\n([\s\S]*?)`\n/);
+const m = src.match(/const barJS = `\r?\n([\s\S]*?)`/);
 assert(m, 'barJS not found in bridge.go');
 const js = m[1];
 
