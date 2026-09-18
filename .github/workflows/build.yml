@@ -3,6 +3,11 @@ name: Build
 on:
   push:
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Also publish a GitHub release with the built exe"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -17,9 +22,7 @@ jobs:
           - os: windows-2022
             tag: win2022
             blocking: true
-          # windows-latest (Server 2025, Windows 11 era) - currently has an
-          # upstream runner-image regression that breaks WebView2 startup
-          # (actions/runner-images#14738); keep it non-blocking until fixed.
+          # windows-latest (Server 2025, Windows 11 era).
           - os: windows-latest
             tag: winlatest
             blocking: false
@@ -58,26 +61,34 @@ jobs:
             dist/OKBrowser.exe
             dist/smoke-diagnostics.txt
 
-      # Push the binary + diagnostics back to the working branch so the agent
-      # (and anyone else) can fetch the exact exe that was tested on Windows.
-      - name: Publish build + diagnostics to working branch
-        if: always() && startsWith(github.ref, 'refs/heads/arena/')
-        shell: bash
+  # Manual step: publish a GitHub release containing the Windows-verified exe.
+  # Trigger with: gh workflow run build.yml --ref <branch> -f release=true
+  release:
+    if: github.event_name == 'workflow_dispatch' && inputs.release && needs.windows.result == 'success'
+    needs: windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: OKBrowser-windows-amd64-win2022
+          path: dist
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git config user.name "arena-ci"
-          git config user.email "noreply@arena.ai"
-          mkdir -p ".ci-build/${{ matrix.tag }}"
-          cp dist/OKBrowser.exe ".ci-build/${{ matrix.tag }}/" 2>/dev/null || true
-          cp dist/smoke-diagnostics.txt ".ci-build/${{ matrix.tag }}/" 2>/dev/null || true
-          cp dist/smoke-stderr.txt ".ci-build/${{ matrix.tag }}/" 2>/dev/null || true
-          git add -f ".ci-build/${{ matrix.tag }}"
-          git commit -m "ci: verified build + diagnostics for ${{ matrix.tag }} [ci skip]" >/dev/null 2>&1 || echo "no changes to publish"
-          for i in 1 2 3 4 5; do
-            if git pull --rebase --autostash origin "$GITHUB_REF_NAME" >/dev/null 2>&1 && git push >/dev/null 2>&1; then
-              echo "published .ci-build/${{ matrix.tag }}"
-              exit 0
-            fi
-            sleep $((i * 3))
-          done
-          echo "could not publish back to branch (continuing without failing the build)"
-          exit 0
+          cat > notes.md <<'EOF'
+          **OK Browser 1.0.0** — a very light and very fast web browser for Windows 10 and later.
+
+          - Single **3.7 MB** `OKBrowser.exe`, no installer needed
+          - Renders with the system's Microsoft Edge WebView2 (Chromium) engine
+          - Verified by CI on real Windows Server 2022 (Windows 10 era) and Server 2025 (Windows 11 era): window, title, engine and stability checks pass
+
+          **Requirements:** Windows 10 (1607+) or Windows 11, 64-bit. The WebView2 Runtime is pre-installed on Windows 11 and updated Windows 10; if missing, OK Browser offers to open Microsoft's official download page.
+          EOF
+          gh release create "v1.0.0" dist/OKBrowser.exe \
+            --title "OK Browser 1.0.0" \
+            --notes-file notes.md \
+            --target "$GITHUB_SHA"

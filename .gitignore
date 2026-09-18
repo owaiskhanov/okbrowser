@@ -6,3 +6,4 @@ dist/
 # Editor noise
 .vscode/
 .idea/
+.ci-build/
