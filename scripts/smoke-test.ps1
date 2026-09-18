@@ -1,7 +1,8 @@
 # Smoke test: launches OKBrowser.exe on a real Windows machine and verifies
-# that the window appears, the title is right, the WebView2 engine starts and
-# the process stays alive. Writes a diagnostics report next to the exe so CI
-# can publish it even when this script fails.
+# that (1) the window appears, (2) the WebView2 engine starts, and (3) a REAL
+# navigation succeeds - the app is launched with https://example.com and the
+# window title must become the page title. Writes a diagnostics report next
+# to the exe so CI can publish it even when this script fails.
 param(
     [string]$Exe = (Join-Path $PSScriptRoot "..\dist\OKBrowser.exe"),
     [string]$DiagFile = ""
@@ -13,10 +14,12 @@ $diag = New-Object System.Collections.Generic.List[string]
 function Log($m) { Write-Host "[smoke] $m"; $diag.Add("$m") }
 
 $fail = ""
+$proc = $null
+$errFile = Join-Path (Split-Path $Exe -Parent) "smoke-stderr.txt"
 try {
     if (-not (Test-Path $Exe)) { throw "Executable not found: $Exe" }
     $full = (Resolve-Path $Exe).Path
-    Log "launching $full"
+    Log "launching $full https://example.com"
     Log ("OS: " + [System.Environment]::OSVersion.VersionString)
 
     # Report the installed WebView2 runtime from the registry.
@@ -24,23 +27,20 @@ try {
         "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
         "HKCU:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
     )
-    $found = $false
     foreach ($rp in $regPaths) {
         if (Test-Path $rp) {
             $pv = (Get-ItemProperty $rp -ErrorAction SilentlyContinue).pv
             Log "WebView2 runtime registry ($rp): pv=$pv"
-            if ($pv) { $found = $true }
         } else {
             Log "WebView2 runtime registry missing: $rp"
         }
     }
-    if (-not $found) { Log "WARNING: no WebView2 runtime version found in registry" }
 
-    $errFile = Join-Path (Split-Path $Exe -Parent) "smoke-stderr.txt"
     $outFile = Join-Path (Split-Path $Exe -Parent) "smoke-stdout.txt"
-    $proc = Start-Process -FilePath $full -PassThru -RedirectStandardError $errFile -RedirectStandardOutput $outFile
+    $proc = Start-Process -FilePath $full -ArgumentList "https://example.com" -PassThru -RedirectStandardError $errFile -RedirectStandardOutput $outFile
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
+    # Phase 1: window appears.
     $sawWindow = $false
     $title = ""
     $deadline = (Get-Date).AddSeconds(30)
@@ -60,12 +60,29 @@ try {
     }
     if (-not $sawWindow) { $fail = "no main window appeared within 30 seconds" }
 
-    if ($title -and $title -notlike "*OK Browser*") { $fail = "unexpected window title '$title'" }
+    # Phase 2: the real navigation must complete - the window title becomes
+    # the page title ("Example Domain"). This is the end-to-end test that a
+    # URL actually loads and reports back.
+    $navOk = $false
+    $deadline = (Get-Date).AddSeconds(35)
+    while ((Get-Date) -lt $deadline) {
+        if ($proc.HasExited) { $fail = "process exited during navigation (code $($proc.ExitCode))"; break }
+        $proc.Refresh()
+        $title = $proc.MainWindowTitle
+        if ($title -like "*Example Domain*") {
+            $navOk = $true
+            Log "navigation OK after $($sw.ElapsedMilliseconds) ms, title: '$title'"
+            break
+        }
+        Start-Sleep -Milliseconds 300
+    }
+    if (-not $navOk -and $fail -eq "") {
+        $fail = "navigation to https://example.com did not complete; title stayed: '$title'"
+    }
 
-    # Give the engine time to spin up fully, then confirm stability.
-    Start-Sleep -Seconds 5
+    Start-Sleep -Seconds 2
     $proc.Refresh()
-    if ($proc.HasExited) { $fail = "process exited after startup (code $($proc.ExitCode))" }
+    if ($proc.HasExited -and $fail -eq "") { $fail = "process exited after startup (code $($proc.ExitCode))" }
 
     $wv = @(Get-Process msedgewebview2 -ErrorAction SilentlyContinue)
     Log "WebView2 engine processes: $($wv.Count)"
@@ -90,6 +107,6 @@ if ($fail -ne "") {
     $diag | Set-Content -Encoding UTF8 $DiagFile
     exit 1
 }
-Log "PASS: window, title and web engine all OK."
+Log "PASS: window, web engine and real navigation all OK."
 $diag | Set-Content -Encoding UTF8 $DiagFile
 exit 0

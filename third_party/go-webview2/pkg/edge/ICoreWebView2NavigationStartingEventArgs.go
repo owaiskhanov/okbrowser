@@ -12,10 +12,10 @@ import (
 
 type _ICoreWebView2NavigationStartingEventArgsVtbl struct {
 	_IUnknownVtbl
-	GetUri           ComProc
+	GetUri             ComProc
 	GetIsUserInitiated ComProc
-	GetIsRedirected  ComProc
-	GetRequest       ComProc
+	GetIsRedirected    ComProc
+	GetRequest         ComProc
 }
 
 type ICoreWebView2NavigationStartingEventArgs struct {

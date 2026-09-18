@@ -3,8 +3,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/jchv/go-webview2/pkg/edge"
@@ -23,6 +25,7 @@ type tab struct {
 	title   string
 	url     string
 	isStart bool
+	errPage bool // the currently shown page is our error page
 	zoom    float64
 }
 
@@ -57,8 +60,8 @@ func (a *app) newTab(url string, activate bool) *tab {
 	c.NavigationStartingCallback = func(_ *edge.ICoreWebView2, args *edge.ICoreWebView2NavigationStartingEventArgs) {
 		a.onNavStarting(t, args)
 	}
-	c.NavigationCompletedCallback = func(*edge.ICoreWebView2, *edge.ICoreWebView2NavigationCompletedEventArgs) {
-		a.onNavCompleted(t)
+	c.NavigationCompletedCallback = func(_ *edge.ICoreWebView2, args *edge.ICoreWebView2NavigationCompletedEventArgs) {
+		a.onNavCompleted(t, args)
 	}
 	t.chromium = c
 
@@ -187,18 +190,136 @@ func (a *app) onNavStarting(t *tab, args *edge.ICoreWebView2NavigationStartingEv
 	}
 	t.url = uri
 	t.isStart = false
+	t.errPage = false
 	if a.isActive(t) {
 		a.pushBarState()
 	}
 }
 
-// onNavCompleted refreshes bar state, zoom and titles after a load.
-func (a *app) onNavCompleted(t *tab) {
+// onNavCompleted refreshes bar state, zoom and titles after a load, and
+// turns failed navigations into a visible glass error page with the reason
+// and a retry button - a browser must never fail silently.
+func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompletedEventArgs) {
 	if t.chromium == nil {
 		return
+	}
+	if args != nil && !t.errPage {
+		if ok, err := args.GetIsSuccess(); err == nil && !ok {
+			code, _ := args.GetWebErrorStatus()
+			// 14 = OperationCanceled (user stopped or replaced the
+			// navigation) - not an error worth showing.
+			if code != 0 && code != 14 && t.url != "" {
+				a.showErrorPage(t, code)
+				return
+			}
+		}
 	}
 	a.applyZoomTab(t)
 	a.pushBarState()
 	a.scheduleBarPush(false)
 	t.chromium.Eval(`window.__ok && window.__ok({ t: "nav", u: location.href, d: document.title })`)
+}
+
+// showErrorPage replaces the tab's content with a glass error page that
+// explains what went wrong and offers a retry.
+func (a *app) showErrorPage(t *tab, code uint32) {
+	name, hint := webErrorText(code)
+	url := t.url
+	t.errPage = true
+	t.title = "Can't reach this page"
+	if a.isActive(t) {
+		a.syncTitle()
+		a.pushBarState()
+	}
+	u, _ := json.Marshal(url)
+	t.chromium.NavigateToString(errorHTML(string(u), name, hint))
+}
+
+// webErrorText maps a COREWEBVIEW2_WEB_ERROR_STATUS to a friendly message.
+func webErrorText(code uint32) (name, hint string) {
+	switch code {
+	case 1:
+		return "Certificate name is incorrect", "The site's security certificate doesn't match its address."
+	case 2:
+		return "Certificate expired", "The site's security certificate has expired."
+	case 3:
+		return "Client certificate error", "The client certificate has errors."
+	case 4:
+		return "Certificate revoked", "The site's security certificate was revoked."
+	case 5:
+		return "Certificate is invalid", "The site's security certificate is not valid."
+	case 6:
+		return "Server unreachable", "The host could not be reached. Check your internet connection."
+	case 7:
+		return "Connection timed out", "The site took too long to respond."
+	case 8:
+		return "Invalid server response", "The server returned an invalid or unrecognized response."
+	case 9:
+		return "Connection aborted", "The connection was aborted."
+	case 10:
+		return "Connection reset", "The connection was reset."
+	case 11:
+		return "Disconnected", "The internet connection was lost."
+	case 12:
+		return "Can't connect", "A connection to the site could not be established."
+	case 13:
+		return "Can't find the site", "The host name could not be resolved (DNS). Check the address or your connection."
+	case 15:
+		return "Redirect failed", "A redirect failed."
+	case 16:
+		return "Unexpected error", "An unexpected error occurred."
+	}
+	return "Can't reach this page", "The navigation failed."
+}
+
+// errorHTML renders the minimal glass error page. urlJSON must be a
+// pre-marshaled JSON string.
+func errorHTML(urlJSON, name, hint string) string {
+	return `<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Can't reach this page</title>
+<style>
+  :root { --fg:#202124; --muted:#5f6368; --card:#fff; --border:#e3e3e3; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg:#e8eaed; --muted:#9aa0a6; --card:#292a2d; --border:#3c4043; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+    font-family:'Segoe UI',system-ui,sans-serif; color:var(--fg);
+  }
+  .card {
+    max-width:460px; width:92vw; padding:36px 34px; border-radius:22px;
+    background:color-mix(in srgb, var(--card) 72%, transparent);
+    backdrop-filter:blur(24px) saturate(1.6); -webkit-backdrop-filter:blur(24px) saturate(1.6);
+    box-shadow:0 16px 48px rgba(0,0,0,.14), inset 0 1px 0 rgba(255,255,255,.5),
+               inset 0 0 0 .5px var(--border);
+    text-align:center;
+  }
+  .ico { font-size:42px; }
+  h1 { font-size:20px; margin:14px 0 6px; }
+  p  { color:var(--muted); font-size:13.5px; line-height:1.55; margin:6px 0; word-break:break-all; }
+  .url { font-family:ui-monospace,Consolas,monospace; font-size:12px; opacity:.85; }
+  button {
+    margin-top:20px; padding:11px 30px; border:0; border-radius:18px; cursor:pointer;
+    font:600 13.5px 'Segoe UI',system-ui,sans-serif; color:#fff;
+    background:rgba(10,132,255,.92); transition:background .15s, transform .12s;
+  }
+  button:hover { background:rgba(10,132,255,1); }
+  button:active { transform:scale(.95); }
+</style></head><body>
+<div class="card">
+  <div class="ico">&#127760;</div>
+  <h1>` + name + `</h1>
+  <p>` + hint + `</p>
+  <p class="url">` + htmlEsc(urlJSON[1:len(urlJSON)-1]) + `</p>
+  <button onclick="window.__ok({t:'go',u:` + urlJSON + `})">Try again</button>
+</div>
+</body></html>`
+}
+
+// htmlEsc escapes text for safe interpolation into HTML.
+func htmlEsc(s string) string {
+	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&#34;", "'", "&#39;")
+	return r.Replace(s)
 }
