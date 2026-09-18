@@ -168,8 +168,8 @@ func NewApp(startURL string) (*app, bool) {
 		return nil, false
 	}
 
-	// The window may have been placed on a monitor whose DPI differs from
-	// the primary one; re-sync before creating fonts and controls.
+	// Re-sync DPI, fonts and controls, then show the window right away so
+	// the browser feels instant; the engine fills the rest in a moment.
 	if d := dpiOf(a.hwnd); d > 0 && d != int(a.scale*96) {
 		a.scale = float64(d) / 96.0
 	}
@@ -178,6 +178,8 @@ func NewApp(startURL string) (*app, bool) {
 	a.createControls()
 	a.createAccelerators()
 	a.layout()
+	win.ShowWindow(a.hwnd, win.SW_SHOW)
+	win.UpdateWindow(a.hwnd)
 
 	if !a.embedWebView() {
 		return nil, false
@@ -190,8 +192,6 @@ func NewApp(startURL string) (*app, bool) {
 		a.goHome()
 	}
 
-	win.ShowWindow(a.hwnd, win.SW_SHOW)
-	win.UpdateWindow(a.hwnd)
 	a.chromium.Focus()
 	return a, true
 }

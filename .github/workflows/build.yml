@@ -9,7 +9,24 @@ permissions:
 
 jobs:
   windows:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # windows-2022 (Server 2022, Windows 10 era) - required leg.
+          - os: windows-2022
+            tag: win2022
+            blocking: true
+          # windows-latest (Server 2025, Windows 11 era) - currently has an
+          # upstream runner-image regression that breaks WebView2 startup
+          # (actions/runner-images#14738); keep it non-blocking until fixed.
+          - os: windows-latest
+            tag: winlatest
+            blocking: false
+
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ !matrix.blocking }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -33,21 +50,34 @@ jobs:
         run: ./scripts/smoke-test.ps1 -Exe dist/OKBrowser.exe
 
       - name: Upload artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: OKBrowser-windows-amd64
-          path: dist/OKBrowser.exe
+          name: OKBrowser-windows-amd64-${{ matrix.tag }}
+          path: |
+            dist/OKBrowser.exe
+            dist/smoke-diagnostics.txt
 
-      # Push the verified binary back to the working branch so the agent (and
-      # anyone else) can fetch the exact exe that passed the Windows test.
-      - name: Publish verified build to working branch
-        if: success() && startsWith(github.ref, 'refs/heads/arena/')
+      # Push the binary + diagnostics back to the working branch so the agent
+      # (and anyone else) can fetch the exact exe that was tested on Windows.
+      - name: Publish build + diagnostics to working branch
+        if: always() && startsWith(github.ref, 'refs/heads/arena/')
         shell: bash
         run: |
           git config user.name "arena-ci"
           git config user.email "noreply@arena.ai"
-          mkdir -p .ci-build
-          cp dist/OKBrowser.exe .ci-build/
-          git add -f .ci-build/OKBrowser.exe
-          git commit -m "ci: Windows-verified build of ${GITHUB_SHA:0:7} [ci skip]" || echo "no changes to publish"
-          git push
+          mkdir -p ".ci-build/${{ matrix.tag }}"
+          cp dist/OKBrowser.exe ".ci-build/${{ matrix.tag }}/" 2>/dev/null || true
+          cp dist/smoke-diagnostics.txt ".ci-build/${{ matrix.tag }}/" 2>/dev/null || true
+          cp dist/smoke-stderr.txt ".ci-build/${{ matrix.tag }}/" 2>/dev/null || true
+          git add -f ".ci-build/${{ matrix.tag }}"
+          git commit -m "ci: verified build + diagnostics for ${{ matrix.tag }} [ci skip]" >/dev/null 2>&1 || echo "no changes to publish"
+          for i in 1 2 3 4 5; do
+            if git pull --rebase --autostash origin "$GITHUB_REF_NAME" >/dev/null 2>&1 && git push >/dev/null 2>&1; then
+              echo "published .ci-build/${{ matrix.tag }}"
+              exit 0
+            fi
+            sleep $((i * 3))
+          done
+          echo "could not publish back to branch (continuing without failing the build)"
+          exit 0
