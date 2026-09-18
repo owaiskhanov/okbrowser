@@ -57,7 +57,7 @@ const (
 )
 
 // appVersion is shown in the settings page.
-const appVersion = "1.10.0"
+const appVersion = "1.10.1"
 
 // app is the browser window. The entire UI - the Liquid Glass bar with tabs,
 // address field and buttons - is rendered inside the web engine as a frosted

@@ -239,7 +239,7 @@ func (a *app) showInternal(t *tab, page string) {
 	case "downloads":
 		html, title = DownloadsHTML(listDownloads()), "Downloads"
 	default: // start
-		html, title = StartPageHTML(a.store.MostVisited(8), a.store.Settings().Engine), "New Tab"
+		html, title = StartPageHTML(a.store.MostVisited(12), a.store.Settings().Engine), "New Tab"
 		page, isStart = "start", true
 	}
 	t.isStart = isStart

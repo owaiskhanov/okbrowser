@@ -67,9 +67,12 @@ just content:
 - **Suggestions while you type**: your history and bookmarks appear in a glass dropdown under the address bubble (↑/↓ to pick, Enter to go)
 - **Bookmarks**: tap the ★ in the address bubble (or `Ctrl+D`); manage them on the bookmarks page (`Ctrl+Shift+O` or the ☰ menu)
 - **History**: every visit is logged locally (`Ctrl+H`) with per-entry delete, search and clear-all
-- **New Tab speed dial**: your most-visited sites as glass tiles, plus a big search field
+- **New Tab speed dial**: your most-visited sites as icon-only glass tiles (hover
+  for the title), plus a big search field
 - **Session restore**: your tabs and window position come back on the next start (toggle in Settings)
-- **☰ menu** beside the minimize button: new tab, bookmarks, history and settings — all in glass
+- **☰ menu** beside the minimize button: new tab, incognito, bookmarks,
+  history, downloads and settings — all in glass. Settings actions confirm
+  with a small glass toast
 - The address bar updates **the instant** you navigate (not after the page loads)
 - Back / forward / reload appear as tiny glyphs that light up only when usable (real history state)
 - `target="_blank"` links, middle-click on links and `window.open()` open a **new tab**; `Ctrl+N` opens a new window

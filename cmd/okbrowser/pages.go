@@ -53,6 +53,18 @@ opacity:0;transition:opacity .14s,background .14s;cursor:default;font-size:13px;
 .row:hover .xx{opacity:.6}
 .xx:hover{background:rgba(120,128,138,.22);opacity:1 !important}
 button,.pill{font-family:inherit}
+.pill.on{color:#fff !important;background:rgba(10,132,255,.92) !important}
+#toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(14px);
+padding:9px 18px;border-radius:15px;font-size:12.5px;font-weight:550;color:#1d1d1f;
+background:rgba(255,255,255,.75);backdrop-filter:blur(24px) saturate(1.8);
+-webkit-backdrop-filter:blur(24px) saturate(1.8);
+box-shadow:0 8px 28px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.6),
+inset 0 0 0 .5px rgba(255,255,255,.35);opacity:0;pointer-events:none;
+transition:opacity .22s,transform .22s;z-index:99}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+@media (prefers-color-scheme:dark){#toast{color:#f2f2f7;background:rgba(30,30,34,.8);
+box-shadow:0 8px 28px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.09),
+inset 0 0 0 .5px rgba(255,255,255,.07)}}
 input{-webkit-user-select:text}
 .fade{animation:fade .3s ease}
 @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
@@ -60,6 +72,19 @@ input{-webkit-user-select:text}
 
 // pageScriptClose ends every built-in page.
 const pageClose = `</body></html>`
+
+// toastMount is injected right after <body> in every built-in page: a small
+// glass toast so every action (settings, clears) gives visible feedback.
+const toastMount = `<div id="toast"></div><script>
+window.__okToast = function (m) {
+  var t = document.getElementById('toast');
+  if (!t) return;
+  t.textContent = m;
+  t.classList.add('show');
+  clearTimeout(t.__h);
+  t.__h = setTimeout(function () { t.classList.remove('show'); }, 1800);
+};
+</` + `script>`
 
 // avChar picks the avatar letter for a URL (first letter of the host).
 func avChar(u string) string {
@@ -97,21 +122,22 @@ func avHTML(u string) string {
 func StartPageHTML(tiles []Tile, engine string) string {
 	var b strings.Builder
 	b.WriteString(pageBase)
+	b.WriteString(toastMount)
 	b.WriteString(`<div class="wrap fade" style="text-align:center">`)
 	b.WriteString(`<div style="width:64px;height:64px;margin:8vh auto 22px;border-radius:20px;display:grid;place-items:center;font-size:24px;font-weight:800;color:#0a84ff;background:rgba(255,255,255,.6);backdrop-filter:blur(24px) saturate(1.8);-webkit-backdrop-filter:blur(24px) saturate(1.8);box-shadow:0 14px 40px rgba(10,132,255,.18),inset 0 1px 0 rgba(255,255,255,.8),inset 0 0 0 .5px rgba(255,255,255,.4)">OK</div>`)
 	b.WriteString(`<div class="card" style="display:flex;align-items:center;gap:10px;padding:6px 8px 6px 18px;margin-bottom:34px">`)
 	b.WriteString(`<input id="q" placeholder="Search with ` + htmlEsc(engine) + ` or enter address" spellcheck="false" autocomplete="off" style="all:unset;flex:1;font-size:15px;padding:12px 0;cursor:text">`)
 	b.WriteString(`<div id="go" style="flex:0 0 auto;width:38px;height:38px;border-radius:50%;display:grid;place-items:center;color:#fff;background:rgba(10,132,255,.92);cursor:pointer">`)
 	b.WriteString(`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13"/><path d="M13 6l6 6-6 6"/></svg></div>`)
-	b.WriteString(`</div><div id="tiles" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">`)
+	b.WriteString(`</div><div id="tiles" style="display:grid;grid-template-columns:repeat(6,1fr);gap:12px">`)
+	// Icon-only tiles: no text labels (the full title shows as a tooltip).
 	for _, t := range tiles {
 		title := t.Title
 		if title == "" {
 			title = t.URL
 		}
-		b.WriteString(`<div class="tile" data-u="` + htmlEsc(t.URL) + `" style="padding:16px 8px;border-radius:16px;cursor:pointer;background:rgba(255,255,255,.5);backdrop-filter:blur(20px) saturate(1.7);-webkit-backdrop-filter:blur(20px) saturate(1.7);box-shadow:0 6px 20px rgba(0,0,0,.08),inset 0 1px 0 rgba(255,255,255,.6),inset 0 0 0 .5px rgba(255,255,255,.3);transition:transform .16s,background .16s">` +
-			`<div style="margin:0 auto 8px;width:40px;height:40px;border-radius:50%;display:grid;place-items:center;font-size:17px;font-weight:600;color:#3c4043;background:rgba(120,128,138,.14)">` + htmlEsc(avChar(t.URL)) + `</div>` +
-			`<div style="font-size:11.5px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 4px">` + htmlEsc(title) + `</div></div>`)
+		b.WriteString(`<div class="tile" data-u="` + htmlEsc(t.URL) + `" title="` + htmlEsc(title) + `" style="padding:14px 4px;border-radius:16px;cursor:pointer;background:rgba(255,255,255,.5);backdrop-filter:blur(20px) saturate(1.7);-webkit-backdrop-filter:blur(20px) saturate(1.7);box-shadow:0 6px 20px rgba(0,0,0,.08),inset 0 1px 0 rgba(255,255,255,.6),inset 0 0 0 .5px rgba(255,255,255,.3);transition:transform .16s,background .16s">` +
+			`<div style="margin:0 auto;width:44px;height:44px;border-radius:50%;display:grid;place-items:center;font-size:19px;font-weight:600;color:#3c4043;background:rgba(120,128,138,.14)">` + htmlEsc(avChar(t.URL)) + `</div></div>`)
 	}
 	b.WriteString(`</div>`)
 	b.WriteString(`<style>@media (prefers-color-scheme:dark){.tile{background:rgba(38,38,42,.5) !important;box-shadow:0 6px 20px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.07),inset 0 0 0 .5px rgba(255,255,255,.06) !important}}</style>`)
@@ -142,6 +168,7 @@ func StartPageHTML(tiles []Tile, engine string) string {
 func BookmarksHTML(items []bmEntry) string {
 	var b strings.Builder
 	b.WriteString(pageBase)
+	b.WriteString(toastMount)
 	b.WriteString(`<div class="wrap fade"><h1>Bookmarks</h1><div class="card" id="list">`)
 	if len(items) == 0 {
 		b.WriteString(`<div class="row"><div class="meta"><div class="tt">No bookmarks yet</div><div class="uu">Tap the ★ in the address bar to save a page</div></div></div>`)
@@ -174,6 +201,7 @@ func BookmarksHTML(items []bmEntry) string {
 func HistoryHTML(items []histEntry) string {
 	var b strings.Builder
 	b.WriteString(pageBase)
+	b.WriteString(toastMount)
 	b.WriteString(`<div class="wrap fade"><h1>History</h1>`)
 	b.WriteString(`<div class="card" style="display:flex;align-items:center;gap:10px;padding:6px 16px;margin-bottom:14px">`)
 	b.WriteString(`<input id="f" placeholder="Search history" spellcheck="false" style="all:unset;flex:1;font-size:13.5px;padding:10px 0;cursor:text">`)
@@ -211,7 +239,10 @@ func HistoryHTML(items []histEntry) string {
       rows[i].style.display=(!q||rows[i].getAttribute('data-q').indexOf(q)>-1)?'':'none';
     }
   });
-  document.getElementById('clear').addEventListener('click',function(){ post({t:'clear',m:'history'}); window.location.reload(); });
+  document.getElementById('clear').addEventListener('click',function(){
+    post({t:'clear',m:'history'});
+    post({t:'go',u:'okbrowser://history'}); // re-render (reload would blank a string page)
+  });
 })();
 </script>`)
 	b.WriteString(pageClose)
@@ -222,17 +253,18 @@ func HistoryHTML(items []histEntry) string {
 func SettingsHTML(s Settings, version string) string {
 	var b strings.Builder
 	b.WriteString(pageBase)
+	b.WriteString(toastMount)
 	b.WriteString(`<div class="wrap fade"><h1>Settings</h1>`)
 
 	// Search engine
 	b.WriteString(`<div style="font-size:12px;font-weight:650;opacity:.5;margin:22px 4px 8px;text-transform:uppercase;letter-spacing:.06em">Search engine</div>`)
 	b.WriteString(`<div class="card" style="display:flex;gap:8px;padding:8px" id="eng">`)
 	for _, name := range engineList {
-		on := ""
+		cls := "pill"
 		if name == s.Engine {
-			on = `;color:#fff;background:rgba(10,132,255,.92)`
+			cls += " on"
 		}
-		b.WriteString(`<div class="pill" data-v="` + name + `" style="flex:1;text-align:center;padding:10px 0;border-radius:12px;font-size:13.5px;font-weight:550;cursor:pointer;transition:background .15s` + on + `">` + name + `</div>`)
+		b.WriteString(`<div class="` + cls + `" data-v="` + name + `" style="flex:1;text-align:center;padding:10px 0;border-radius:12px;font-size:13.5px;font-weight:550;cursor:pointer;transition:background .15s">` + name + `</div>`)
 	}
 	b.WriteString(`</div>`)
 
@@ -267,34 +299,7 @@ func SettingsHTML(s Settings, version string) string {
 	b.WriteString(`<div class="card"><div class="row" style="padding:14px 16px"><div class="av">OK</div><div class="meta"><div class="tt">OK Browser ` + version + `</div><div class="uu">Light and fast · WebView2 edition</div></div></div></div>`)
 	b.WriteString(`</div>`)
 
-	b.WriteString(`<script>
-(function(){
-  var post=function(o){try{window.__ok(o)}catch(e){}};
-  var pills=document.querySelectorAll('.pill');
-  for(var i=0;i<pills.length;i++){
-    pills[i].addEventListener('click',function(){
-      var v=this.getAttribute('data-v');
-      for(var j=0;j<pills.length;j++){
-        pills[j].style.cssText=pills[j].style.cssText.split(';color')[0];
-      }
-      this.style.cssText=this.style.cssText.split(';color')[0]+';color:#fff;background:rgba(10,132,255,.92)';
-      post({t:'set',m:'engine',u:v});
-    });
-  }
-  var r=document.getElementById('restore');
-  if(r){
-    r.addEventListener('click',function(){
-      var on=this.getAttribute('data-v')!=='true';
-      this.setAttribute('data-v',on?'true':'false');
-      this.style.background=on?'rgba(52,199,89,.95)':'rgba(120,128,138,.35)';
-      this.firstChild.style.left=on?'20px':'2px';
-      post({t:'set',m:'restore',u:on?'1':'0'});
-    });
-  }
-  function act(id,m){ var el=document.getElementById(id); if(el) el.addEventListener('click',function(){ post({t:'clear',m:m}); }); }
-  act('ch','history'); act('cb','bookmarks'); act('cs','session');
-})();
-</script>`)
+	b.WriteString("<script>" + settingsPageJS + "</script>")
 	b.WriteString(pageClose)
 	return b.String()
 }
@@ -386,3 +391,45 @@ func DownloadsHTML(files []dlFile) string {
 	b.WriteString(pageClose)
 	return b.String()
 }
+
+// settingsPageJS is the settings page's script, kept as a const so the
+// shell UI tests can exercise the real interaction logic.
+const settingsPageJS = `(function(){
+  var post=function(o){try{window.__ok(o)}catch(e){}};
+  function toast(m){ try{window.__okToast(m);}catch(e){} }
+  var pills=document.querySelectorAll('.pill');
+  function paintPills(v){
+    for(var j=0;j<pills.length;j++){
+      pills[j].classList.toggle('on', pills[j].getAttribute('data-v')===v);
+    }
+  }
+  for(var i=0;i<pills.length;i++){
+    pills[i].addEventListener('click',function(){
+      var v=this.getAttribute('data-v');
+      paintPills(v);
+      post({t:'set',m:'engine',u:v});
+      toast('Search engine: '+v);
+    });
+  }
+  var r=document.getElementById('restore');
+  if(r){
+    r.addEventListener('click',function(){
+      var on=this.getAttribute('data-v')!=='true';
+      this.setAttribute('data-v',on?'true':'false');
+      this.style.background=on?'rgba(52,199,89,.95)':'rgba(120,128,138,.35)';
+      this.firstChild.style.left=on?'20px':'2px';
+      post({t:'set',m:'restore',u:on?'1':'0'});
+      toast(on?'Tabs will reopen on startup':'Tabs start fresh');
+    });
+  }
+  function act(id,m,msg){
+    var el=document.getElementById(id);
+    if(el) el.addEventListener('click',function(){
+      post({t:'clear',m:m});
+      toast(msg);
+    });
+  }
+  act('ch','history','Browsing history cleared');
+  act('cb','bookmarks','Bookmarks cleared');
+  act('cs','session','Saved session forgotten');
+})();`

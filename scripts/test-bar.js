@@ -51,7 +51,7 @@ class FakeElement {
   addEventListener(t, f) { (this._listeners[t] = this._listeners[t] || []).push(f); }
   dispatch(t, ev) {
     ev = Object.assign({ stopPropagation() {}, preventDefault() {} }, ev);
-    (this._listeners[t] || []).forEach(f => f(ev));
+    (this._listeners[t] || []).forEach(f => f.call(this, ev));
   }
   attachShadow() { const r = new FakeElement('#shadow'); this.shadowRoot = r; global.__shadow = r; return r; }
   getElementById(id) {
@@ -60,6 +60,9 @@ class FakeElement {
     walk(this); return found;
   }
   toggleAttribute(n, v) { if (v) this.attributes[n] = ''; else delete this.attributes[n]; }
+  setAttribute(n, v) { this.attributes[n] = String(v); if (n === 'id') this.id = String(v); }
+  getAttribute(n) { return n in this.attributes ? this.attributes[n] : null; }
+  get firstChild() { return this.children[0] || null; }
   focus() { this.focused = true; global.document.activeElement = this; }
   getBoundingClientRect() { return { left: 100, top: 100, right: 500, bottom: 126, width: 400, height: 26 }; }
   contains(el) { let n = el; while (n) { if (n === this) return true; n = n.parentNode; } return false; }
@@ -294,6 +297,86 @@ expect({ t: 'menu', m: 'incognito' });
 wmenu.dispatch('click', { stopPropagation() {} });
 shadow.getElementById('m-downloads').dispatch('click', EV);
 expect({ t: 'menu', m: 'downloads' });
+
+// --- settings page: the REAL page script against a fake settings DOM ---
+{
+  const src2 = fs.readFileSync(path.join(__dirname, '..', 'cmd', 'okbrowser', 'pages.go'), 'utf8');
+  const m2 = src2.match(/const settingsPageJS = `([\s\S]*?)`/);
+  assert(m2, 'settingsPageJS not found in pages.go');
+
+  const prevWindow2 = global.window, prevDocument2 = global.document;
+  const sent2 = [];
+  const toasts = [];
+  const win2 = { __ok: o => sent2.push(o), __okToast: m => toasts.push(m) };
+  win2.top = win2;
+  global.window = win2;
+
+  const doc2 = {
+    activeElement: null,
+    createElement: t => new FakeElement(t),
+    addEventListener() {}, removeEventListener() {},
+    getElementById(id) {
+      let found = null;
+      const walk = el => { if (found || !el) return; if (el.id === id) { found = el; return; } (el.children || []).forEach(walk); };
+      walk(doc2.body);
+      return found;
+    },
+    querySelectorAll(sel) {
+      const cls = sel.replace(/^\./, '');
+      const out = [];
+      const walk = el => { if (!el) return; if (el.classList && el.classList.contains(cls)) out.push(el); (el.children || []).forEach(walk); };
+      walk(doc2.body);
+      return out;
+    },
+    body: new FakeElement('body'),
+    documentElement: new FakeElement('html'),
+  };
+  global.document = doc2;
+
+  const google = new FakeElement('div'); google.className = 'pill on'; google.setAttribute('data-v', 'Google');
+  const bing = new FakeElement('div'); bing.className = 'pill'; bing.setAttribute('data-v', 'Bing');
+  const ddg = new FakeElement('div'); ddg.className = 'pill'; ddg.setAttribute('data-v', 'DuckDuckGo');
+  const eng = new FakeElement('div'); eng.className = 'card';
+  eng.appendChild(google); eng.appendChild(bing); eng.appendChild(ddg);
+
+  const restore = new FakeElement('div'); restore.id = 'restore'; restore.setAttribute('data-v', 'true');
+  const knob = new FakeElement('div'); knob.style = { cssText: '', display: '', left: '20px' };
+  restore.appendChild(knob);
+
+  const rows = ['ch', 'cb', 'cs'].map(id => { const r = new FakeElement('div'); r.id = id; return r; });
+
+  doc2.body.appendChild(eng);
+  doc2.body.appendChild(restore);
+  rows.forEach(r => doc2.body.appendChild(r));
+
+  new Function(m2[1])(); // run the real settings page script
+
+  // engine pill click
+  bing.dispatch('click', EV);
+  assert.deepStrictEqual(sent2.shift(), { t: 'set', m: 'engine', u: 'Bing' }, 'engine click posts set');
+  assert.ok(bing.classList.contains('on'), 'clicked pill activates');
+  assert.ok(!google.classList.contains('on'), 'previous pill deactivates');
+  assert.ok(!ddg.classList.contains('on'), 'other pill stays off');
+  assert.ok(toasts.some(x => x.includes('Bing')), 'engine change shows a toast');
+
+  // restore toggle off / on
+  restore.dispatch('click', EV);
+  assert.deepStrictEqual(sent2.shift(), { t: 'set', m: 'restore', u: '0' }, 'toggle off posts 0');
+  restore.dispatch('click', EV);
+  assert.deepStrictEqual(sent2.shift(), { t: 'set', m: 'restore', u: '1' }, 'toggle on posts 1');
+
+  // clear rows
+  rows[0].dispatch('click', EV);
+  assert.deepStrictEqual(sent2.shift(), { t: 'clear', m: 'history' }, 'clear history row');
+  rows[1].dispatch('click', EV);
+  assert.deepStrictEqual(sent2.shift(), { t: 'clear', m: 'bookmarks' }, 'clear bookmarks row');
+  rows[2].dispatch('click', EV);
+  assert.deepStrictEqual(sent2.shift(), { t: 'clear', m: 'session' }, 'clear session row');
+  assert.ok(toasts.length >= 4, 'every action gives visible feedback');
+
+  global.window = prevWindow2;
+  global.document = prevDocument2;
+}
 
 // --- immersive auto-hide bar ---
 const strip = shadow.getElementById('strip');

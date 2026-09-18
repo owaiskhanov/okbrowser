@@ -1096,6 +1096,7 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			st.RestoreSession = m.U == "1"
 		}
 		a.store.SetSettings(st)
+		a.pushBarState() // the address suggestions label follows the engine
 
 	case "suggest": // address bubble typing: reply with suggestions
 		q := m.U
