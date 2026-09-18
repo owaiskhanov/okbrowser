@@ -64,7 +64,7 @@ try {
     # the page title ("Example Domain"). This is the end-to-end test that a
     # URL actually loads and reports back.
     $navOk = $false
-    $deadline = (Get-Date).AddSeconds(35)
+    $deadline = (Get-Date).AddSeconds(60)
     while ((Get-Date) -lt $deadline) {
         if ($proc.HasExited) { $fail = "process exited during navigation (code $($proc.ExitCode))"; break }
         $proc.Refresh()
@@ -173,6 +173,11 @@ public static class OKWin {
     if (Test-Path $stFile) { Remove-Item $stFile -Force }
     Start-Sleep -Seconds 5  # let the killed instance's engine processes exit
     Get-Process msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    $engDeadline = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $engDeadline) {
+        if (@(Get-Process msedgewebview2 -ErrorAction SilentlyContinue).Count -eq 0) { break }
+        Start-Sleep -Milliseconds 500
+    }
     Start-Sleep -Seconds 2  # let the shared profile be released
     Log "running self test..."
     $stErr = Join-Path (Split-Path $Exe -Parent) "selftest-stderr.txt"

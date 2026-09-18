@@ -20,6 +20,7 @@ type Chromium struct {
 	controller            *ICoreWebView2Controller
 	webview               *ICoreWebView2
 	inited                uintptr
+	initFailed            uintptr // OK Browser addition: engine creation failed
 	envCompleted          *iCoreWebView2CreateCoreWebView2EnvironmentCompletedHandler
 	controllerCompleted   *iCoreWebView2CreateCoreWebView2ControllerCompletedHandler
 	webMessageReceived    *iCoreWebView2WebMessageReceivedEventHandler
@@ -106,6 +107,9 @@ func (e *Chromium) Embed(hwnd uintptr) bool {
 	for {
 		if atomic.LoadUintptr(&e.inited) != 0 {
 			break
+		}
+		if atomic.LoadUintptr(&e.initFailed) != 0 { // OK Browser addition
+			return false
 		}
 		r, _, _ := w32.User32GetMessageW.Call(
 			uintptr(unsafe.Pointer(&msg)),
@@ -194,8 +198,14 @@ func (e *Chromium) EnvironmentCompleted(res uintptr, env *ICoreWebView2Environme
 }
 
 func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller *ICoreWebView2Controller) uintptr {
-	if int64(res) < 0 {
-		log.Fatalf("Creating controller failed with %08x", res)
+	// OK Browser addition: engine creation can legitimately fail (e.g. the
+	// shared profile is still held by a dying engine process). Unblock
+	// Embed with a failure instead of killing the process (log.Fatalf) or
+	// dereferencing a nil controller.
+	if int64(res) < 0 || controller == nil {
+		log.Printf("Creating controller failed with %08x", res)
+		atomic.StoreUintptr(&e.initFailed, 1)
+		return 1
 	}
 	_, _, _ = controller.vtbl.AddRef.Call(uintptr(unsafe.Pointer(controller)))
 	e.controller = controller
