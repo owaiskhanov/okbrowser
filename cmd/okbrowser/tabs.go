@@ -347,6 +347,28 @@ func (a *app) fadeTick() {
 	setLayeredAlpha(a.fadeHost, byte(a.fadeAlpha))
 }
 
+// selftestClickTick dispatches the deferred trusted click once the
+// cross-fade has fully settled (Chromium ignores synthesized input for
+// hidden widgets - dispatching during the pending phase was a race).
+func (a *app) selftestClickTick() {
+	t := a.stClickTab
+	if t == nil || t.chromium == nil {
+		win.KillTimer(a.hwnd, 3)
+		return
+	}
+	a.stClickTicks++
+	if a.fading && a.stClickTicks < 80 { // up to ~4s
+		return
+	}
+	win.KillTimer(a.hwnd, 3)
+	a.stlog("[selftest] dispatching trusted click at %.0f,%.0f", a.stClickX, a.stClickY)
+	t.chromium.CallDevToolsProtocol("Input.dispatchMouseEvent",
+		fmt.Sprintf(`{"type":"mousePressed","x":%.1f,"y":%.1f,"button":"left","clickCount":1}`, a.stClickX, a.stClickY))
+	t.chromium.CallDevToolsProtocol("Input.dispatchMouseEvent",
+		fmt.Sprintf(`{"type":"mouseReleased","x":%.1f,"y":%.1f,"button":"left","clickCount":1}`, a.stClickX, a.stClickY))
+	a.stClickTab = nil
+}
+
 // endTabFade finishes the cross-fade: full opacity, previous view retired.
 func (a *app) endTabFade() {
 	win.KillTimer(a.hwnd, 2)

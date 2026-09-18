@@ -87,6 +87,12 @@ type app struct {
 	// store is the local data vault: history, bookmarks, settings, session.
 	store *store
 
+	// deferred self-test click (WM_TIMER id 3): waits out the new-tab fade.
+	stClickTab   *tab
+	stClickX     float64
+	stClickY     float64
+	stClickTicks int
+
 	// new-tab cross-fade state (WM_TIMER id 2).
 	fading      bool
 	fadeRamping bool
@@ -252,6 +258,9 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		}
 		if wp == 2 {
 			a.fadeTick() // new-tab cross-fade
+		}
+		if wp == 3 {
+			a.selftestClickTick()
 		}
 		return 0
 

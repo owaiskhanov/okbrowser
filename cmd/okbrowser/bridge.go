@@ -4,7 +4,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
 
@@ -1072,11 +1071,11 @@ func (a *app) onWebMessage(t *tab, msg string) {
 	switch m.T {
 	case "stclick": // self test only: dispatch a trusted click at x,y
 		if a.inSelfTest && t != nil && t.chromium != nil {
-			a.stlog("[selftest] dispatching trusted click at %.0f,%.0f", m.X, m.Y)
-			t.chromium.CallDevToolsProtocol("Input.dispatchMouseEvent",
-				fmt.Sprintf(`{"type":"mousePressed","x":%.1f,"y":%.1f,"button":"left","clickCount":1}`, m.X, m.Y))
-			t.chromium.CallDevToolsProtocol("Input.dispatchMouseEvent",
-				fmt.Sprintf(`{"type":"mouseReleased","x":%.1f,"y":%.1f,"button":"left","clickCount":1}`, m.X, m.Y))
+			a.stlog("[selftest] trusted click requested at %.0f,%.0f", m.X, m.Y)
+			// Chromium drops synthesized input for not-yet-visible widgets,
+			// and the target tab may still be mid cross-fade - wait for it.
+			a.stClickTab, a.stClickX, a.stClickY, a.stClickTicks = t, m.X, m.Y, 0
+			win.SetTimer(a.hwnd, 3, 50, 0)
 		}
 
 	case "open": // link explicitly asking for a new window
