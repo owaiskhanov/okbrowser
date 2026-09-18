@@ -1,9 +1,0 @@
-launching D:\a\okbrowser\okbrowser\dist\OKBrowser.exe
-OS: Microsoft Windows NT 10.0.26100.0
-WebView2 runtime registry (HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}): pv=152.0.4191.66
-WebView2 runtime registry missing: HKCU:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}
-main window up after 284 ms, title: 'OK Browser'
-WebView2 engine processes: 6
-stopped test process
-STDERR: (empty)
-PASS: window, title and web engine all OK.
