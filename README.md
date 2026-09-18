@@ -24,10 +24,13 @@ on a real Windows machine** by CI before it is published.
 
 ## Features
 
-**Minimal, content-first UI** — a single slim bar (~44 px) holds everything:
-pill-shaped tabs, a capsule address bar and tiny utility glyphs. Buttons you
-cannot click are nearly invisible; the page gets all the remaining space. The
-palette follows Windows light/dark mode automatically.
+**Liquid Glass UI** — a floating frosted-glass capsule bar with real
+`backdrop-filter` blur of the page scrolling beneath it (the same technique
+Apple-style browsers use), rendered inside the web engine's GPU compositor:
+pill tabs, a capsule address field and tiny circular buttons with smooth
+hover/press animations. Buttons you cannot click fade out; the page gets all
+the remaining space. Light and dark palettes follow Windows automatically,
+and the bar hides itself during fullscreen video and printing.
 
 - **Tabs**: click to switch, `+` for a new one, middle-click or ✕ to close,
   `Ctrl+Tab` / `Ctrl+Shift+Tab` to cycle. Every tab is its own web engine
@@ -101,6 +104,7 @@ cmd/okbrowser/        the browser (Windows-only)
   tabs.go             tab lifecycle + per-tab engine wiring
   bridge.go           page ↔ host bridge (URL/title sync, new-tab requests)
   winx.go             a few raw Win32 calls lxn/win lacks
+  (the UI bar itself lives in bridge.go as injected CSS/JS)
   resource.syso       icon + manifest + version info (compiled resource)
 internal/nav/         pure, unit-tested URL parsing + start page
 res/                  icon, manifest, versioninfo

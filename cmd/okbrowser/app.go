@@ -37,84 +37,10 @@ const (
 	cmdNewTab       = 215
 )
 
-// Segoe MDL2 Assets glyphs - the icon font built into Windows 10+.
-const (
-	glyphBack    = "\uE76B" // ChevronLeft
-	glyphForward = "\uE76C" // ChevronRight
-	glyphReload  = "\uE72C" // Refresh
-	glyphPlus    = "\uE710" // Add
-	glyphClose   = "\uE711" // ChromeClose
-)
-
-// Design measurements (96-DPI pixels; scaled at runtime).
-const (
-	dBarH    = 44  // total bar height
-	dTabH    = 30  // tab pill height
-	dBtn     = 32  // utility button square
-	dPad     = 10  // outer padding
-	dGap     = 6   // gap between elements
-	dTabMin  = 46  // minimum tab width
-	dTabMax  = 168 // maximum tab width
-	dAddrMin = 150 // minimum address width
-	dAddrMax = 440 // preferred address width
-)
-
-// theme holds the flat palette, following Windows light/dark mode.
-type theme struct {
-	dark                bool
-	bar, pill           win.COLORREF // bar surface, address pill
-	tabActive, tabHover win.COLORREF // tab pill fills
-	btnHover            win.COLORREF
-	text, muted, faint  win.COLORREF
-}
-
-func lightTheme() theme {
-	return theme{
-		bar: win.RGB(0xFF, 0xFF, 0xFF), pill: win.RGB(0xF1, 0xF3, 0xF4),
-		tabActive: win.RGB(0xE8, 0xEA, 0xED), tabHover: win.RGB(0xF1, 0xF3, 0xF4),
-		btnHover: win.RGB(0xF1, 0xF3, 0xF4),
-		text:     win.RGB(0x20, 0x21, 0x24), muted: win.RGB(0x5F, 0x63, 0x68),
-		faint: win.RGB(0xDA, 0xDC, 0xE0),
-	}
-}
-
-func darkTheme() theme {
-	return theme{
-		dark: true,
-		bar:  win.RGB(0x20, 0x21, 0x24), pill: win.RGB(0x30, 0x31, 0x34),
-		tabActive: win.RGB(0x3C, 0x40, 0x43), tabHover: win.RGB(0x30, 0x31, 0x34),
-		btnHover: win.RGB(0x30, 0x31, 0x34),
-		text:     win.RGB(0xE8, 0xEA, 0xED), muted: win.RGB(0x9A, 0xA0, 0xA6),
-		faint: win.RGB(0x5F, 0x63, 0x68),
-	}
-}
-
-// hitKind identifies a clickable element of the bar.
-type hitKind int
-
-const (
-	hitNone hitKind = iota
-	hitTab
-	hitTabClose
-	hitPlus
-	hitBack
-	hitForward
-	hitReload
-)
-
-// barLayout is the single source of truth for bar geometry - used by both
-// painting and mouse hit-testing, so the two can never disagree.
-type barLayout struct {
-	tabs    []win.RECT // pill per tab
-	closes  []win.RECT // close X per tab
-	plus    win.RECT
-	addr    win.RECT
-	back    win.RECT
-	forward win.RECT
-	reload  win.RECT
-}
-
-// app is the browser window: a slim drawn bar on top and tab content below.
+// app is the browser window. The entire UI - the Liquid Glass bar with tabs,
+// address field and buttons - is rendered inside the web engine as a frosted
+// overlay with real backdrop blur; the native side only provides the window
+// frame, hotkeys and tab/window management.
 type app struct {
 	hwnd     win.HWND
 	instance win.HINSTANCE
@@ -123,33 +49,17 @@ type app struct {
 	tabs      []*tab
 	activeIdx int
 
-	address win.HWND // native edit inside the drawn address pill
-
-	fontTab   win.HFONT
-	fontAddr  win.HFONT
-	fontGlyph win.HFONT // utility button glyphs
-	fontClose win.HFONT // tab close X
-
-	th    theme
-	scale float64
-
-	brushBar       win.HBRUSH
-	brushPill      win.HBRUSH
-	brushTabActive win.HBRUSH
-	brushTabHover  win.HBRUSH
-
-	hoverKind hitKind
-	hoverIdx  int
-
-	// Fullscreen (F11) state.
-	fullscreen     bool
-	savedStyle     int32
-	savedPlacement win.WINDOWPLACEMENT
+	scale float64 // DPI scale factor (1.0 = 96 DPI)
 
 	hostSeq int // child window id sequence
 
 	// lastSpawn throttles popup storms from web pages.
 	lastSpawn time.Time
+
+	// Fullscreen (F11) state.
+	fullscreen     bool
+	savedStyle     int32
+	savedPlacement win.WINDOWPLACEMENT
 }
 
 var theApp *app
@@ -174,10 +84,17 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		return 0
 
 	case win.WM_COMMAND:
-		// Only hotkeys arrive here now (all buttons are owner-drawn).
+		// Hotkeys arrive here (all buttons live in the glass bar).
 		switch win.HIWORD(uint32(wp)) {
 		case 0, 1:
 			a.onCommand(int(win.LOWORD(uint32(wp))))
+		}
+		return 0
+
+	case win.WM_TIMER:
+		if wp == 1 {
+			win.KillTimer(a.hwnd, 1)
+			a.pushBarState()
 		}
 		return 0
 
@@ -186,6 +103,7 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		return 0
 
 	case win.WM_XBUTTONDOWN:
+		// Extra mouse buttons: back / forward.
 		switch win.HIWORD(uint32(wp)) {
 		case 1:
 			a.onCommand(cmdBack)
@@ -195,50 +113,7 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		return 0
 
 	case win.WM_ERASEBKGND:
-		return 1 // everything is painted in WM_PAINT (flicker-free)
-
-	case win.WM_PAINT:
-		a.paint()
-		return 0
-
-	case win.WM_CTLCOLOREDIT:
-		// The address edit sits on a drawn pill; give it matching colors.
-		hdc := win.HDC(wp)
-		win.SetBkColor(hdc, a.th.pill)
-		win.SetTextColor(hdc, a.th.text)
-		return uintptr(a.brushPill)
-
-	case win.WM_MOUSEMOVE:
-		x, y := lparamPoint(lp)
-		a.onMouseMove(x, y)
-		return 0
-
-	case win.WM_MOUSELEAVE:
-		a.setHover(hitNone, 0)
-		return 0
-
-	case win.WM_LBUTTONDOWN:
-		x, y := lparamPoint(lp)
-		a.onClick(x, y)
-		return 0
-
-	case win.WM_MBUTTONDOWN:
-		// Middle click on a tab closes it (browser convention).
-		x, y := lparamPoint(lp)
-		l := a.computeLayout()
-		for i := range l.tabs {
-			if inRect(x, y, l.tabs[i]) {
-				a.closeTab(i)
-				break
-			}
-		}
-		return 0
-
-	case win.WM_SETCURSOR:
-		if wp == uintptr(a.hwnd) && a.setHoverCursor() {
-			return 1
-		}
-		break
+		return 1 // the webview covers everything
 
 	case win.WM_DESTROY:
 		win.PostQuitMessage(0)
@@ -254,26 +129,16 @@ func NewApp(startURL string) (*app, bool) {
 
 	a := &app{activeIdx: -1}
 	a.scale = float64(dpiOf(0)) / 96.0
-	if isDarkMode() {
-		a.th = darkTheme()
-	} else {
-		a.th = lightTheme()
-	}
-	a.brushBar = createSolidBrush(a.th.bar)
-	a.brushPill = createSolidBrush(a.th.pill)
-	a.brushTabActive = createSolidBrush(a.th.tabActive)
-	a.brushTabHover = createSolidBrush(a.th.tabHover)
 	theApp = a
 
 	a.instance = win.GetModuleHandle(nil)
 	icon := loadAppIcon(a.instance)
 	cursor := win.LoadCursor(0, win.MAKEINTRESOURCE(win.IDC_ARROW))
-	contentBrush := createSolidBrush(a.th.bar)
 
-	if !a.registerClass(mainClassName, windows.NewCallback(wndProc), icon, cursor, win.HBRUSH(0)) {
+	if !a.registerClass(mainClassName, windows.NewCallback(wndProc), icon, cursor) {
 		return nil, false
 	}
-	if !a.registerClass(tabHostClassName, windows.NewCallback(defTabHostProc), icon, cursor, contentBrush) {
+	if !a.registerClass(tabHostClassName, windows.NewCallback(defTabHostProc), icon, cursor) {
 		return nil, false
 	}
 
@@ -291,12 +156,10 @@ func NewApp(startURL string) (*app, bool) {
 		a.scale = float64(d) / 96.0
 	}
 
-	a.createFonts()
-	a.createAddressBar()
 	a.createAccelerators()
 
-	// Show the window immediately so the browser feels instant; the web
-	// engine fills the content area a moment later.
+	// Show the window immediately so the browser feels instant; the glass
+	// bar and page appear a moment later.
 	win.ShowWindow(a.hwnd, win.SW_SHOW)
 	win.UpdateWindow(a.hwnd)
 
@@ -309,7 +172,7 @@ func NewApp(startURL string) (*app, bool) {
 }
 
 // registerClass registers a window class for the main window or tab hosts.
-func (a *app) registerClass(name string, proc uintptr, icon win.HANDLE, cursor win.HCURSOR, bg win.HBRUSH) bool {
+func (a *app) registerClass(name string, proc uintptr, icon win.HANDLE, cursor win.HCURSOR) bool {
 	cn, err := syscall.UTF16PtrFromString(name)
 	if err != nil {
 		return false
@@ -320,7 +183,6 @@ func (a *app) registerClass(name string, proc uintptr, icon win.HANDLE, cursor w
 		HInstance:     a.instance,
 		HIcon:         win.HICON(icon),
 		HCursor:       cursor,
-		HbrBackground: bg,
 		LpszClassName: cn,
 		HIconSm:       win.HICON(icon),
 	}
@@ -340,10 +202,6 @@ func (a *app) Run() {
 		if r <= 0 {
 			break
 		}
-		if msg.HWnd == a.address && msg.Message == win.WM_KEYDOWN && msg.WParam == win.VK_RETURN {
-			a.navigateActive()
-			continue
-		}
 		if translateAccelerator(a.hwnd, a.accel, &msg) != 0 {
 			continue
 		}
@@ -362,49 +220,6 @@ func loadAppIcon(inst win.HINSTANCE) win.HANDLE {
 	}
 	return win.LoadImage(0, win.MAKEINTRESOURCE(win.IDI_APPLICATION), win.IMAGE_ICON,
 		0, 0, win.LR_DEFAULTSIZE|win.LR_SHARED)
-}
-
-func (a *app) createFonts() {
-	a.fontTab = makeFont("Segoe UI", a.scaled(12), win.FW_NORMAL)
-	a.fontAddr = makeFont("Segoe UI", a.scaled(13), win.FW_NORMAL)
-	a.fontGlyph = makeFont("Segoe MDL2 Assets", a.scaled(14), win.FW_NORMAL)
-	a.fontClose = makeFont("Segoe MDL2 Assets", a.scaled(9), win.FW_NORMAL)
-}
-
-// makeFont creates a ClearType font for the given character height.
-func makeFont(face string, charHeight int32, weight int32) win.HFONT {
-	name, err := syscall.UTF16FromString(face)
-	if err != nil {
-		return 0
-	}
-	n := len(name)
-	if n > 31 {
-		n = 31
-	}
-	lf := win.LOGFONT{
-		LfHeight:         -charHeight,
-		LfWeight:         weight,
-		LfCharSet:        win.DEFAULT_CHARSET,
-		LfOutPrecision:   win.OUT_DEFAULT_PRECIS,
-		LfClipPrecision:  win.CLIP_DEFAULT_PRECIS,
-		LfQuality:        win.CLEARTYPE_QUALITY,
-		LfPitchAndFamily: win.DEFAULT_PITCH | win.FF_DONTCARE,
-	}
-	copy(lf.LfFaceName[:], name[:n])
-	return win.CreateFontIndirect(&lf)
-}
-
-func (a *app) createAddressBar() {
-	en, _ := syscall.UTF16PtrFromString("Edit")
-	a.address = win.CreateWindowEx(0, en, nil,
-		win.WS_CHILD|win.WS_VISIBLE|win.WS_TABSTOP|win.ES_AUTOHSCROLL,
-		0, 0, 0, 0, a.hwnd, 0, a.instance, nil)
-	if a.address == 0 {
-		return
-	}
-	sendPtr(a.address, win.EM_SETCUEBANNER, 0, mustUTF16("Search or enter address"))
-	send(a.address, win.EM_SETLIMITTEXT, 2048, 0)
-	send(a.address, win.WM_SETFONT, uintptr(a.fontAddr), 1)
 }
 
 func (a *app) createAccelerators() {
@@ -431,11 +246,8 @@ func (a *app) createAccelerators() {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// Layout
-
-// layout positions the address edit and every tab host, and repaints the
-// bar. Called whenever the window or the tab set changes.
+// layout sizes every tab host to fill the whole window (the glass bar floats
+// above the page inside the web content). Only the active host is shown.
 func (a *app) layout() {
 	if a.hwnd == 0 {
 		return
@@ -448,30 +260,9 @@ func (a *app) layout() {
 	if w <= 0 || h <= 0 {
 		return
 	}
-
-	barH := a.scaled(dBarH)
-	l := a.computeLayout()
-
-	// Address pill (a native edit clipped to a capsule shape).
-	addrY := (barH - a.scaled(dTabH)) / 2
-	addrH := a.scaled(dTabH)
-	if a.address != 0 {
-		win.MoveWindow(a.address, l.addr.Left, addrY,
-			l.addr.Right-l.addr.Left, addrH, true)
-		if rgn := createRoundRectRgn(0, 0,
-			l.addr.Right-l.addr.Left, addrH, addrH, addrH); rgn != 0 {
-			setWindowRgn(a.address, rgn, true)
-		}
-	}
-
-	// Tab hosts: all sized, only the active one visible.
-	ch := h - barH
-	if ch < 0 {
-		ch = 0
-	}
 	for i, t := range a.tabs {
 		if i == a.activeIdx {
-			win.MoveWindow(t.host, 0, barH, w, ch, false)
+			win.MoveWindow(t.host, 0, 0, w, h, false)
 			win.ShowWindow(t.host, win.SW_SHOW)
 			if t.chromium != nil {
 				t.chromium.Show()
@@ -484,371 +275,31 @@ func (a *app) layout() {
 			}
 		}
 	}
-
-	a.invalidateBar()
 }
 
-// computeLayout derives the bar geometry for the current window width.
-// One function feeds both painting and hit-testing.
-func (a *app) computeLayout() barLayout {
-	var l barLayout
-	var rc win.RECT
-	if !win.GetClientRect(a.hwnd, &rc) {
-		return l
-	}
-	w := rc.Right
-	if w <= 0 {
-		return l
-	}
-
-	s := a.scaled
-	barH := s(dBarH)
-	pad, gap := s(dPad), s(dGap)
-	btn := s(dBtn)
-	tabH := s(dTabH)
-	n := int32(len(a.tabs))
-	if n == 0 {
-		n = 1
-	}
-
-	// Right side: [back][forward][reload] ending at w-pad.
-	reload := win.RECT{Left: w - pad - btn, Top: (barH - btn) / 2,
-		Right: w - pad, Bottom: (barH-btn)/2 + btn}
-	forward := win.RECT{Left: reload.Left - gap - btn, Top: reload.Top,
-		Right: reload.Left - gap, Bottom: reload.Bottom}
-	back := win.RECT{Left: forward.Left - gap - btn, Top: reload.Top,
-		Right: forward.Left - gap, Bottom: reload.Bottom}
-	l.reload, l.forward, l.back = reload, forward, back
-
-	// Left side: [tabs][+], then the address pill fills what remains.
-	addrEnd := back.Left - gap
-	addrMin := s(dAddrMin)
-	if addrMin > addrEnd-pad-s(dTabMin)-btn-gap*2 {
-		addrMin = max32(s(80), addrEnd-pad-s(26)-btn-gap*2)
-	}
-
-	tabsAvail := addrEnd - gap - addrMin - pad - btn - gap // space for pills
-	tabW := tabsAvail / n
-	if tabW > s(dTabMax) {
-		tabW = s(dTabMax)
-	}
-	if tabW < s(26) {
-		tabW = s(26)
-	}
-	tabY := (barH - tabH) / 2
-
-	x := pad
-	for i := int32(0); i < n; i++ {
-		l.tabs = append(l.tabs, win.RECT{Left: x, Top: tabY,
-			Right: x + tabW, Bottom: tabY + tabH})
-		cx := min32(x+tabW-s(dTabH), x+tabW-s(20))
-		l.closes = append(l.closes, win.RECT{
-			Left: cx, Top: tabY, Right: x + tabW, Bottom: tabY + tabH})
-		x += tabW
-	}
-	l.plus = win.RECT{Left: x + gap/2, Top: tabY, Right: x + gap/2 + tabH, Bottom: tabY + tabH}
-
-	addrStart := l.plus.Right + gap
-	if addrStart < pad {
-		addrStart = pad
-	}
-	if addrStart > addrEnd-addrMin {
-		addrStart = addrEnd - addrMin
-	}
-	l.addr = win.RECT{Left: addrStart, Top: tabY, Right: addrEnd, Bottom: tabY + tabH}
-	return l
-}
-
-func max32(a, b int32) int32 {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func min32(a, b int32) int32 {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-// ---------------------------------------------------------------------------
-// Painting
-
-// invalidateBar repaints just the bar strip.
-func (a *app) invalidateBar() {
-	if a.hwnd == 0 {
-		return
-	}
-	rc := win.RECT{Left: 0, Top: 0, Right: 0, Bottom: a.scaled(dBarH)}
-	var cr win.RECT
-	if win.GetClientRect(a.hwnd, &cr) {
-		rc.Right = cr.Right
-	}
-	win.InvalidateRect(a.hwnd, &rc, false)
-}
-
-// paint draws the whole bar double-buffered (no flicker at any size).
-func (a *app) paint() {
-	var ps win.PAINTSTRUCT
-	hdc := win.BeginPaint(a.hwnd, &ps)
-	if hdc == 0 {
-		return
-	}
-	defer win.EndPaint(a.hwnd, &ps)
-
-	var cr win.RECT
-	if !win.GetClientRect(a.hwnd, &cr) {
-		return
-	}
-	w, h := cr.Right, cr.Bottom
-
-	mem := win.CreateCompatibleDC(hdc)
-	bmp := win.CreateCompatibleBitmap(hdc, w, h)
-	oldBmp := win.SelectObject(mem, win.HGDIOBJ(bmp))
-
-	// Surface: bar + content area (children cover the content).
-	full := win.RECT{Left: 0, Top: 0, Right: w, Bottom: h}
-	fillRect(mem, &full, a.brushBar)
-
-	l := a.computeLayout()
-	a.drawTabs(mem, &l)
-	a.drawButton(mem, hitBack, glyphBack, l.back, a.canGoBack(), a.fontGlyph)
-	a.drawButton(mem, hitForward, glyphForward, l.forward, a.canGoForward(), a.fontGlyph)
-	a.drawButton(mem, hitReload, glyphReload, l.reload, a.active() != nil, a.fontGlyph)
-	a.drawButton(mem, hitPlus, glyphPlus, l.plus, true, a.fontGlyph)
-
-	win.BitBlt(hdc, 0, 0, w, h, mem, 0, 0, win.SRCCOPY)
-	win.SelectObject(mem, oldBmp)
-	win.DeleteObject(win.HGDIOBJ(bmp))
-	win.DeleteDC(mem)
-}
-
-// drawTabs paints every tab pill: filled for the active tab, plain text for
-// the rest, with a close X on the active and hovered pills only.
-func (a *app) drawTabs(hdc win.HDC, l *barLayout) {
-	th := a.th
-	for i := range l.tabs {
-		if i >= len(a.tabs) {
-			break
-		}
-		r := l.tabs[i]
-		active := i == a.activeIdx
-		hovered := (a.hoverKind == hitTab || a.hoverKind == hitTabClose) && a.hoverIdx == i
-
-		switch {
-		case active:
-			fillRgnRect(hdc, r, r.Bottom-r.Top, a.brushTabActive)
-		case hovered:
-			fillRgnRect(hdc, r, r.Bottom-r.Top, a.brushTabHover)
-		}
-
-		title := a.tabs[i].title
-		if title == "" {
-			title = "New Tab"
-		}
-		color := th.muted
-		if active {
-			color = th.text
-		}
-
-		// The close X appears only on the active or hovered pill, and only
-		// when the pill is wide enough to fit text plus the X.
-		showClose := (active || hovered) && r.Right-r.Left >= a.scaled(60)
-		textR := r
-		textR.Left += a.scaled(12)
-		if showClose {
-			textR.Right = l.closes[i].Left
-		} else {
-			textR.Right -= a.scaled(6)
-		}
-		if textR.Right > textR.Left {
-			drawText(hdc, a.fontTab, title, &textR, color)
-		}
-
-		if showClose {
-			xr := l.closes[i]
-			xr.Left += a.scaled(7)
-			xc := th.muted
-			if a.hoverKind == hitTabClose && a.hoverIdx == i {
-				xc = th.text
-			}
-			drawText(hdc, a.fontClose, glyphClose, &xr, xc)
-		}
+// execActive runs JavaScript in the active tab.
+func (a *app) execActive(js string) {
+	if t := a.active(); t != nil && t.chromium != nil {
+		t.chromium.Eval(js)
 	}
 }
 
-// canGoBack reports whether the active tab has back history.
-func (a *app) canGoBack() bool {
-	t := a.active()
-	return t != nil && t.chromium != nil && t.chromium.CanGoBack()
-}
-
-// canGoForward reports whether the active tab has forward history.
-func (a *app) canGoForward() bool {
-	t := a.active()
-	return t != nil && t.chromium != nil && t.chromium.CanGoForward()
-}
-
-// drawButton paints one tiny utility glyph button. Disabled buttons are
-// nearly invisible so only clickable things stand out.
-func (a *app) drawButton(hdc win.HDC, kind hitKind, glyph string, r win.RECT, enabled bool, font win.HFONT) {
-	hovered := a.hoverKind == kind
-	color := a.th.faint
-	if enabled {
-		color = a.th.muted
-		if hovered {
-			color = a.th.text
-			fillRgnRect(hdc, r, r.Right-r.Left, a.brushTabHover)
-		}
-	}
-	drawText(hdc, font, glyph, &r, color)
-}
-
-// fillRgnRect fills a rounded rectangle with a brush.
-func fillRgnRect(hdc win.HDC, r win.RECT, radius int32, brush win.HBRUSH) {
-	if radius < 1 {
-		radius = 1
-	}
-	rgn := createRoundRectRgn(r.Left, r.Top, r.Right, r.Bottom, radius, radius)
-	if rgn != 0 {
-		win.FillRgn(hdc, rgn, brush)
-		win.DeleteObject(win.HGDIOBJ(rgn))
-	}
-}
-
-// drawText draws a single line of text (centered vertically, ellipsized)
-// with the given font, restoring the previous font afterwards.
-func drawText(hdc win.HDC, font win.HFONT, s string, rc *win.RECT, color win.COLORREF) {
-	p, err := syscall.UTF16FromString(s)
-	if err != nil {
-		return
-	}
-	var old win.HGDIOBJ
-	if font != 0 {
-		old = win.SelectObject(hdc, win.HGDIOBJ(font))
-	}
-	win.SetTextColor(hdc, color)
-	win.SetBkMode(hdc, win.TRANSPARENT)
-	win.DrawTextEx(hdc, &p[0], int32(len(p)-1), rc,
-		win.DT_SINGLELINE|win.DT_VCENTER|win.DT_END_ELLIPSIS|win.DT_NOPREFIX, nil)
-	if old != 0 {
-		win.SelectObject(hdc, old)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Mouse
-
-// hitTest maps a point to a bar element.
-func (a *app) hitTest(x, y int32) (hitKind, int) {
-	l := a.computeLayout()
-	for i := range l.tabs {
-		if inRect(x, y, l.tabs[i]) {
-			hoveringPill := (a.hoverKind == hitTab || a.hoverKind == hitTabClose) && a.hoverIdx == i
-			if inRect(x, y, l.closes[i]) && (i == a.activeIdx || hoveringPill) {
-				return hitTabClose, i
-			}
-			return hitTab, i
-		}
-	}
-	if inRect(x, y, l.plus) {
-		return hitPlus, 0
-	}
-	if inRect(x, y, l.back) {
-		return hitBack, 0
-	}
-	if inRect(x, y, l.forward) {
-		return hitForward, 0
-	}
-	if inRect(x, y, l.reload) {
-		return hitReload, 0
-	}
-	return hitNone, 0
-}
-
-// onMouseMove updates hover state (hover drives both paint and cursor).
-func (a *app) onMouseMove(x, y int32) {
-	// Ask for WM_MOUSELEAVE once per entry.
-	tme := win.TRACKMOUSEEVENT{
-		CbSize:      uint32(unsafe.Sizeof(win.TRACKMOUSEEVENT{})),
-		DwFlags:     win.TME_LEAVE,
-		HwndTrack:   a.hwnd,
-		DwHoverTime: 1,
-	}
-	win.TrackMouseEvent(&tme)
-
-	k, i := a.hitTest(x, y)
-	a.setHover(k, i)
-}
-
-// setHover records the hovered element and repaints when it changes.
-func (a *app) setHover(k hitKind, i int) {
-	if k == a.hoverKind && i == a.hoverIdx {
-		return
-	}
-	a.hoverKind, a.hoverIdx = k, i
-	a.invalidateBar()
-}
-
-// setHoverCursor shows the hand cursor over clickable bar elements.
-// Returns false to let DefWindowProc handle the cursor.
-func (a *app) setHoverCursor() bool {
-	var pt win.POINT
-	if !win.GetCursorPos(&pt) {
-		return false
-	}
-	if !win.ScreenToClient(a.hwnd, &pt) {
-		return false
-	}
-	k, _ := a.hitTest(pt.X, pt.Y)
-	if k == hitNone {
-		return false
-	}
-	h := win.LoadCursor(0, win.MAKEINTRESOURCE(win.IDC_HAND))
-	if h != 0 {
-		win.SetCursor(h)
-		return true
-	}
-	return false
-}
-
-// onClick dispatches bar clicks.
-func (a *app) onClick(x, y int32) {
-	k, i := a.hitTest(x, y)
-	switch k {
-	case hitTab:
-		a.switchToTab(i)
-	case hitTabClose:
-		a.closeTab(i)
-	case hitPlus:
-		a.newTab("", true)
-	case hitBack:
-		a.onCommand(cmdBack)
-	case hitForward:
-		a.onCommand(cmdForward)
-	case hitReload:
-		a.onCommand(cmdReload)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Commands
-
+// onCommand handles hotkeys and mouse-button navigation.
 func (a *app) onCommand(id int) {
 	t := a.active()
 	switch id {
 	case cmdBack:
 		if t != nil && t.chromium != nil && t.chromium.CanGoBack() {
 			t.chromium.GoBack()
+			a.scheduleBarPush()
 		}
 	case cmdForward:
 		if t != nil && t.chromium != nil && t.chromium.CanGoForward() {
 			t.chromium.GoForward()
+			a.scheduleBarPush()
 		}
 	case cmdReload:
-		if t != nil {
+		if t != nil && t.chromium != nil {
 			if t.isStart {
 				a.showStartPage(t)
 			} else {
@@ -860,11 +311,9 @@ func (a *app) onCommand(id int) {
 			a.showStartPage(t)
 		}
 	case cmdFocusAddress:
-		win.SetFocus(a.address)
-		send(a.address, win.EM_SETSEL, 0, ^uintptr(0))
+		a.execActive("window.__okBarFocus&&window.__okBarFocus()")
 	case cmdNewTab:
 		a.newTab("", true)
-		win.SetFocus(a.address)
 	case cmdNewWindow:
 		spawnNewWindow("")
 	case cmdCloseTab:
@@ -914,20 +363,10 @@ func (a *app) setZoom(mult float64) {
 	a.applyZoomTab(t)
 }
 
-// updateNavButtons repaints the bar (button states are computed at paint).
-func (a *app) updateNavButtons() { a.invalidateBar() }
-
-// onDpiChanged rescales fonts and the window.
+// onDpiChanged rescales the window.
 func (a *app) onDpiChanged(dpi int, suggested *win.RECT) {
-	if dpi > 0 && int(a.scale*96) != dpi {
+	if dpi > 0 {
 		a.scale = float64(dpi) / 96.0
-		for _, f := range []win.HFONT{a.fontTab, a.fontAddr, a.fontGlyph, a.fontClose} {
-			if f != 0 {
-				win.DeleteObject(win.HGDIOBJ(f))
-			}
-		}
-		a.createFonts()
-		send(a.address, win.WM_SETFONT, uintptr(a.fontAddr), 1)
 	}
 	win.SetWindowPos(a.hwnd, 0, suggested.Left, suggested.Top,
 		suggested.Right-suggested.Left, suggested.Bottom-suggested.Top,
@@ -977,12 +416,4 @@ func (a *app) scaled(v int32) int32 {
 // send sends a window message with plain integer parameters.
 func send(hwnd win.HWND, msg uint32, wp, lp uintptr) uintptr {
 	return win.SendMessage(hwnd, msg, wp, lp)
-}
-
-// sendPtr sends a window message with a pointer-sized parameter.
-func sendPtr(hwnd win.HWND, msg uint32, wp uintptr, p *uint16) uintptr {
-	if p == nil {
-		return 0
-	}
-	return win.SendMessage(hwnd, msg, wp, uintptr(unsafe.Pointer(p)))
 }

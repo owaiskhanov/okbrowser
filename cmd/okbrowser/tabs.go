@@ -74,12 +74,13 @@ func (a *app) newTab(url string, activate bool) *tab {
 		_ = st.PutIsZoomControlEnabled(true)
 	}
 	c.Init(bridgeJS)
+	c.Init(barJS)
 
 	a.tabs = append(a.tabs, t)
 	if activate || len(a.tabs) == 1 {
 		a.switchToTab(len(a.tabs) - 1)
 	} else {
-		a.layout()
+		a.pushBarState() // update the visible tab strip
 	}
 
 	if url != "" {
@@ -88,10 +89,11 @@ func (a *app) newTab(url string, activate bool) *tab {
 	} else {
 		a.showStartPage(t)
 	}
+	a.scheduleBarPush()
 	return t
 }
 
-// switchToTab displays tab i and syncs the address bar, title and buttons.
+// switchToTab displays tab i and syncs title and glass-bar state.
 func (a *app) switchToTab(i int) {
 	if i < 0 || i >= len(a.tabs) {
 		return
@@ -104,11 +106,12 @@ func (a *app) switchToTab(i int) {
 	t := a.tabs[i]
 	a.layout() // sizes and shows the host, resizes the engine
 
-	setWindowText(a.address, t.url)
 	a.syncTitle()
-	a.updateNavButtons()
+	a.pushBarState()
 	a.applyZoomTab(t)
-	a.focusContent(t)
+	if t.chromium != nil {
+		t.chromium.Focus()
+	}
 }
 
 // closeTab removes tab i. Closing the last tab closes the window.
@@ -135,7 +138,7 @@ func (a *app) closeTab(i int) {
 	} else if a.activeIdx > i {
 		a.activeIdx--
 	}
-	a.layout()
+	a.pushBarState()
 }
 
 // showStartPage navigates tab t to the built-in start page.
@@ -145,8 +148,8 @@ func (a *app) showStartPage(t *tab) {
 	t.title = "New Tab"
 	t.chromium.NavigateToString(nav.StartHTML)
 	if a.isActive(t) {
-		setWindowText(a.address, "")
 		a.syncTitle()
+		a.pushBarState()
 	}
 }
 
@@ -164,32 +167,8 @@ func (a *app) syncTitle() {
 	setWindowText(a.hwnd, title+" - "+appName)
 }
 
-// navigateActive reads the address bar and navigates the active tab.
-func (a *app) navigateActive() {
-	t := a.active()
-	if t == nil {
-		return
-	}
-	u := nav.Parse(getWindowText(a.address))
-	if u == "" {
-		a.showStartPage(t)
-		return
-	}
-	t.isStart = false
-	t.url = u
-	setWindowText(a.address, u)
-	t.chromium.Navigate(u)
-	t.chromium.Focus()
-}
-
-// focusContent gives keyboard focus to the tab's web content.
-func (a *app) focusContent(t *tab) {
-	if t != nil && t.chromium != nil {
-		t.chromium.Focus()
-	}
-}
-
-// applyZoomTab applies the tab's zoom (CSS based; see notes in app.go).
+// applyZoomTab applies the tab's zoom (CSS based; the engine's zoom API
+// takes a raw double, which cannot be called safely from Go).
 func (a *app) applyZoomTab(t *tab) {
 	if t == nil || t.chromium == nil || t.zoom == 1.0 {
 		return
@@ -198,8 +177,8 @@ func (a *app) applyZoomTab(t *tab) {
 		strconv.FormatFloat(t.zoom, 'f', -1, 64)))
 }
 
-// onNavStarting fires the instant a navigation begins, so the address bar
-// updates immediately instead of after the page loads.
+// onNavStarting fires the instant a navigation begins, so the glass bar's
+// address updates immediately instead of after the page loads.
 func (a *app) onNavStarting(t *tab, args *edge.ICoreWebView2NavigationStartingEventArgs) {
 	uri, err := args.GetUri()
 	if err != nil || uri == "" || uri == "about:blank" {
@@ -208,23 +187,17 @@ func (a *app) onNavStarting(t *tab, args *edge.ICoreWebView2NavigationStartingEv
 	t.url = uri
 	t.isStart = false
 	if a.isActive(t) {
-		setWindowText(a.address, uri)
+		a.pushBarState()
 	}
 }
 
-// onNavCompleted refreshes navigation state, zoom and titles after a load.
+// onNavCompleted refreshes bar state, zoom and titles after a load.
 func (a *app) onNavCompleted(t *tab) {
 	if t.chromium == nil {
 		return
 	}
 	a.applyZoomTab(t)
-	if a.isActive(t) {
-		a.updateNavButtons()
-	}
+	a.pushBarState()
+	a.scheduleBarPush()
 	t.chromium.Eval(`window.__ok && window.__ok({ t: "nav", u: location.href, d: document.title })`)
-}
-
-// mktabMouseHit is a tiny helper shared by mouse handlers.
-func inRect(x, y int32, r win.RECT) bool {
-	return x >= r.Left && x < r.Right && y >= r.Top && y < r.Bottom
 }
