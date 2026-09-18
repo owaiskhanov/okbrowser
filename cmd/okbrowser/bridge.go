@@ -80,6 +80,8 @@ const barJS = `
   var I_STAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3.2l2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1L3.2 9.6l6.1-.9z"/></svg>';
   var I_STARF = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 3.2l2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1L3.2 9.6l6.1-.9z"/></svg>';
   var I_MENU = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>';
+  var I_DL = SV('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>');
+  var I_INC = SV('<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>');
   var I_CLK  = SV('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>');
   var I_SET  = SV('<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>');
 
@@ -110,8 +112,21 @@ const barJS = `
     "backdrop-filter:blur(20px) saturate(1.6);-webkit-backdrop-filter:blur(20px) saturate(1.6);",
     "box-shadow:0 1px 6px rgba(0,0,0,.08),inset 0 1px 0 rgba(255,255,255,.42),",
     "inset 0 0 0 .5px rgba(255,255,255,.20);",
-    "transition:background .16s ease,transform .16s ease}",
+    "transition:background .16s ease,transform .16s ease,flex-basis .22s ease,width .22s ease}",
     ".tab.in{animation:okin .24s cubic-bezier(.2,.8,.3,1)}",
+    ".ic{flex:0 0 auto;width:16px;height:16px;border-radius:5px;display:grid;place-items:center;",
+    "font-size:10px;font-weight:700;color:#5f6368;overflow:hidden}",
+    "@media (prefers-color-scheme:dark){.ic{color:#9aa0a6}}",
+    ".fi{width:15px;height:15px;border-radius:4px;object-fit:contain}",
+    ".tz.mini .tab,.tab.pin{flex:0 0 auto;width:23px;padding:0 3px;justify-content:center;gap:0}",
+    ".tz.mini .tt,.tab.pin .tt{display:none}",
+    ".tz.mini .tx,.tab.pin .tx{display:none !important}",
+    ".prog{position:fixed;top:0;left:0;height:2.5px;width:0;z-index:2147483644;pointer-events:none;",
+    "background:linear-gradient(90deg,#0a84ff,#5ac8fa);border-radius:0 2px 2px 0;opacity:0;",
+    "transition:opacity .25s}",
+    ".prog.on{opacity:1;animation:okload 5s ease-out forwards}",
+    ".prog.done{width:100% !important;opacity:0;transition:width .2s,opacity .35s}",
+    "@keyframes okload{0%{width:8%}25%{width:38%}55%{width:62%}85%{width:78%}100%{width:86%}}",
     "@keyframes okin{from{transform:scale(.72);opacity:0}to{transform:scale(1);opacity:1}}",
     ".tab:hover{background:rgba(250,250,252,.48)}",
     ".tab:active{transform:scale(.95)}",
@@ -156,15 +171,16 @@ const barJS = `
     "inset 0 0 0 .5px rgba(255,255,255,.08)}}",
     ".wbtn{width:40px;height:22px;border-radius:11px;display:grid;place-items:center;color:#3c4043;",
     "cursor:default;transition:background .12s,opacity .12s}",
-    ".menu{position:fixed;top:34px;right:6px;width:224px;padding:6px;border-radius:16px;",
+    ".menu,.ctx{position:fixed;top:34px;right:6px;width:224px;padding:6px;border-radius:16px;",
     "z-index:2147483647;pointer-events:auto;display:none;",
     "font-family:-apple-system,'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;",
     "background:rgba(250,250,252,.72);",
     "backdrop-filter:blur(30px) saturate(1.8);-webkit-backdrop-filter:blur(30px) saturate(1.8);",
     "box-shadow:0 14px 44px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.6),",
     "inset 0 0 0 .5px rgba(255,255,255,.35)}",
-    ".menu.open{display:block;animation:okin .16s ease}",
-    "@media (prefers-color-scheme:dark){.menu{background:rgba(30,30,34,.76);",
+    ".menu.open,.ctx.open{display:block;animation:okin .16s ease}",
+    ".ctx{right:auto}",
+    "@media (prefers-color-scheme:dark){.menu,.ctx{background:rgba(30,30,34,.76);",
     "box-shadow:0 14px 44px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.09),",
     "inset 0 0 0 .5px rgba(255,255,255,.07)}}",
     ".mrow{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:11px;",
@@ -265,6 +281,7 @@ const barJS = `
   root.adoptedStyleSheets = [sheet];
 
   root.innerHTML =
+    '<div class="prog" id="prog"></div>' +
     '<div class="edge" id="edge"></div>' +
     '<div class="strip" id="strip">' +
       '<div class="tz" id="tz"></div>' +
@@ -290,10 +307,19 @@ const barJS = `
     '</div>' +
     '<div class="menu" id="menu">' +
       '<div class="mrow" id="m-newtab" data-m="newtab">' + I_PLUS + 'New tab</div>' +
+      '<div class="mrow" id="m-incognito" data-m="incognito">' + I_INC + 'New incognito window</div>' +
       '<div class="mrow" id="m-bookmarks" data-m="bookmarks">' + I_STARF + 'Bookmarks</div>' +
       '<div class="mrow" id="m-history" data-m="history">' + I_CLK + 'History</div>' +
+      '<div class="mrow" id="m-downloads" data-m="downloads">' + I_DL + 'Downloads</div>' +
       '<div class="mrow" id="m-settings" data-m="settings">' + I_SET + 'Settings</div>' +
       '<div class="mfoot" id="m-foot">OK Browser</div>' +
+    '</div>' +
+    '<div class="ctx" id="ctx">' +
+      '<div class="mrow" id="c-newtab">New tab</div>' +
+      '<div class="mrow" id="c-dup">Duplicate</div>' +
+      '<div class="mrow" id="c-pin">Pin tab</div>' +
+      '<div class="mrow" id="c-close">Close tab</div>' +
+      '<div class="mrow" id="c-others">Close other tabs</div>' +
     '</div>' +
     '<div class="sug" id="sug"></div>' +
     '<div class="find" id="find">' +
@@ -362,9 +388,28 @@ const barJS = `
   var tabEls = [];
   var prevA = 0;
   var stateLive = false; // true once the first real state push rendered
+  var dragFrom = -1;
+
+  // letterOf picks the avatar letter for a URL (first letter of the host).
+  function letterOf(u) {
+    try {
+      var h = String(u || '');
+      var i = h.indexOf('://');
+      if (i >= 0) h = h.slice(i + 3);
+      var j = h.search(/[\/?#]/);
+      if (j >= 0) h = h.slice(0, j);
+      if (!h) return '\u2022';
+      return h.charAt(0).toUpperCase();
+    } catch (e) { return '\u2022'; }
+  }
+
   function buildTab() {
     var el = document.createElement('div');
     el.className = 'tab';
+    el.draggable = true;
+    var ic = document.createElement('div');
+    ic.className = 'ic';
+    el.appendChild(ic);
     var sp = document.createElement('span');
     sp.className = 'tt';
     el.appendChild(sp);
@@ -383,11 +428,91 @@ const barJS = `
       if (ev.button === 1) { ev.preventDefault(); post({ t: 'ui', a: 'close', i: el.__idx }); }
     });
     el.addEventListener('animationend', function () { el.classList.remove('in'); });
-    el.__set = function (t) { if (sp.textContent !== t) sp.textContent = t; };
+    // Drag & drop reordering.
+    el.addEventListener('dragstart', function (e) {
+      dragFrom = el.__idx;
+      try { e.dataTransfer.setData('text/plain', 'ok'); } catch (err) {}
+    });
+    el.addEventListener('dragover', function (e) { e.preventDefault(); });
+    el.addEventListener('drop', function (e) {
+      e.preventDefault();
+      if (dragFrom >= 0 && dragFrom !== el.__idx) {
+        post({ t: 'ui', a: 'reorder', i: dragFrom, to: el.__idx });
+      }
+      dragFrom = -1;
+    });
+    // Right-click: the tab context menu.
+    el.addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      openCtx(el.__idx, e.clientX || 40, e.clientY || 40);
+    });
+    el.__fav = null;
+    el.__set = function (t, u, f) {
+      if (sp.textContent !== t) sp.textContent = t;
+      el.title = t;
+      if (f !== el.__fav) {
+        el.__fav = f;
+        ic.textContent = '';
+        if (f) {
+          var img = document.createElement('img');
+          img.className = 'fi';
+          img.src = f;
+          img.alt = '';
+          img.addEventListener('error', function () { if (el.__fav === f) el.__set(t, u, ''); });
+          ic.appendChild(img);
+        } else {
+          ic.textContent = letterOf(u || t);
+        }
+      }
+    };
     return el;
   }
+
+  // --- tab context menu ------------------------------------------------------
+  var ctx = root.getElementById('ctx');
+  var ctxIdx = -1;
+  function closeCtx() { ctx.classList.remove('open'); ctxIdx = -1; }
+  function openCtx(idx, x, y) {
+    ctxIdx = idx;
+    var pinRow = root.getElementById('c-pin');
+    var tab = (S.tabs || [])[idx];
+    if (pinRow) pinRow.textContent = (tab && tab.p) ? 'Unpin tab' : 'Pin tab';
+    ctx.classList.add('open');
+    try {
+      var iw = window.innerWidth || 900, ih = window.innerHeight || 700;
+      ctx.style.left = Math.max(6, Math.min(x, iw - 240)) + 'px';
+      ctx.style.top = Math.max(6, Math.min(y, ih - 230)) + 'px';
+    } catch (e) {}
+  }
+  function ctxAction(id, act) {
+    var row = root.getElementById(id);
+    if (!row) return;
+    row.addEventListener('click', function () {
+      if (ctxIdx >= 0) post({ t: 'ui', a: act, i: ctxIdx });
+      closeCtx();
+    });
+  }
+  root.getElementById('c-newtab').addEventListener('click', function () {
+    post({ t: 'ui', a: 'new' });
+    closeCtx();
+  });
+  ctxAction('c-dup', 'dup');
+  ctxAction('c-pin', 'pin');
+  ctxAction('c-close', 'close');
+  ctxAction('c-others', 'close-others');
+  document.addEventListener('mousedown', function (e) {
+    if (ctx.classList.contains('open') && !ctx.contains(e.target)) closeCtx();
+  }, true);
   function render() {
     var tabs = S.tabs || [];
+    // Auto-collapse: pills shrink to favicon-only when the tab strip gets
+    // crowded, and grow back when there is room again. Pinned pills are
+    // always favicon-only (hover shows the full title as a tooltip).
+    var mini = false;
+    try {
+      mini = tabs.length > 1 && (tabs.length * 104) > ((window.innerWidth || 1200) - 250);
+    } catch (e) {}
+    tz.classList.toggle('mini', mini);
     while (tabEls.length > tabs.length) tabEls.pop().remove();
     for (var i = 0; i < tabs.length; i++) {
       var el = tabEls[i];
@@ -400,7 +525,8 @@ const barJS = `
       }
       el.__idx = i;
       el.classList.toggle('on', i === S.a);
-      el.__set(tabs[i].t || 'New Tab');
+      el.classList.toggle('pin', !!(tabs[i] && tabs[i].p));
+      el.__set(tabs[i].t || 'New Tab', (tabs[i] && tabs[i].u) || '', (tabs[i] && tabs[i].f) || '');
     }
     root.getElementById('bback').toggleAttribute('disabled', !S.b);
     root.getElementById('bfwd').toggleAttribute('disabled', !S.f);
@@ -562,7 +688,7 @@ const barJS = `
     e.stopPropagation();
     menu.classList.toggle('open');
   });
-  var mids = ['m-newtab', 'm-bookmarks', 'm-history', 'm-settings'];
+  var mids = ['m-newtab', 'm-incognito', 'm-bookmarks', 'm-history', 'm-downloads', 'm-settings'];
   for (var mi = 0; mi < mids.length; mi++) {
     var mrow = root.getElementById(mids[mi]);
     if (!mrow) continue;
@@ -716,6 +842,20 @@ const barJS = `
   });
 
   window.__okBar = function (s) { S = s; render(); sync(); stateLive = true; };
+
+  // Liquid loading hairline at the top edge while a page loads.
+  var prog = root.getElementById('prog');
+  window.__okLoad = function (on) {
+    if (on) {
+      prog.classList.remove('done');
+      prog.classList.add('on');
+    } else {
+      prog.classList.remove('on');
+      prog.classList.add('done');
+      setTimeout(function () { prog.classList.remove('done'); }, 450);
+    }
+  };
+  try { window.addEventListener('resize', function () { render(); }); } catch (e) {}
   window.__okBubbleFocus = function () {
     revealBar(false);
     setOpen(true);
@@ -757,6 +897,9 @@ const barJS = `
 // barTab is one tab entry for the in-page shell.
 type barTab struct {
 	T string `json:"t"`
+	U string `json:"u"` // for the letter avatar fallback
+	F string `json:"f"` // favicon URL ('' = letter)
+	P bool   `json:"p"` // pinned (favicon-only pill)
 }
 
 // barState is the full state pushed to the active tab's shell UI.
@@ -784,7 +927,7 @@ func (a *app) pushBarState() {
 		if title == "" {
 			title = "New Tab"
 		}
-		tabs[i] = barTab{T: title}
+		tabs[i] = barTab{T: title, U: tb.url, F: tb.favicon, P: tb.pinned}
 	}
 	st := barState{
 		Tabs: tabs,
@@ -858,9 +1001,11 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		T  string  `json:"t"`
 		U  string  `json:"u"`
 		D  string  `json:"d"`
+		F  string  `json:"f"`
 		A  string  `json:"a"`
 		M  string  `json:"m"`
 		I  int     `json:"i"`
+		To int     `json:"to"`
 		X  float64 `json:"x"`
 		Y  float64 `json:"y"`
 		Ts int64   `json:"ts"`
@@ -896,9 +1041,12 @@ func (a *app) onWebMessage(t *tab, msg string) {
 	case "go": // address bubble, start page or built-in pages
 		a.navigateTab(t, m.U)
 
-	case "nav": // page reported its URL and title
+	case "nav": // page reported its URL, title and favicon
 		if !a.inSelfTest && m.U != "" && m.U != "about:blank" && !strings.HasPrefix(m.U, "okbrowser://") {
 			a.store.AddHistory(m.U, m.D)
+		}
+		if m.F != "" && m.U != "" && m.U != "about:blank" {
+			t.favicon = m.F
 		}
 		if m.U == "" || m.U == "about:blank" {
 			t.isStart = true
@@ -970,6 +1118,10 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			a.postTask(func() { a.navigateTab(a.active(), "okbrowser://history") })
 		case "settings":
 			a.postTask(func() { a.navigateTab(a.active(), "okbrowser://settings") })
+		case "downloads":
+			a.postTask(func() { a.navigateTab(a.active(), "okbrowser://downloads") })
+		case "incognito":
+			spawnIncognito()
 		}
 
 	case "ui": // the glass shell
@@ -1007,6 +1159,37 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		case "switch":
 			i := m.I
 			a.postTask(func() { a.switchToTab(i) })
+			return
+		case "dup": // tab context menu: duplicate
+			i := m.I
+			a.postTask(func() {
+				if i >= 0 && i < len(a.tabs) {
+					a.newTab(a.tabs[i].url, true)
+				}
+			})
+			return
+		case "pin": // tab context menu: pin / unpin
+			i := m.I
+			a.postTask(func() {
+				if i >= 0 && i < len(a.tabs) {
+					a.tabs[i].pinned = !a.tabs[i].pinned
+					a.pushBarState()
+				}
+			})
+			return
+		case "close-others": // tab context menu
+			i := m.I
+			a.postTask(func() { a.closeOthers(i) })
+			return
+		case "reorder": // drag & drop
+			from, to := m.I, m.To
+			a.postTask(func() { a.reorderTab(from, to) })
+			return
+		case "dl-open": // downloads page: open a file
+			openPath(m.U)
+			return
+		case "dl-show": // downloads page: reveal in Explorer
+			showInFolder(m.U)
 			return
 		case "wdrag", "wtopresize", "wmaxtoggle", "wmin", "wclose":
 			act := m.A

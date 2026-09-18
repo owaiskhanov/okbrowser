@@ -25,8 +25,10 @@ type tab struct {
 
 	title   string
 	url     string
+	favicon string // page-reported icon URL ('' = letter avatar)
 	isStart bool
 	errPage bool // the currently shown page is our error page
+	pinned  bool // pinned tabs render as favicon-only pills
 	zoom    float64
 }
 
@@ -234,6 +236,8 @@ func (a *app) showInternal(t *tab, page string) {
 		html, title = HistoryHTML(a.store.SnapshotHistory()), "History"
 	case "settings":
 		html, title = SettingsHTML(a.store.Settings(), appVersion), "Settings"
+	case "downloads":
+		html, title = DownloadsHTML(listDownloads()), "Downloads"
 	default: // start
 		html, title = StartPageHTML(a.store.MostVisited(8), a.store.Settings().Engine), "New Tab"
 		page, isStart = "start", true
@@ -251,6 +255,39 @@ func (a *app) showInternal(t *tab, page string) {
 		a.pushBarState()
 	}
 	t.chromium.NavigateToString(html)
+}
+
+// reorderTab moves the tab at index from to index to.
+func (a *app) reorderTab(from, to int) {
+	if from == to || from < 0 || to < 0 || from >= len(a.tabs) || to >= len(a.tabs) {
+		return
+	}
+	t := a.tabs[from]
+	a.tabs = append(a.tabs[:from], a.tabs[from+1:]...)
+	a.tabs = append(a.tabs[:to], append([]*tab{t}, a.tabs[to:]...)...)
+	cur := a.activeIdx
+	switch {
+	case cur == from:
+		cur = to
+	case from < cur && to >= cur:
+		cur--
+	case from > cur && to <= cur:
+		cur++
+	}
+	a.activeIdx = cur
+	a.pushBarState()
+}
+
+// closeOthers closes every tab except i.
+func (a *app) closeOthers(i int) {
+	if i < 0 || i >= len(a.tabs) {
+		return
+	}
+	for j := len(a.tabs) - 1; j >= 0; j-- {
+		if j != i {
+			a.closeTab(j)
+		}
+	}
 }
 
 // showStartPage navigates tab t to the built-in start page.
@@ -294,6 +331,7 @@ func (a *app) onNavStarting(t *tab, args *edge.ICoreWebView2NavigationStartingEv
 	t.errPage = false
 	if a.isActive(t) {
 		a.pushBarState()
+		a.execActive("window.__okLoad&&window.__okLoad(true)")
 	}
 }
 
@@ -303,6 +341,9 @@ func (a *app) onNavStarting(t *tab, args *edge.ICoreWebView2NavigationStartingEv
 func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompletedEventArgs) {
 	if t.chromium == nil {
 		return
+	}
+	if a.isActive(t) {
+		a.execActive("window.__okLoad&&window.__okLoad(false)")
 	}
 	if args != nil && !t.errPage {
 		if ok, err := args.GetIsSuccess(); err == nil && !ok {
@@ -319,7 +360,7 @@ func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompleted
 	a.pushBarState()
 	a.scheduleBarPush(false)
 	a.selftestNavHook(t)
-	t.chromium.Eval(`window.__ok && window.__ok({ t: "nav", u: location.href, d: document.title })`)
+	t.chromium.Eval(`window.__ok && window.__ok({ t: "nav", u: location.href, d: document.title, f: (function(){try{var l=document.querySelector('link[rel~="shortcut icon"],link[rel~="icon"]');return l&&l.href?l.href:(location.origin+'/favicon.ico')}catch(e){return ''}})() })`)
 }
 
 // showErrorPage replaces the tab's content with a glass error page that

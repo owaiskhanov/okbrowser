@@ -52,10 +52,12 @@ const (
 	cmdBookmark    = 238
 	cmdHistoryPage = 239
 	cmdBmPage      = 240
+	cmdDownloadsPg = 241
+	cmdIncognito   = 242
 )
 
 // appVersion is shown in the settings page.
-const appVersion = "1.9.0"
+const appVersion = "1.10.0"
 
 // app is the browser window. The entire UI - the Liquid Glass bar with tabs,
 // address field and buttons - is rendered inside the web engine as a frosted
@@ -291,7 +293,11 @@ func NewApp(startURL string) (*app, bool) {
 	}
 
 	cn, _ := syscall.UTF16PtrFromString(mainClassName)
-	tn, _ := syscall.UTF16PtrFromString(appName)
+	title := appName
+	if incognitoMode {
+		title = appName + " - Incognito"
+	}
+	tn, _ := syscall.UTF16PtrFromString(title)
 	// The classic borderless "aero" style: WS_POPUP combined with
 	// WS_CAPTION suppresses the native title bar and DWM's own
 	// min/max/close buttons in EVERY window state (plain WS_OVERLAPPEDWINDOW
@@ -502,6 +508,8 @@ func (a *app) createAccelerators() {
 		{fVirtKey | fControl, 'D', cmdBookmark},
 		{fVirtKey | fControl, 'H', cmdHistoryPage},
 		{fVirtKey | fControl | fShift, 'O', cmdBmPage},
+		{fVirtKey | fControl, 'J', cmdDownloadsPg},
+		{fVirtKey | fControl | fShift, 'N', cmdIncognito},
 	})
 }
 
@@ -599,6 +607,9 @@ func (a *app) onAccelerator(vk uint) bool {
 		case 'H':
 			a.onCommand(cmdHistoryPage)
 			return true
+		case 'J':
+			a.onCommand(cmdDownloadsPg)
+			return true
 		case '1', '2', '3', '4', '5', '6', '7', '8':
 			a.onCommand(cmdSelectTab + int(vk-'1'))
 			return true
@@ -647,6 +658,9 @@ func (a *app) onAccelerator(vk uint) bool {
 			return true
 		case 'O':
 			a.onCommand(cmdBmPage)
+			return true
+		case 'N':
+			a.onCommand(cmdIncognito)
 			return true
 		case win.VK_F3:
 			a.onCommand(cmdFindPrev)
@@ -796,6 +810,10 @@ func (a *app) onCommand(id int) {
 		a.navigateTab(a.active(), "okbrowser://history")
 	case cmdBmPage:
 		a.navigateTab(a.active(), "okbrowser://bookmarks")
+	case cmdDownloadsPg:
+		a.navigateTab(a.active(), "okbrowser://downloads")
+	case cmdIncognito:
+		spawnIncognito()
 	}
 }
 

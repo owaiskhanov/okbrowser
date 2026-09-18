@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/jchv/go-webview2/webviewloader"
 )
@@ -41,6 +42,10 @@ func localFileOrURL(arg string) string {
 // dialog and always to log instead - a dialog would hang a scripted test.
 var selfTestMode bool
 
+// incognitoMode routes the engine profile and all local data (history,
+// bookmarks, session) to a throwaway folder that is wiped later.
+var incognitoMode bool
+
 func main() {
 	// The WebView2 Runtime ships with Windows 11 and up-to-date Windows 10.
 	// If it is missing we offer to open the official download page.
@@ -57,9 +62,14 @@ func main() {
 	for _, arg := range os.Args[1:] {
 		if arg == "--selftest" {
 			selfTest = true
+		} else if arg == "--incognito" {
+			incognitoMode = true
 		} else if arg != "" && !strings.HasPrefix(arg, "-") && startURL == "" {
 			startURL = localFileOrURL(arg)
 		}
+	}
+	if !selfTest {
+		cleanupIncognito()
 	}
 	if selfTest {
 		startURL = "https://example.com"
@@ -90,4 +100,18 @@ func main() {
 		app.startSelfTest()
 	}
 	app.Run()
+}
+
+// cleanupIncognito removes throwaway incognito profiles that are at least
+// a day old (a running session newer than that is left alone).
+func cleanupIncognito() {
+	dirs, err := filepath.Glob(filepath.Join(os.TempDir(), "OKBrowser-Incognito-*"))
+	if err != nil {
+		return
+	}
+	for _, d := range dirs {
+		if st, err := os.Stat(d); err == nil && st.IsDir() && time.Since(st.ModTime()) > 24*time.Hour {
+			_ = os.RemoveAll(d)
+		}
+	}
 }

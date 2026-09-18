@@ -4,6 +4,9 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -290,6 +293,94 @@ func SettingsHTML(s Settings, version string) string {
   }
   function act(id,m){ var el=document.getElementById(id); if(el) el.addEventListener('click',function(){ post({t:'clear',m:m}); }); }
   act('ch','history'); act('cb','bookmarks'); act('cs','session');
+})();
+</script>`)
+	b.WriteString(pageClose)
+	return b.String()
+}
+
+// dlFile is one entry of the Downloads page.
+type dlFile struct {
+	Name string
+	Path string
+	Size int64
+	Mod  int64 // unix millis
+}
+
+// listDownloads returns the newest files in the user's Downloads folder.
+func listDownloads() []dlFile {
+	home := os.Getenv("USERPROFILE")
+	if home == "" {
+		return nil
+	}
+	dir := filepath.Join(home, "Downloads")
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []dlFile
+	for _, e := range ents {
+		info, err := e.Info()
+		if err != nil || info.IsDir() {
+			continue
+		}
+		out = append(out, dlFile{
+			Name: e.Name(),
+			Path: filepath.Join(dir, e.Name()),
+			Size: info.Size(),
+			Mod:  info.ModTime().UnixMilli(),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Mod > out[j].Mod })
+	if len(out) > 50 {
+		out = out[:50]
+	}
+	return out
+}
+
+// humanSize formats a byte count.
+func humanSize(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1f GB", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.1f KB", float64(n)/(1<<10))
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
+}
+
+// DownloadsHTML renders the downloads page: the newest files in the
+// user's Downloads folder, with open and show-in-folder actions.
+func DownloadsHTML(files []dlFile) string {
+	var b strings.Builder
+	b.WriteString(pageBase)
+	b.WriteString(`<div class="wrap fade"><h1>Downloads</h1>`)
+	if len(files) == 0 {
+		b.WriteString(`<div class="card"><div class="row"><div class="meta"><div class="tt">No downloads yet</div><div class="uu">Files you download appear here</div></div></div></div>`)
+	}
+	b.WriteString(`<div class="card" id="list">`)
+	for _, f := range files {
+		b.WriteString(`<div class="row" data-p="` + htmlEsc(f.Path) + `">` +
+			`<div class="av">` + htmlEsc(avChar("http://"+f.Name)) + `</div>` +
+			`<div class="meta"><div class="tt">` + htmlEsc(f.Name) + `</div>` +
+			`<div class="uu">` + humanSize(f.Size) + `</div></div>` +
+			`<div class="xx" title="Show in folder">↗</div></div>`)
+	}
+	b.WriteString(`</div></div>`)
+	b.WriteString(`<script>
+(function(){
+  var post=function(o){try{window.__ok(o)}catch(e){}};
+  var rows=document.querySelectorAll('.row[data-p]');
+  for(var i=0;i<rows.length;i++){
+    (function(r){
+      var p=r.getAttribute('data-p');
+      r.addEventListener('click',function(e){ if(e.target.className==='xx')return; post({t:'dl-open',u:p}); });
+      r.querySelector('.xx').addEventListener('click',function(e){ e.stopPropagation(); post({t:'dl-show',u:p}); });
+    })(rows[i]);
+  }
 })();
 </script>`)
 	b.WriteString(pageClose)

@@ -48,9 +48,21 @@ just content:
 - Light and dark glass follow Windows automatically; everything hides during
   fullscreen video and printing
 
-- **Tabs**: click to switch, `+` for a new one, middle-click or ✕ to close,
-  `Ctrl+Tab` / `Ctrl+Shift+Tab` to cycle. Every tab is its own web engine
-  instance sharing one engine process, so tabs stay isolated and cheap
+- **Tabs with favicons**: each tab shows the site's own icon (letter
+  avatar as fallback). Pills **auto-collapse to favicon-only** when the tab
+  strip gets crowded and grow back when there's room; hover a collapsed
+  pill for the full title. Click to switch, `+` for a new one, middle-click
+  or ✕ to close, `Ctrl+Tab` / `Ctrl+Shift+Tab` to cycle. **Drag to
+  reorder**; **right-click** for duplicate / pin (favicon-only) / close
+  others. Every tab is its own web engine instance sharing one engine
+  process, so tabs stay isolated and cheap
+- **Liquid loading line**: a thin blue hairline runs along the top edge
+  while a page loads and sweeps away when it's done
+- **Incognito** (`Ctrl+Shift+N`): a private window with a throwaway
+  profile — history, cookies and session data go to a temp folder, never
+  to disk history
+- **Downloads** (`Ctrl+J`): your newest downloaded files in glass, with
+  open and show-in-folder actions
 - Address bar with smart parsing: `example.com` → `https://example.com`, plain words → search (engine selectable in Settings: **Google** / Bing / DuckDuckGo), `localhost:3000` / `192.168.x.x` → `http://`
 - **Suggestions while you type**: your history and bookmarks appear in a glass dropdown under the address bubble (↑/↓ to pick, Enter to go)
 - **Bookmarks**: tap the ★ in the address bubble (or `Ctrl+D`); manage them on the bookmarks page (`Ctrl+Shift+O` or the ☰ menu)
@@ -92,6 +104,8 @@ just content:
 | `Ctrl+D` | Bookmark this page |
 | `Ctrl+H` | History |
 | `Ctrl+Shift+O` | Bookmarks |
+| `Ctrl+J` | Downloads |
+| `Ctrl+Shift+N` | New incognito window |
 | `Ctrl+Shift+R` / `Shift+F5` | Hard reload (bypasses cache) |
 | `F12` / `Ctrl+Shift+I` | DevTools |
 | `Ctrl+ +` / `Ctrl+-` / `Ctrl+0` | Zoom in / out / reset |

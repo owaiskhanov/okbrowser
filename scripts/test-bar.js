@@ -62,6 +62,7 @@ class FakeElement {
   toggleAttribute(n, v) { if (v) this.attributes[n] = ''; else delete this.attributes[n]; }
   focus() { this.focused = true; global.document.activeElement = this; }
   getBoundingClientRect() { return { left: 100, top: 100, right: 500, bottom: 126, width: 400, height: 26 }; }
+  contains(el) { let n = el; while (n) { if (n === this) return true; n = n.parentNode; } return false; }
   select() { this.selected = true; }
   blur() {
     this.focused = false;
@@ -101,7 +102,7 @@ win.__okBar({ tabs: [{ t: 'A' }, { t: 'B' }, { t: 'C' }], a: 1, u: 'https://exam
 const tz = shadow.getElementById('tz');
 assert.strictEqual(tz.children.length, 3, 'tab pills not rendered');
 assert.ok(tz.children[1].className.includes('on'), 'active tab not marked');
-assert.strictEqual(tz.children[1].children[0]._text, 'B', 'tab title wrong');
+assert.strictEqual(tz.children[1].children[1]._text, 'B', 'tab title wrong');
 assert.ok(!('disabled' in shadow.getElementById('bback').attributes), 'back should be enabled');
 assert.ok('disabled' in shadow.getElementById('bfwd').attributes, 'forward should be disabled');
 
@@ -110,7 +111,7 @@ const expect = (wanted) => {
   assert.strictEqual(got, JSON.stringify(wanted), `expected ${JSON.stringify(wanted)}, got ${got}`);
 };
 tz.children[2].dispatch('click', EV); expect({ t: 'ui', a: 'switch', i: 2 });
-tz.children[1].children[1].dispatch('click', EV); expect({ t: 'ui', a: 'close', i: 1 });
+tz.children[1].children[2].dispatch('click', EV); expect({ t: 'ui', a: 'close', i: 1 });
 tz.children[0].dispatch('auxclick', { button: 1 }); expect({ t: 'ui', a: 'close', i: 0 });
 shadow.getElementById('plus').dispatch('click', EV); expect({ t: 'ui', a: 'new' });
 
@@ -158,7 +159,7 @@ assert.ok(okb.className.includes('open') && input.focused, 'Ctrl+L opens and foc
 const pill0 = tz.children[0];
 win.__okBar({ tabs: [{ t: 'A2' }, { t: 'B' }], a: 0, u: '', b: false, f: false, m: false });
 assert.strictEqual(tz.children[0], pill0, 'pills must be reused, not rebuilt');
-assert.strictEqual(tz.children[0].children[0]._text, 'A2', 'title updates in place');
+assert.strictEqual(tz.children[0].children[1]._text, 'A2', 'title updates in place');
 assert.strictEqual(tz.children.length, 2, 'removed pill is dropped');
 win.__okBar({ tabs: [{ t: 'A2' }, { t: 'B' }, { t: 'C' }], a: 2, u: '', b: false, f: false, m: false });
 assert.ok(tz.children[2].classList.contains('in'), 'new pill gets the subtle enter animation');
@@ -236,6 +237,63 @@ assert.strictEqual(sug.children.length, 2, 'search row + one suggestion row');
 input.dispatch('keydown', { key: 'ArrowDown', preventDefault() {} });
 input.dispatch('keydown', { key: 'Enter', preventDefault() {} });
 expect({ t: 'go', u: 'https://example.com' }); // Enter on the selected suggestion
+
+// --- favicons, auto-collapse, pin, drag reorder, context menu, loading line ---
+sent.length = 0;
+win.innerWidth = 1600;
+win.__okBar({ tabs: [
+  { t: 'Alpha', u: 'https://alpha.com/', f: 'https://alpha.com/icon.png' },
+  { t: 'Beta', u: 'https://beta.com/', f: '' }
+], a: 0, u: '', b: false, f: false, m: false });
+assert.strictEqual(tz.children[0].children[0].children[0].tagName, 'img', 'favicon pill shows an img');
+assert.strictEqual(tz.children[0].children[0].children[0].src, 'https://alpha.com/icon.png', 'favicon src set');
+assert.strictEqual(tz.children[1].children[0]._text, 'B', 'no favicon -> letter avatar (host letter)');
+assert.strictEqual(tz.children[1].children[1]._text, 'Beta', 'title renders next to the icon');
+assert.ok(!tz.classList.contains('mini'), 'few tabs: full pills');
+
+// auto-collapse when crowded
+win.innerWidth = 700;
+win.__okBar({ tabs: Array.from({ length: 10 }, (_, i) => ({ t: 'T' + i, u: 'https://t' + i + '.com/' })), a: 0, u: '', b: false, f: false, m: false });
+assert.ok(tz.classList.contains('mini'), 'crowded: pills collapse to favicon-only');
+win.innerWidth = 1600;
+win.__okBar({ tabs: [{ t: 'A', u: 'https://a.com/' }, { t: 'B', u: 'https://b.com/' }], a: 1, u: '', b: false, f: false, m: false });
+assert.ok(!tz.classList.contains('mini'), 'room again: pills expand');
+
+// pinned pill is favicon-only
+win.__okBar({ tabs: [{ t: 'A', u: 'https://a.com/', p: true }, { t: 'B', u: 'https://b.com/' }], a: 0, u: '', b: false, f: false, m: false });
+assert.ok(tz.children[0].classList.contains('pin'), 'pinned pill marked');
+assert.strictEqual(tz.children[0].title, 'A', 'pinned pill keeps the title as tooltip');
+
+// drag reorder
+sent.length = 0;
+tz.children[1].dispatch('dragstart', { dataTransfer: { setData() {} } });
+tz.children[0].dispatch('drop', { preventDefault() {} });
+expect({ t: 'ui', a: 'reorder', i: 1, to: 0 });
+
+// tab context menu
+const ctx = shadow.getElementById('ctx');
+tz.children[0].dispatch('contextmenu', { clientX: 60, clientY: 60, preventDefault() {} });
+assert.ok(ctx.classList.contains('open'), 'right-click opens the tab menu');
+assert.strictEqual(shadow.getElementById('c-pin').textContent, 'Unpin tab', 'pin label reflects the pinned state');
+shadow.getElementById('c-dup').dispatch('click', EV);
+expect({ t: 'ui', a: 'dup', i: 0 });
+assert.ok(!ctx.classList.contains('open'), 'context menu closes after an action');
+
+// loading hairline
+assert.strictEqual(typeof win.__okLoad, 'function', 'loading API installed');
+win.__okLoad(true);
+assert.ok(shadow.getElementById('prog').classList.contains('on'), 'loading line appears');
+win.__okLoad(false);
+assert.ok(shadow.getElementById('prog').classList.contains('done'), 'loading line completes');
+
+// menu carries the new entries
+sent.length = 0;
+wmenu.dispatch('click', { stopPropagation() {} });
+shadow.getElementById('m-incognito').dispatch('click', EV);
+expect({ t: 'menu', m: 'incognito' });
+wmenu.dispatch('click', { stopPropagation() {} });
+shadow.getElementById('m-downloads').dispatch('click', EV);
+expect({ t: 'menu', m: 'downloads' });
 
 // --- immersive auto-hide bar ---
 const strip = shadow.getElementById('strip');

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,13 +50,43 @@ func openExternal(url string) {
 }
 
 // dataPath returns the per-user WebView2 profile directory (cookies, cache,
-// history - what makes logins persist between sessions).
+// history - what makes logins persist between sessions). Incognito windows
+// use a throwaway folder instead.
 func dataPath() string {
+	if incognitoMode {
+		return filepath.Join(os.TempDir(), fmt.Sprintf("OKBrowser-Incognito-%d", os.Getpid()))
+	}
 	base := os.Getenv("LOCALAPPDATA")
 	if base == "" {
 		base = os.TempDir()
 	}
 	return filepath.Join(base, "OKBrowser", "WebView2")
+}
+
+// openPath opens a file with its default application.
+func openPath(path string) {
+	if path == "" {
+		return
+	}
+	win.ShellExecute(0, mustUTF16("open"), mustUTF16(path), nil, nil, win.SW_SHOWNORMAL)
+}
+
+// showInFolder reveals a file in Windows Explorer.
+func showInFolder(path string) {
+	if path == "" {
+		return
+	}
+	_ = exec.Command("explorer", "/select,"+path).Start()
+}
+
+// spawnIncognito starts a private OK Browser window: a separate process
+// with a throwaway profile - nothing is written to disk history.
+func spawnIncognito() {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	_ = exec.Command(exe, "--incognito").Start()
 }
 
 // spawnNewWindow starts a new OK Browser process, optionally opening the

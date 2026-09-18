@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -105,7 +106,11 @@ func newStore() *store {
 }
 
 // dataDir is %LOCALAPPDATA%\OKBrowser (same root as the WebView2 profile).
+// Incognito windows keep their data in a throwaway temp folder instead.
 func dataDir() string {
+	if incognitoMode {
+		return filepath.Join(os.TempDir(), fmt.Sprintf("OKBrowser-Incognito-%d", os.Getpid()))
+	}
 	base := os.Getenv("LOCALAPPDATA")
 	if base == "" {
 		base = os.TempDir()
