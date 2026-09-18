@@ -261,25 +261,34 @@ func (a *app) showInternal(t *tab, page string) {
 	t.chromium.NavigateToString(html)
 }
 
-// beginTabFade starts the liquid cross-fade for a newly opened tab: the
-// new host appears as a translucent layer over the previous tab and ramps
-// to full opacity once its first page has painted (with a fallback
-// deadline) - no white flash, the old tab shows through softly.
+// beginTabFade starts the liquid cross-fade for a newly opened tab.
+//
+// Two-phase, so nothing ever flashes: while the new tab's engine starts
+// and renders its first page, its host window stays completely HIDDEN -
+// the user keeps seeing the previous tab (an uninitialized layered
+// surface shows black, and the engine's default background is white, so
+// showing it early is exactly what flashed). Only once the first content
+// has painted does the host appear as a soft translucent veil over the
+// old tab and liquidly ramp to full opacity.
 func (a *app) beginTabFade(t *tab, prevHost win.HWND) {
-	ex := win.GetWindowLong(t.host, win.GWL_EXSTYLE)
-	win.SetWindowLong(t.host, win.GWL_EXSTYLE, ex|win.WS_EX_LAYERED)
-	if !setLayeredAlpha(t.host, 70) {
-		unlayered(t.host) // layered children unsupported: show at once
-		return
-	}
 	a.fading = true
 	a.fadeRamping = false
 	a.fadeReady = false
 	a.fadeHost = t.host
 	a.fadePrev = prevHost
-	a.fadeAlpha = 70
+	a.fadeAlpha = 60
 	a.fadeTicks = 0
 	win.SetTimer(a.hwnd, 2, 16, 0)
+}
+
+// tabByHost finds the tab owned by a host window.
+func (a *app) tabByHost(h win.HWND) *tab {
+	for _, t := range a.tabs {
+		if t.host == h {
+			return t
+		}
+	}
+	return nil
 }
 
 // fadeTick advances the new-tab cross-fade (WM_TIMER id 2).
@@ -293,17 +302,39 @@ func (a *app) fadeTick() {
 		a.endTabFade()
 		return
 	}
-	if !a.fadeRamping && (a.fadeReady || a.fadeTicks > 45) {
-		a.fadeRamping = true // first paint done, or ~700ms fallback
+	// The user switched away mid-fade: settle instantly.
+	if cur := a.active(); cur == nil || cur.host != a.fadeHost {
+		a.endTabFade()
+		return
 	}
-	if a.fadeRamping {
-		a.fadeAlpha += 26
-		if a.fadeAlpha >= 255 {
+	if !a.fadeRamping {
+		// Pending phase: stay hidden until the first content has painted
+		// (fadeReady) or the ~700ms fallback fires - the previous tab
+		// keeps showing the whole time.
+		if !a.fadeReady && a.fadeTicks <= 45 {
+			return
+		}
+		ex := win.GetWindowLong(a.fadeHost, win.GWL_EXSTYLE)
+		win.SetWindowLong(a.fadeHost, win.GWL_EXSTYLE, ex|win.WS_EX_LAYERED)
+		if !setLayeredAlpha(a.fadeHost, byte(a.fadeAlpha)) {
+			unlayered(a.fadeHost) // layered children unsupported: show at once
 			a.endTabFade()
 			return
 		}
-		setLayeredAlpha(a.fadeHost, byte(a.fadeAlpha))
+		win.ShowWindow(a.fadeHost, win.SW_SHOW)
+		if t := a.tabByHost(a.fadeHost); t != nil && t.chromium != nil {
+			t.chromium.Show()
+			t.chromium.Resize()
+		}
+		a.fadeRamping = true // revealed - the liquid ramp begins next tick
+		return
 	}
+	a.fadeAlpha += 13 // gentle ~250ms ramp
+	if a.fadeAlpha >= 255 {
+		a.endTabFade()
+		return
+	}
+	setLayeredAlpha(a.fadeHost, byte(a.fadeAlpha))
 }
 
 // endTabFade finishes the cross-fade: full opacity, previous view retired.

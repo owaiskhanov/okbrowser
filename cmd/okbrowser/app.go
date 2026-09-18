@@ -57,7 +57,7 @@ const (
 )
 
 // appVersion is shown in the settings page.
-const appVersion = "1.11.1"
+const appVersion = "1.11.2"
 
 // app is the browser window. The entire UI - the Liquid Glass bar with tabs,
 // address field and buttons - is rendered inside the web engine as a frosted
@@ -541,11 +541,16 @@ func (a *app) layout() {
 	}
 	for i, t := range a.tabs {
 		if i == a.activeIdx {
-			win.MoveWindow(t.host, 0, 0, w, h, false)
-			win.ShowWindow(t.host, win.SW_SHOW)
-			if t.chromium != nil {
-				t.chromium.Show()
-				t.chromium.Resize()
+			if a.fading && t.host == a.fadeHost && !a.fadeRamping {
+				// Pending reveal: the new tab stays hidden until its first
+				// content has painted - the previous tab shows meanwhile.
+			} else {
+				win.MoveWindow(t.host, 0, 0, w, h, false)
+				win.ShowWindow(t.host, win.SW_SHOW)
+				if t.chromium != nil {
+					t.chromium.Show()
+					t.chromium.Resize()
+				}
 			}
 		} else if !a.fading || t.host != a.fadePrev {
 			// During a new-tab cross-fade the previous tab stays visible
