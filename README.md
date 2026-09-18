@@ -30,7 +30,9 @@ just content:
 - **Tabs live in the topmost window bar**: sleek glass pills in the title-bar
   strip. Drag the empty strip to move the window, double-click to maximize;
   our own Windows min / max / close buttons sit at the top right — the native
-  title bar and its buttons are fully removed (WM_NCCALCSIZE frameless
+  title bar and its buttons are fully removed, windowed *and* maximized
+  (WM_NCCALCSIZE frameless; CI measures the maximized window to prove no
+  caption band ever comes back
   technique), so ours is the only top bar
 - **The address bar is a tiny glass bubble** floating at the bottom center
   (iOS-style). It stays out of sight; hover or click it (or press `Ctrl+L`)

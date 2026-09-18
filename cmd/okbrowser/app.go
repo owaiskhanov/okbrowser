@@ -129,18 +129,30 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		return 0
 
 	case win.WM_NCCALCSIZE:
-		// Remove the native caption band so Windows draws NO title bar,
-		// buttons or menu of its own - the glass shell bar is the only one.
-		// Left/right/bottom resize borders are kept.
+		// Remove the native caption band in BOTH states - the glass shell
+		// bar is the only top bar, windowed or maximized.
+		//
+		// The rects are in SCREEN coordinates, so the top edge is derived
+		// from the real window rect (absolute values would only work by
+		// accident). Left/right/bottom keep the system-proposed frame
+		// insets, so the resize borders and the DWM shadow keep working.
 		if wp != 0 {
 			p := (*ncCalcSizeParams)(lp)
+			var wr win.RECT
+			win.GetWindowRect(hwnd, &wr)
+			// The resize frame = size frame + padded border. (The padded
+			// border's metric ID is 92; its VALUE is only a few pixels -
+			// do not confuse the two.)
+			frameY := win.GetSystemMetrics(win.SM_CYFRAME) +
+				win.GetSystemMetrics(smCXPaddedBorder)
 			if win.IsZoomed(hwnd) {
-				// Maximized windows overhang the monitor by the frame size;
-				// keep the frame inset so content is not clipped off-screen.
-				frameY := win.GetSystemMetrics(win.SM_CYFRAME) + 92 /*SM_CXPADDEDBORDER*/
-				p.Rc0.Top = frameY
+				// A maximized window overhangs the monitor by the resize
+				// frame; keep exactly that inset so no content is clipped
+				// off-screen - but no caption band: our bar is the top bar.
+				p.Rc0.Top = wr.Top + frameY
 			} else {
-				p.Rc0.Top = 0
+				// Client starts flush with the window's top edge.
+				p.Rc0.Top = wr.Top
 			}
 			return 0
 		}

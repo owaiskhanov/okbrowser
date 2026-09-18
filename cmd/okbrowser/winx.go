@@ -35,6 +35,11 @@ var (
 	procGetDpiForWindow         = modUser32.NewProc("GetDpiForWindow")
 )
 
+// smCXPaddedBorder is the GetSystemMetrics index of SM_CXPADDEDBORDER -
+// the invisible padding added to the resize frame. The ID is 92; the value
+// it returns is only a few pixels and must never be used as a pixel count.
+const smCXPaddedBorder = 92
+
 // ncCalcSizeParams mirrors the Win32 NCCALCSIZE_PARAMS structure.
 type ncCalcSizeParams struct {
 	Rc0, Rc1, Rc2 win.RECT

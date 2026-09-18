@@ -293,6 +293,16 @@ const barJS = `
     post({ t: 'ui', a: 'wmaxtoggle' });
   });
 
+  // The very top of the window (the bar's own backdrop) is a resize grip:
+  // like any native window, drag it to resize from the top edge.
+  document.addEventListener('mousedown', function (e) {
+    if (e.button === 0 && e.clientY < 6 && !document.fullscreenElement) {
+      e.preventDefault();
+      e.stopPropagation();
+      post({ t: 'ui', a: 'wtopresize' });
+    }
+  }, true);
+
   // --- state ----------------------------------------------------------------
   function sync() {
     if (document.activeElement !== input) input.value = S.u || '';
@@ -403,6 +413,11 @@ func (a *app) windowAction(act string) {
 		// caption-drag loop for the main window.
 		win.ReleaseCapture()
 		win.SendMessage(a.hwnd, win.WM_NCLBUTTONDOWN, win.HTCAPTION, 0)
+	case "wtopresize":
+		// The web content hosts the top edge, so top-edge resizing is
+		// forwarded here: let Windows run its own resize loop.
+		win.ReleaseCapture()
+		win.SendMessage(a.hwnd, win.WM_NCLBUTTONDOWN, win.HTTOP, 0)
 	case "wmaxtoggle":
 		if win.IsZoomed(a.hwnd) {
 			win.ShowWindow(a.hwnd, win.SW_RESTORE)
@@ -527,7 +542,7 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			i := m.I
 			a.postTask(func() { a.switchToTab(i) })
 			return
-		case "wdrag", "wmaxtoggle", "wmin", "wclose":
+		case "wdrag", "wtopresize", "wmaxtoggle", "wmin", "wclose":
 			act := m.A
 			a.postTask(func() { a.windowAction(act) })
 			return

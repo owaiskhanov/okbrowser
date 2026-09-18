@@ -88,6 +88,46 @@ try {
     Log "WebView2 engine processes: $($wv.Count)"
     if ($wv.Count -eq 0 -and $fail -eq "") { $fail = "no WebView2 engine processes started" }
 
+    # Phase 2.5: maximized must show NO native caption band either - the
+    # app's own glass bar is the only top bar. Maximize the window and
+    # measure the non-client band above the client area (a kept caption
+    # band measures >= ~40 px; the resize frame alone is <= ~16 px).
+    if ($fail -eq "") {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public struct OKRECT { public int Left, Top, Right, Bottom; }
+public struct OKPT { public int X, Y; }
+public static class OKWin {
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, ref OKRECT r);
+    [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, ref OKRECT r);
+    [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref OKPT p);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+}
+"@
+        $proc.Refresh()
+        $h = $proc.MainWindowHandle
+        if ($h -ne [IntPtr]::Zero) {
+            [OKWin]::PostMessage($h, 0x0112, [IntPtr]0xF030, [IntPtr]::Zero) | Out-Null  # WM_SYSCOMMAND, SC_MAXIMIZE
+            Start-Sleep -Milliseconds 1500
+            $proc.Refresh()
+            $h = $proc.MainWindowHandle
+            $wr = New-Object OKRECT
+            $cr = New-Object OKRECT
+            $pt = New-Object OKPT
+            [OKWin]::GetWindowRect($h, [ref]$wr) | Out-Null
+            [OKWin]::GetClientRect($h, [ref]$cr) | Out-Null
+            [OKWin]::ClientToScreen($h, [ref]$pt) | Out-Null
+            $band = $pt.Y - $wr.Top
+            Log ("maximized check: window " + ($wr.Right - $wr.Left) + "x" + ($wr.Bottom - $wr.Top) + ", client " + ($cr.Right - $cr.Left) + "x" + ($cr.Bottom - $cr.Top) + ", top non-client band: $band px")
+            if ($band -ge 40) { $fail = "native caption band still visible when maximized ($band px)" }
+            [OKWin]::PostMessage($h, 0x0112, [IntPtr]0xF120, [IntPtr]::Zero) | Out-Null  # WM_SYSCOMMAND, SC_RESTORE
+            Start-Sleep -Milliseconds 800
+        } else {
+            Log "maximized check skipped: no window handle"
+        }
+    }
+
     # Phase 3: built-in self test - typed load, link click (renderer-initiated
     # same-tab navigation) and window.open (renderer-initiated new tab).
     $stFile = Join-Path (Split-Path $Exe -Parent) "selftest.txt"
