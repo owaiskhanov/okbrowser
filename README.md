@@ -24,13 +24,20 @@ on a real Windows machine** by CI before it is published.
 
 ## Features
 
-**Liquid Glass UI** — a floating frosted-glass capsule bar with real
-`backdrop-filter` blur of the page scrolling beneath it (the same technique
-Apple-style browsers use), rendered inside the web engine's GPU compositor:
-pill tabs, a capsule address field and tiny circular buttons with smooth
-hover/press animations. Buttons you cannot click fade out; the page gets all
-the remaining space. Light and dark palettes follow Windows automatically,
-and the bar hides itself during fullscreen video and printing.
+**Liquid Glass UI, frameless** — the native title bar is gone; the app is
+just content:
+
+- **Tabs live in the topmost window bar**: sleek glass pills in the title-bar
+  strip. Drag the empty strip to move the window, double-click to maximize;
+  real Windows min / max / close buttons sit at the top right
+- **The address bar is a tiny glass bubble** floating at the bottom center
+  (iOS-style). It stays out of sight; hover or click it (or press `Ctrl+L`)
+  and it liquidly expands into the full address capsule with back / forward /
+  reload / go — collapse happens automatically when you leave it
+- Everything renders inside the web engine's GPU compositor with real
+  `backdrop-filter` blur of the page beneath the glass
+- Light and dark glass follow Windows automatically; everything hides during
+  fullscreen video and printing
 
 - **Tabs**: click to switch, `+` for a new one, middle-click or ✕ to close,
   `Ctrl+Tab` / `Ctrl+Shift+Tab` to cycle. Every tab is its own web engine
@@ -55,7 +62,8 @@ and the bar hides itself during fullscreen video and printing.
 | Mouse button 4 / 5 | Back / forward |
 | `F5` / `Ctrl+R` | Reload |
 | `Alt+Home` | Start page |
-| `Ctrl+T` | New tab |
+| `Ctrl+T` | New tab (and focuses the address bubble) |
+| Hover the bottom bubble | Expand the address bar |
 | `Ctrl+N` | New window |
 | `Ctrl+W` | Close tab (window when last tab) |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |

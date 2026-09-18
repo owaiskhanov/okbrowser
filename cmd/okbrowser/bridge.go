@@ -45,21 +45,22 @@ window.__ok = function (o) {
 })();
 `
 
-// barJS builds the Liquid Glass bar: a floating frosted capsule with pill
-// tabs, a capsule address field and tiny circular buttons, rendered inside
-// the page compositor. backdrop-filter gives real blur of the page content
-// scrolling underneath - the same technique Apple-style browsers use.
+// barJS builds the Liquid Glass shell UI, rendered inside the page
+// compositor in a closed shadow root (immune to page CSS and CSP):
 //
-// The bar lives in a closed shadow root with constructed stylesheets, so
-// page CSS cannot touch it and it cannot leak into the page, even on sites
-// with strict Content-Security-Policies.
+//   - a frameless top bar: glass tab pills, a "+" and Windows min/max/close
+//     buttons; the empty middle is a native drag zone (drag to move the
+//     window, double-click to maximize)
+//   - a small floating glass bubble at the bottom center: hover (or click,
+//     or Ctrl+L / Ctrl+T) expands it into the address capsule, so the page
+//     view stays completely undisturbed
 const barJS = `
 (function () {
   if (window.top !== window) return;
   if (window.__okBarInstalled) return;
   window.__okBarInstalled = true;
 
-  var S = { tabs: [{ t: "New Tab" }], a: 0, u: "", b: false, f: false };
+  var S = { tabs: [{ t: "New Tab" }], a: 0, u: "", b: false, f: false, m: false };
 
   var SV = function (inner) {
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + inner + '</svg>';
@@ -69,70 +70,108 @@ const barJS = `
   var I_RL   = SV('<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>');
   var I_PLUS = SV('<path d="M12 5v14M5 12h14"/>');
   var I_X    = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>';
+  var I_LENS = SV('<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/>');
+  var I_GO   = SV('<path d="M5 12h13"/><path d="M13 6l6 6-6 6"/>');
+  var I_MIN  = SV('<path d="M5 12h14"/>');
+  var I_MAX  = SV('<rect x="5.5" y="5.5" width="13" height="13" rx="2"/>');
+  var I_RST  = SV('<rect x="8.5" y="5.5" width="10" height="10" rx="2"/><path d="M5.5 15.5a3.5 3.5 0 0 0 3.5 3.5h7"/>');
 
   var host = document.createElement('div');
   var root = host.attachShadow({ mode: 'closed' });
 
   var css = [
-    ".bar{position:fixed;top:6px;left:8px;right:8px;height:46px;z-index:2147483647;",
-    "display:flex;align-items:center;gap:8px;padding:0 10px;border-radius:23px;box-sizing:border-box;",
-    "font-family:-apple-system,'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;",
-    "background:rgba(250,250,252,.62);",
-    "backdrop-filter:blur(28px) saturate(1.8);-webkit-backdrop-filter:blur(28px) saturate(1.8);",
-    "box-shadow:0 10px 34px rgba(0,0,0,.16),0 2px 8px rgba(0,0,0,.08),",
-    "inset 0 1px 0 rgba(255,255,255,.65),inset 0 0 0 .5px rgba(255,255,255,.35)}",
-    "@media (prefers-color-scheme:dark){.bar{background:rgba(28,28,32,.60);",
-    "box-shadow:0 10px 34px rgba(0,0,0,.42),0 2px 8px rgba(0,0,0,.30),",
-    "inset 0 1px 0 rgba(255,255,255,.10),inset 0 0 0 .5px rgba(255,255,255,.08)}}",
-    ".tabs{display:flex;gap:4px;flex:0 1 auto;min-width:0;overflow:hidden;height:100%;align-items:center}",
-    ".tab{display:flex;align-items:center;gap:2px;height:32px;min-width:0;flex:0 1 150px;",
-    "padding:0 7px 0 12px;border-radius:16px;cursor:default;",
+    "*{-webkit-user-select:none}",
+    ".strip{position:fixed;top:0;left:0;right:0;height:34px;z-index:2147483647;",
+    "display:flex;align-items:center;gap:5px;padding:0 2px 0 8px;pointer-events:none;",
+    "font-family:-apple-system,'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif}",
+    ".tz{display:flex;gap:5px;align-items:center;min-width:0;height:100%;",
+    "flex:0 1 auto;overflow:hidden;pointer-events:auto}",
+    ".tab{display:flex;align-items:center;gap:2px;height:25px;min-width:0;flex:0 1 150px;",
+    "padding:0 6px 0 10px;border-radius:13px;cursor:default;",
+    "background:rgba(250,250,252,.42);",
+    "backdrop-filter:blur(24px) saturate(1.7);-webkit-backdrop-filter:blur(24px) saturate(1.7);",
+    "box-shadow:0 2px 10px rgba(0,0,0,.10),inset 0 1px 0 rgba(255,255,255,.55),",
+    "inset 0 0 0 .5px rgba(255,255,255,.28);",
     "transition:background .16s ease,transform .16s ease;animation:okpop .18s ease}",
-    ".tab:hover{background:rgba(120,128,138,.14)}",
-    ".tab:active{transform:scale(.96)}",
-    ".tab.on{background:rgba(255,255,255,.82);",
-    "box-shadow:0 1px 6px rgba(0,0,0,.10),inset 0 0 0 .5px rgba(0,0,0,.04)}",
-    "@media (prefers-color-scheme:dark){.tab.on{background:rgba(255,255,255,.16);",
-    "box-shadow:0 1px 6px rgba(0,0,0,.35),inset 0 0 0 .5px rgba(255,255,255,.06)}}",
-    ".tt{font-size:12.5px;font-weight:500;color:#3c4043;white-space:nowrap;",
+    ".tab:hover{background:rgba(250,250,252,.62)}",
+    ".tab:active{transform:scale(.95)}",
+    ".tab.on{background:rgba(255,255,255,.88);",
+    "box-shadow:0 3px 12px rgba(0,0,0,.14),inset 0 1px 0 rgba(255,255,255,.7),",
+    "inset 0 0 0 .5px rgba(0,0,0,.03)}",
+    "@media (prefers-color-scheme:dark){.tab{background:rgba(38,38,42,.42);",
+    "box-shadow:0 2px 10px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.07),",
+    "inset 0 0 0 .5px rgba(255,255,255,.06)}",
+    ".tab:hover{background:rgba(38,38,42,.60)}",
+    ".tab.on{background:rgba(255,255,255,.17);",
+    "box-shadow:0 3px 12px rgba(0,0,0,.36),inset 0 1px 0 rgba(255,255,255,.10),",
+    "inset 0 0 0 .5px rgba(255,255,255,.07)}}",
+    ".tt{font-size:11.5px;font-weight:500;color:#3c4043;white-space:nowrap;",
     "overflow:hidden;text-overflow:ellipsis;flex:1 1 auto;min-width:0}",
     "@media (prefers-color-scheme:dark){.tt{color:#e8eaed}}",
-    ".x{flex:0 0 auto;width:19px;height:19px;border-radius:50%;display:none;",
-    "place-items:center;color:#5f6368;opacity:.8;transition:background .14s,opacity .14s}",
-    ".x:hover{background:rgba(120,128,138,.22);opacity:1}",
-    "@media (prefers-color-scheme:dark){.x{color:#e8eaed}}",
-    ".x svg{width:9px;height:9px}",
-    ".tab.on .x,.tab:hover .x{display:grid}",
-    ".plus{flex:0 0 auto;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;",
-    "color:#5f6368;cursor:default;transition:background .15s,transform .12s}",
-    "@media (prefers-color-scheme:dark){.plus{color:#e8eaed}}",
-    ".plus:hover{background:rgba(120,128,138,.16)}",
-    ".plus:active{transform:scale(.88)}",
-    ".plus svg{width:13px;height:13px}",
-    ".addr{flex:1 1 auto;max-width:560px;min-width:120px;height:32px;margin:0 auto;",
-    "border-radius:16px;display:flex;align-items:center;padding:0 14px;box-sizing:border-box;",
-    "background:rgba(255,255,255,.66);box-shadow:inset 0 0 0 .5px rgba(0,0,0,.06);",
-    "transition:box-shadow .16s,background .16s}",
-    "@media (prefers-color-scheme:dark){.addr{background:rgba(255,255,255,.10);",
-    "box-shadow:inset 0 0 0 .5px rgba(255,255,255,.07)}}",
-    ".addr:focus-within{background:rgba(255,255,255,.95);",
-    "box-shadow:0 0 0 3px rgba(10,132,255,.32),inset 0 0 0 .5px rgba(0,0,0,.04)}",
-    "@media (prefers-color-scheme:dark){.addr:focus-within{background:rgba(40,42,46,.95);",
-    "box-shadow:0 0 0 3px rgba(10,132,255,.45),inset 0 0 0 .5px rgba(255,255,255,.08)}}",
-    ".addr input{all:unset;width:100%;font-size:13.5px;color:#202124;font-family:inherit;",
-    "caret-color:#0a84ff}",
-    "@media (prefers-color-scheme:dark){.addr input{color:#e8eaed}}",
-    ".addr input::placeholder{color:#80868b}",
-    ".btns{display:flex;gap:2px;flex:0 0 auto}",
-    ".btn{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;",
-    "color:#3c4043;cursor:default;transition:background .15s,transform .12s,opacity .15s}",
-    "@media (prefers-color-scheme:dark){.btn{color:#e8eaed}}",
-    ".btn:hover{background:rgba(120,128,138,.16)}",
-    ".btn:active{transform:scale(.88)}",
-    ".btn[disabled]{opacity:.26;pointer-events:none}",
-    ".btn svg{width:15px;height:15px}",
+    ".tx{flex:0 0 auto;width:17px;height:17px;border-radius:50%;display:none;",
+    "place-items:center;color:#5f6368;opacity:.85;transition:background .14s,opacity .14s}",
+    ".tx:hover{background:rgba(120,128,138,.24);opacity:1}",
+    "@media (prefers-color-scheme:dark){.tx{color:#e8eaed}}",
+    ".tx svg{width:8px;height:8px}",
+    ".tab.on .tx,.tab:hover .tx{display:grid}",
+    ".plus{flex:0 0 auto;width:25px;height:25px;border-radius:50%;display:grid;place-items:center;",
+    "color:#5f6368;cursor:default;background:rgba(250,250,252,.42);",
+    "backdrop-filter:blur(24px) saturate(1.7);-webkit-backdrop-filter:blur(24px) saturate(1.7);",
+    "box-shadow:0 2px 10px rgba(0,0,0,.10),inset 0 0 0 .5px rgba(255,255,255,.28);",
+    "transition:background .15s,transform .12s;pointer-events:auto}",
+    "@media (prefers-color-scheme:dark){.plus{color:#e8eaed;background:rgba(38,38,42,.42)}}",
+    ".plus:hover{background:rgba(250,250,252,.66)}",
+    "@media (prefers-color-scheme:dark){.plus:hover{background:rgba(38,38,42,.62)}}",
+    ".plus:active{transform:scale(.86)}",
+    ".plus svg{width:11px;height:11px}",
+    ".drag{flex:1 1 auto;height:100%;pointer-events:auto}",
+    ".wbtns{display:flex;height:100%;pointer-events:auto}",
+    ".wbtn{width:42px;height:100%;display:grid;place-items:center;color:#3c4043;",
+    "cursor:default;transition:background .12s,opacity .12s}",
+    "@media (prefers-color-scheme:dark){.wbtn{color:#e8eaed}}",
+    ".wbtn svg{width:11px;height:11px}",
+    ".wbtn:hover{background:rgba(120,128,138,.20)}",
+    ".wbtn:active{background:rgba(120,128,138,.32)}",
+    ".wbtn.close:hover{background:#e81123;color:#fff}",
+    ".wbtn.close:active{background:#c50f1d;color:#fff}",
+    ".okb{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);",
+    "height:46px;width:46px;border-radius:23px;z-index:2147483647;",
+    "display:flex;align-items:center;overflow:hidden;cursor:default;",
+    "background:rgba(250,250,252,.62);",
+    "backdrop-filter:blur(28px) saturate(1.8);-webkit-backdrop-filter:blur(28px) saturate(1.8);",
+    "box-shadow:0 12px 36px rgba(0,0,0,.20),0 2px 8px rgba(0,0,0,.10),",
+    "inset 0 1px 0 rgba(255,255,255,.65),inset 0 0 0 .5px rgba(255,255,255,.35);",
+    "transition:width .28s cubic-bezier(.32,.72,.24,1);pointer-events:auto}",
+    "@media (prefers-color-scheme:dark){.okb{background:rgba(28,28,32,.62);",
+    "box-shadow:0 12px 36px rgba(0,0,0,.46),0 2px 8px rgba(0,0,0,.32),",
+    "inset 0 1px 0 rgba(255,255,255,.10),inset 0 0 0 .5px rgba(255,255,255,.08)}}",
+    ".okb.open{width:min(640px,calc(100vw - 28px))}",
+    ".lens{position:absolute;inset:0;display:grid;place-items:center;color:#3c4043}",
+    "@media (prefers-color-scheme:dark){.lens{color:#e8eaed}}",
+    ".lens svg{width:19px;height:19px}",
+    ".okb.open .lens{display:none}",
+    ".inner{display:flex;align-items:center;gap:2px;width:100%;height:100%;",
+    "padding:0 7px 0 5px;opacity:0;transition:opacity .18s;pointer-events:none}",
+    ".okb.open .inner{opacity:1;pointer-events:auto}",
+    ".bb{flex:0 0 auto;width:32px;height:32px;border-radius:50%;display:grid;place-items:center;",
+    "color:#3c4043;cursor:default;transition:background .14s,transform .12s,opacity .14s}",
+    "@media (prefers-color-scheme:dark){.bb{color:#e8eaed}}",
+    ".bb:hover{background:rgba(120,128,138,.16)}",
+    ".bb:active{transform:scale(.86)}",
+    ".bb[disabled]{opacity:.26;pointer-events:none}",
+    ".bb svg{width:14px;height:14px}",
+    ".inner input{all:unset;flex:1 1 auto;min-width:60px;font-size:13.5px;color:#202124;",
+    "font-family:inherit;caret-color:#0a84ff;cursor:text;-webkit-user-select:text}",
+    "@media (prefers-color-scheme:dark){.inner input{color:#e8eaed}}",
+    ".inner input::placeholder{color:#80868b}",
+    ".go{flex:0 0 auto;width:32px;height:32px;border-radius:50%;display:grid;place-items:center;",
+    "color:#fff;background:rgba(10,132,255,.92);cursor:default;",
+    "transition:transform .12s,background .14s}",
+    ".go:hover{background:rgba(10,132,255,1)}",
+    ".go:active{transform:scale(.88)}",
+    ".go svg{width:14px;height:14px}",
     "@keyframes okpop{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}",
-    "@media print{.bar{display:none !important}}"
+    "@media print{.strip,.okb{display:none !important}}"
   ].join("");
 
   var sheet = new CSSStyleSheet();
@@ -140,25 +179,35 @@ const barJS = `
   root.adoptedStyleSheets = [sheet];
 
   root.innerHTML =
-    '<div class="bar">' +
-      '<div class="tabs" id="tabs"></div>' +
+    '<div class="strip">' +
+      '<div class="tz" id="tz"></div>' +
       '<div class="plus" id="plus">' + I_PLUS + '</div>' +
-      '<div class="addr" id="addr">' +
-        '<input id="a" placeholder="Search or enter address" spellcheck="false" autocomplete="off" autocapitalize="off">' +
+      '<div class="drag" id="drag"></div>' +
+      '<div class="wbtns">' +
+        '<div class="wbtn" id="wmin" title="Minimize">' + I_MIN + '</div>' +
+        '<div class="wbtn" id="wmax" title="Maximize">' + I_MAX + '</div>' +
+        '<div class="wbtn close" id="wclose" title="Close">' + I_X + '</div>' +
       '</div>' +
-      '<div class="btns">' +
-        '<div class="btn" id="back" title="Back">' + I_BACK + '</div>' +
-        '<div class="btn" id="fwd" title="Forward">' + I_FWD + '</div>' +
-        '<div class="btn" id="rl" title="Reload">' + I_RL + '</div>' +
+    '</div>' +
+    '<div class="okb" id="okb">' +
+      '<div class="lens" id="lens">' + I_LENS + '</div>' +
+      '<div class="inner">' +
+        '<div class="bb" id="bback" title="Back">' + I_BACK + '</div>' +
+        '<div class="bb" id="bfwd" title="Forward">' + I_FWD + '</div>' +
+        '<div class="bb" id="brl" title="Reload">' + I_RL + '</div>' +
+        '<input id="q" placeholder="Search or enter address" spellcheck="false" autocomplete="off" autocapitalize="off">' +
+        '<div class="go" id="go" title="Go">' + I_GO + '</div>' +
       '</div>' +
     '</div>';
 
-  var input = root.getElementById('a');
   var post = function (o) { window.__ok(o); };
+  var tz = root.getElementById('tz');
+  var okb = root.getElementById('okb');
+  var input = root.getElementById('q');
+  var hovering = false;
 
   function render() {
-    var wrap = root.getElementById('tabs');
-    wrap.textContent = '';
+    tz.textContent = '';
     var tabs = S.tabs || [];
     for (var i = 0; i < tabs.length; i++) {
       (function (idx) {
@@ -169,7 +218,7 @@ const barJS = `
         sp.textContent = tabs[idx].t || 'New Tab';
         el.appendChild(sp);
         var x = document.createElement('div');
-        x.className = 'x';
+        x.className = 'tx';
         x.innerHTML = I_X;
         x.addEventListener('click', function (ev) {
           ev.stopPropagation();
@@ -182,42 +231,81 @@ const barJS = `
         el.addEventListener('auxclick', function (ev) {
           if (ev.button === 1) { ev.preventDefault(); post({ t: 'ui', a: 'close', i: idx }); }
         });
-        wrap.appendChild(el);
+        tz.appendChild(el);
       })(i);
     }
-    root.getElementById('back').toggleAttribute('disabled', !S.b);
-    root.getElementById('fwd').toggleAttribute('disabled', !S.f);
+    root.getElementById('bback').toggleAttribute('disabled', !S.b);
+    root.getElementById('bfwd').toggleAttribute('disabled', !S.f);
+    root.getElementById('wmax').innerHTML = S.m ? I_RST : I_MAX;
   }
 
-  function sync() {
-    if (document.activeElement !== input) input.value = S.u || '';
+  // --- the bubble -----------------------------------------------------------
+  function setOpen(v) { okb.className = v ? 'okb open' : 'okb'; }
+
+  okb.addEventListener('mouseenter', function () { hovering = true; setOpen(true); });
+  okb.addEventListener('mouseleave', function () {
+    hovering = false;
+    if (document.activeElement !== input) setOpen(false);
+  });
+  root.getElementById('lens').addEventListener('click', function () {
+    setOpen(true);
+    input.focus();
+    input.select();
+  });
+  input.addEventListener('blur', function () {
+    if (!hovering) setOpen(false);
+  });
+  input.addEventListener('focus', function () { setOpen(true); });
+
+  function submit() {
+    if (input.value.trim()) post({ t: 'go', u: input.value });
+    input.blur();
+    post({ t: 'ui', a: 'refocus' });
   }
-
-  root.getElementById('plus').addEventListener('click', function () { post({ t: 'ui', a: 'new' }); });
-  root.getElementById('back').addEventListener('click', function () { post({ t: 'ui', a: 'back' }); });
-  root.getElementById('fwd').addEventListener('click', function () { post({ t: 'ui', a: 'forward' }); });
-  root.getElementById('rl').addEventListener('click', function () { post({ t: 'ui', a: 'reload' }); });
-
   input.addEventListener('keydown', function (e) {
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (input.value.trim()) post({ t: 'go', u: input.value });
-      input.blur();
-      post({ t: 'ui', a: 'refocus' });
+      submit();
     } else if (e.key === 'Escape') {
       e.preventDefault();
-      sync();
+      input.value = S.u || '';
       input.blur();
       post({ t: 'ui', a: 'refocus' });
     }
   });
+  root.getElementById('go').addEventListener('click', submit);
+
+  // --- top bar buttons ------------------------------------------------------
+  root.getElementById('plus').addEventListener('click', function () { post({ t: 'ui', a: 'new' }); });
+  root.getElementById('wmin').addEventListener('click', function () { post({ t: 'ui', a: 'wmin' }); });
+  root.getElementById('wmax').addEventListener('click', function () { post({ t: 'ui', a: 'wmaxtoggle' }); });
+  root.getElementById('wclose').addEventListener('click', function () { post({ t: 'ui', a: 'wclose' }); });
+
+  // Empty strip area: drag to move the window, double-click to maximize.
+  var drag = root.getElementById('drag');
+  drag.addEventListener('mousedown', function (e) {
+    if (e.button === 0) { e.preventDefault(); post({ t: 'ui', a: 'wdrag' }); }
+  });
+  drag.addEventListener('dblclick', function (e) {
+    e.preventDefault();
+    post({ t: 'ui', a: 'wmaxtoggle' });
+  });
+
+  // --- state ----------------------------------------------------------------
+  function sync() {
+    if (document.activeElement !== input) input.value = S.u || '';
+  }
 
   document.addEventListener('fullscreenchange', function () {
     host.style.display = document.fullscreenElement ? 'none' : '';
   });
 
   window.__okBar = function (s) { S = s; render(); sync(); };
-  window.__okBarFocus = function () { input.focus(); input.select(); };
+  window.__okBubbleFocus = function () {
+    setOpen(true);
+    input.focus();
+    input.select();
+  };
 
   (document.body || document.documentElement).appendChild(host);
   render();
@@ -225,22 +313,23 @@ const barJS = `
 })();
 `
 
-// barTab is one tab entry for the in-page bar.
+// barTab is one tab entry for the in-page shell.
 type barTab struct {
 	T string `json:"t"`
 }
 
-// barState is the full state pushed to the active tab's bar.
+// barState is the full state pushed to the active tab's shell UI.
 type barState struct {
 	Tabs []barTab `json:"tabs"`
 	A    int      `json:"a"`
 	U    string   `json:"u"`
 	B    bool     `json:"b"`
 	F    bool     `json:"f"`
+	M    bool     `json:"m"` // window maximized
 }
 
-// pushBarState sends tab list, address and navigation state to the bar of
-// the active tab. Safe to call at any time; no-op when there is no tab.
+// pushBarState sends tab list, address and window state to the shell of the
+// active tab. Safe to call at any time; no-op when there is no tab.
 func (a *app) pushBarState() {
 	t := a.active()
 	if t == nil || t.chromium == nil {
@@ -260,6 +349,7 @@ func (a *app) pushBarState() {
 		U:    t.url,
 		B:    t.chromium.CanGoBack(),
 		F:    t.chromium.CanGoForward(),
+		M:    a.maximized,
 	}
 	b, err := json.Marshal(st)
 	if err != nil {
@@ -269,10 +359,33 @@ func (a *app) pushBarState() {
 }
 
 // scheduleBarPush re-pushes bar state shortly after a load, covering the
-// moment when the bar script has just been installed in a new document.
-func (a *app) scheduleBarPush() {
+// moment when the shell script has just been installed in a new document.
+// It also performs a deferred address-bubble focus (e.g. after Ctrl+T).
+func (a *app) scheduleBarPush(focusBubble bool) {
+	a.pendingBubbleFocus = a.pendingBubbleFocus || focusBubble
 	if a.hwnd != 0 {
 		win.SetTimer(a.hwnd, 1, 150, 0)
+	}
+}
+
+// windowAction performs a frameless-window operation requested by the shell.
+func (a *app) windowAction(act string) {
+	switch act {
+	case "wdrag":
+		// Classic trick: release the mouse, then let Windows run its own
+		// caption-drag loop for the main window.
+		win.ReleaseCapture()
+		win.SendMessage(a.hwnd, win.WM_NCLBUTTONDOWN, win.HTCAPTION, 0)
+	case "wmaxtoggle":
+		if win.IsZoomed(a.hwnd) {
+			win.ShowWindow(a.hwnd, win.SW_RESTORE)
+		} else {
+			win.ShowWindow(a.hwnd, win.SW_MAXIMIZE)
+		}
+	case "wmin":
+		win.ShowWindow(a.hwnd, win.SW_MINIMIZE)
+	case "wclose":
+		win.DestroyWindow(a.hwnd)
 	}
 }
 
@@ -305,7 +418,7 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			a.newTab(m.U, true)
 		}
 
-	case "go": // address bar (or start page) - parsed the same way
+	case "go": // address bubble (or start page) - parsed the same way
 		if u := nav.Parse(m.U); u != "" && t.chromium != nil {
 			t.isStart = false
 			t.url = u
@@ -332,9 +445,9 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		}
 		a.syncTitle()
 		a.pushBarState()
-		a.scheduleBarPush()
+		a.scheduleBarPush(false)
 
-	case "ui": // the glass bar
+	case "ui": // the glass shell
 		switch m.A {
 		case "back":
 			if t.chromium != nil && t.chromium.CanGoBack() {
@@ -358,12 +471,16 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			}
 		case "new":
 			a.newTab("", true)
+			a.scheduleBarPush(true) // focus the address bubble once ready
 			return
 		case "close":
 			a.closeTab(m.I)
 			return
 		case "switch":
 			a.switchToTab(m.I)
+			return
+		case "wdrag", "wmaxtoggle", "wmin", "wclose":
+			a.windowAction(m.A)
 			return
 		}
 		a.pushBarState()

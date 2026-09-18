@@ -51,6 +51,9 @@ type app struct {
 
 	scale float64 // DPI scale factor (1.0 = 96 DPI)
 
+	maximized          bool // window is maximized (drives the shell's max icon)
+	pendingBubbleFocus bool // focus the address bubble after the next bar push
+
 	hostSeq int // child window id sequence
 
 	// lastSpawn throttles popup storms from web pages.
@@ -75,6 +78,10 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		return 0
 
 	case win.WM_SIZE:
+		if max := wp == 2; max != a.maximized {
+			a.maximized = max
+			a.pushBarState() // update the max/restore button icon
+		}
 		a.layout()
 		return 0
 
@@ -95,6 +102,10 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		if wp == 1 {
 			win.KillTimer(a.hwnd, 1)
 			a.pushBarState()
+			if a.pendingBubbleFocus {
+				a.pendingBubbleFocus = false
+				a.execActive("window.__okBubbleFocus&&window.__okBubbleFocus()")
+			}
 		}
 		return 0
 
@@ -144,8 +155,11 @@ func NewApp(startURL string) (*app, bool) {
 
 	cn, _ := syscall.UTF16PtrFromString(mainClassName)
 	tn, _ := syscall.UTF16PtrFromString(appName)
+	// Frameless: no native title bar - the glass shell bar IS the window
+	// bar. Keep the thick frame for edge resizing, Aero Snap and shadow.
+	const framelessStyle = win.WS_OVERLAPPEDWINDOW&^win.WS_CAPTION | win.WS_CLIPCHILDREN
 	a.hwnd = win.CreateWindowEx(0, cn, tn,
-		win.WS_OVERLAPPEDWINDOW|win.WS_CLIPCHILDREN,
+		framelessStyle,
 		win.CW_USEDEFAULT, win.CW_USEDEFAULT,
 		a.scaled(1180), a.scaled(820),
 		0, 0, a.instance, nil)
@@ -291,12 +305,12 @@ func (a *app) onCommand(id int) {
 	case cmdBack:
 		if t != nil && t.chromium != nil && t.chromium.CanGoBack() {
 			t.chromium.GoBack()
-			a.scheduleBarPush()
+			a.scheduleBarPush(false)
 		}
 	case cmdForward:
 		if t != nil && t.chromium != nil && t.chromium.CanGoForward() {
 			t.chromium.GoForward()
-			a.scheduleBarPush()
+			a.scheduleBarPush(false)
 		}
 	case cmdReload:
 		if t != nil && t.chromium != nil {
@@ -311,9 +325,10 @@ func (a *app) onCommand(id int) {
 			a.showStartPage(t)
 		}
 	case cmdFocusAddress:
-		a.execActive("window.__okBarFocus&&window.__okBarFocus()")
+		a.execActive("window.__okBubbleFocus&&window.__okBubbleFocus()")
 	case cmdNewTab:
 		a.newTab("", true)
+		a.scheduleBarPush(true) // focus the address bubble once ready
 	case cmdNewWindow:
 		spawnNewWindow("")
 	case cmdCloseTab:

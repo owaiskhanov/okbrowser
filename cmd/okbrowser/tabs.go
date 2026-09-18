@@ -89,7 +89,7 @@ func (a *app) newTab(url string, activate bool) *tab {
 	} else {
 		a.showStartPage(t)
 	}
-	a.scheduleBarPush()
+	a.scheduleBarPush(false)
 	return t
 }
 
@@ -198,6 +198,6 @@ func (a *app) onNavCompleted(t *tab) {
 	}
 	a.applyZoomTab(t)
 	a.pushBarState()
-	a.scheduleBarPush()
+	a.scheduleBarPush(false)
 	t.chromium.Eval(`window.__ok && window.__ok({ t: "nav", u: location.href, d: document.title })`)
 }

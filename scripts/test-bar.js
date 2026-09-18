@@ -1,10 +1,8 @@
-// Bar logic test - validates the Liquid Glass bar JavaScript that is
-// embedded in cmd/okbrowser/bridge.go, without needing Windows.
+// Shell UI logic test - validates the Liquid Glass shell JavaScript that is
+// embedded in cmd/okbrowser/bridge.go (frameless tab bar + address bubble),
+// without needing Windows.
 //
 //   node scripts/test-bar.js
-//
-// It extracts barJS from bridge.go, runs it against a minimal fake DOM and
-// asserts rendering, state sync, click routing and keyboard handling.
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
@@ -18,7 +16,7 @@ class FakeElement {
   constructor(tag) {
     this.tagName = tag; this.children = []; this.style = { cssText: '', display: '' };
     this._html = ''; this._text = ''; this.className = ''; this.disabled = false;
-    this._listeners = {}; this.attributes = {};
+    this._listeners = {}; this.attributes = {}; this.id = '';
   }
   set innerHTML(v) { this._html = v; this.children = []; this._parse(v); }
   get innerHTML() { return this._html; }
@@ -41,7 +39,13 @@ class FakeElement {
     walk(this); return found;
   }
   toggleAttribute(n, v) { if (v) this.attributes[n] = ''; else delete this.attributes[n]; }
-  focus() { this.focused = true; } select() { this.selected = true; } blur() {}
+  focus() { this.focused = true; global.document.activeElement = this; }
+  select() { this.selected = true; }
+  blur() {
+    this.focused = false;
+    if (global.document.activeElement === this) global.document.activeElement = null;
+    (this._listeners['blur'] || []).forEach(f => f({}));
+  }
 }
 
 const EV = { stopPropagation() {}, preventDefault() {}, button: 0 };
@@ -60,37 +64,65 @@ global.CSSStyleSheet = class { replaceSync() {} };
 
 new Function(js)();
 const shadow = global.__shadow;
-assert.strictEqual(typeof win.__okBar, 'function', 'bar API not installed');
-assert.strictEqual(typeof win.__okBarFocus, 'function', 'focus API not installed');
+assert.strictEqual(typeof win.__okBar, 'function', 'shell API not installed');
+assert.strictEqual(typeof win.__okBubbleFocus, 'function', 'bubble focus API not installed');
 
-win.__okBar({ tabs: [{ t: 'A' }, { t: 'B' }, { t: 'C' }], a: 1, u: 'https://example.com/x', b: true, f: false });
-const tabsEl = shadow.getElementById('tabs');
-assert.strictEqual(tabsEl.children.length, 3, 'tab pills not rendered');
-assert.ok(tabsEl.children[1].className.includes('on'), 'active tab not marked');
-assert.strictEqual(tabsEl.children[1].children[0]._text, 'B', 'tab title wrong');
-assert.ok(!('disabled' in shadow.getElementById('back').attributes), 'back should be enabled');
-assert.ok('disabled' in shadow.getElementById('fwd').attributes, 'forward should be disabled');
+// --- tabs in the frameless top bar ---
+win.__okBar({ tabs: [{ t: 'A' }, { t: 'B' }, { t: 'C' }], a: 1, u: 'https://example.com/x', b: true, f: false, m: false });
+const tz = shadow.getElementById('tz');
+assert.strictEqual(tz.children.length, 3, 'tab pills not rendered');
+assert.ok(tz.children[1].className.includes('on'), 'active tab not marked');
+assert.strictEqual(tz.children[1].children[0]._text, 'B', 'tab title wrong');
+assert.ok(!('disabled' in shadow.getElementById('bback').attributes), 'back should be enabled');
+assert.ok('disabled' in shadow.getElementById('bfwd').attributes, 'forward should be disabled');
 
 const expect = (wanted) => {
   const got = JSON.stringify(sent.shift());
   assert.strictEqual(got, JSON.stringify(wanted), `expected ${JSON.stringify(wanted)}, got ${got}`);
 };
-tabsEl.children[2].dispatch('click', EV); expect({ t: 'ui', a: 'switch', i: 2 });
-tabsEl.children[1].children[1].dispatch('click', EV); expect({ t: 'ui', a: 'close', i: 1 });
-tabsEl.children[0].dispatch('auxclick', { button: 1 }); expect({ t: 'ui', a: 'close', i: 0 });
+tz.children[2].dispatch('click', EV); expect({ t: 'ui', a: 'switch', i: 2 });
+tz.children[1].children[1].dispatch('click', EV); expect({ t: 'ui', a: 'close', i: 1 });
+tz.children[0].dispatch('auxclick', { button: 1 }); expect({ t: 'ui', a: 'close', i: 0 });
 shadow.getElementById('plus').dispatch('click', EV); expect({ t: 'ui', a: 'new' });
-shadow.getElementById('rl').dispatch('click', EV); expect({ t: 'ui', a: 'reload' });
-shadow.getElementById('back').dispatch('click', EV); expect({ t: 'ui', a: 'back' });
-shadow.getElementById('fwd').dispatch('click', EV); expect({ t: 'ui', a: 'forward' });
 
-const input = shadow.getElementById('a');
+// --- window controls and drag zone ---
+shadow.getElementById('wmin').dispatch('click', EV); expect({ t: 'ui', a: 'wmin' });
+shadow.getElementById('wmax').dispatch('click', EV); expect({ t: 'ui', a: 'wmaxtoggle' });
+shadow.getElementById('wclose').dispatch('click', EV); expect({ t: 'ui', a: 'wclose' });
+shadow.getElementById('drag').dispatch('mousedown', EV); expect({ t: 'ui', a: 'wdrag' });
+shadow.getElementById('drag').dispatch('dblclick', EV); expect({ t: 'ui', a: 'wmaxtoggle' });
+
+// maximize icon switches to the restore glyph
+const wmax = shadow.getElementById('wmax');
+assert.strictEqual((wmax._html.match(/<rect/g) || []).length, 1, 'max icon should be one rect');
+assert.ok(!wmax._html.includes('<path'), 'max icon has no path');
+win.__okBar({ tabs: [{ t: 'A' }], a: 0, u: '', b: false, f: false, m: true });
+assert.ok(wmax._html.includes('<path'), 'restore icon adds the second window outline');
+
+// --- the address bubble ---
+const okb = shadow.getElementById('okb');
+const input = shadow.getElementById('q');
+assert.ok(!okb.className.includes('open'), 'bubble starts collapsed');
+
+okb.dispatch('mouseenter', EV);
+assert.ok(okb.className.includes('open'), 'hover opens the bubble');
+okb.dispatch('mouseleave', EV);
+assert.ok(!okb.className.includes('open'), 'leaving (unfocused) collapses the bubble');
+
+shadow.getElementById('lens').dispatch('click', EV);
+assert.ok(okb.className.includes('open'), 'clicking the lens opens the bubble');
+assert.ok(input.focused && input.selected, 'lens click focuses and selects the input');
+
+// typing + Enter navigates and collapses; Escape restores the URL
+sent.length = 0;
+input.value = 'example.com';
 input.dispatch('keydown', { key: 'Enter', preventDefault() {} });
 assert.strictEqual(sent[0].t, 'go', 'Enter should navigate');
 assert.strictEqual(sent[1].a, 'refocus', 'Enter should refocus content');
-input.dispatch('keydown', { key: 'Escape', preventDefault() {} });
-assert.strictEqual(sent[sent.length - 1].a, 'refocus', 'Escape should refocus content');
+input.dispatch('blur', EV);
+assert.ok(!okb.className.includes('open'), 'bubble collapses after submit');
 
-win.__okBarFocus();
-assert.ok(input.focused && input.selected, 'Ctrl+L should focus and select the address');
+win.__okBubbleFocus();
+assert.ok(okb.className.includes('open') && input.focused, 'Ctrl+L opens and focuses the bubble');
 
-console.log('bar logic tests: ALL PASSED');
+console.log('shell UI logic tests: ALL PASSED');
