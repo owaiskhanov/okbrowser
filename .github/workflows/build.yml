@@ -61,10 +61,11 @@ jobs:
             dist/OKBrowser.exe
             dist/smoke-diagnostics.txt
 
-  # Manual step: publish a GitHub release containing the Windows-verified exe.
-  # Trigger with: gh workflow run build.yml --ref <branch> -f release=true
+  # Publishes a GitHub release containing the Windows-verified exe.
+  # Triggers: workflow_dispatch with release=true, or a push whose commit
+  # message contains "[release]".
   release:
-    if: github.event_name == 'workflow_dispatch' && inputs.release && needs.windows.result == 'success'
+    if: needs.windows.result == 'success' && ((github.event_name == 'workflow_dispatch' && inputs.release) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release]')))
     needs: windows
     runs-on: ubuntu-latest
     steps:
@@ -75,7 +76,7 @@ jobs:
           name: OKBrowser-windows-amd64-win2022
           path: dist
 
-      - name: Create release
+      - name: Create or update release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -88,7 +89,11 @@ jobs:
 
           **Requirements:** Windows 10 (1607+) or Windows 11, 64-bit. The WebView2 Runtime is pre-installed on Windows 11 and updated Windows 10; if missing, OK Browser offers to open Microsoft's official download page.
           EOF
-          gh release create "v1.0.0" dist/OKBrowser.exe \
-            --title "OK Browser 1.0.0" \
-            --notes-file notes.md \
-            --target "$GITHUB_SHA"
+          if gh release view v1.0.0 >/dev/null 2>&1; then
+            gh release upload v1.0.0 dist/OKBrowser.exe --clobber
+          else
+            gh release create "v1.0.0" dist/OKBrowser.exe \
+              --title "OK Browser 1.0.0" \
+              --notes-file notes.md \
+              --target "$GITHUB_SHA"
+          fi
