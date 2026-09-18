@@ -295,15 +295,16 @@ func NewApp(startURL string) (*app, bool) {
 	a.createAddressBar()
 	a.createAccelerators()
 
+	// Show the window immediately so the browser feels instant; the web
+	// engine fills the content area a moment later.
+	win.ShowWindow(a.hwnd, win.SW_SHOW)
+	win.UpdateWindow(a.hwnd)
+
 	// The first tab embeds the engine; if the runtime is missing the
 	// constructor already showed the download dialog.
 	if a.newTab(startURL, true) == nil {
 		return nil, false
 	}
-
-	a.layout()
-	win.ShowWindow(a.hwnd, win.SW_SHOW)
-	win.UpdateWindow(a.hwnd)
 	return a, true
 }
 
