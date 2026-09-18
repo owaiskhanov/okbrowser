@@ -57,7 +57,7 @@ const (
 )
 
 // appVersion is shown in the settings page.
-const appVersion = "1.10.1"
+const appVersion = "1.11.0"
 
 // app is the browser window. The entire UI - the Liquid Glass bar with tabs,
 // address field and buttons - is rendered inside the web engine as a frosted
@@ -86,6 +86,15 @@ type app struct {
 
 	// store is the local data vault: history, bookmarks, settings, session.
 	store *store
+
+	// new-tab cross-fade state (WM_TIMER id 2).
+	fading      bool
+	fadeRamping bool
+	fadeReady   bool
+	fadeHost    win.HWND
+	fadePrev    win.HWND
+	fadeAlpha   int
+	fadeTicks   int
 
 	// taskMu + taskQueue: work posted from engine callbacks, executed in
 	// the normal window-proc context via WM_APP. Engine callbacks must not
@@ -240,6 +249,9 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 				a.pendingBubbleFocus = false
 				a.execActive("window.__okBubbleFocus&&window.__okBubbleFocus()")
 			}
+		}
+		if wp == 2 {
+			a.fadeTick() // new-tab cross-fade
 		}
 		return 0
 
@@ -535,7 +547,9 @@ func (a *app) layout() {
 				t.chromium.Show()
 				t.chromium.Resize()
 			}
-		} else {
+		} else if !a.fading || t.host != a.fadePrev {
+			// During a new-tab cross-fade the previous tab stays visible
+			// beneath the translucent new one.
 			win.ShowWindow(t.host, win.SW_HIDE)
 			if t.chromium != nil {
 				t.chromium.Hide()

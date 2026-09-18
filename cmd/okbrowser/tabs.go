@@ -115,7 +115,11 @@ func (a *app) newTab(url string, activate bool) *tab {
 
 	a.tabs = append(a.tabs, t)
 	if activate || len(a.tabs) == 1 {
+		prev := a.active()
 		a.switchToTab(len(a.tabs) - 1)
+		if prev != nil && prev != t && isWnd(prev.host) {
+			a.beginTabFade(t, prev.host)
+		}
 	} else {
 		a.pushBarState() // update the visible tab strip
 	}
@@ -257,6 +261,68 @@ func (a *app) showInternal(t *tab, page string) {
 	t.chromium.NavigateToString(html)
 }
 
+// beginTabFade starts the liquid cross-fade for a newly opened tab: the
+// new host appears as a translucent layer over the previous tab and ramps
+// to full opacity once its first page has painted (with a fallback
+// deadline) - no white flash, the old tab shows through softly.
+func (a *app) beginTabFade(t *tab, prevHost win.HWND) {
+	ex := win.GetWindowLong(t.host, win.GWL_EXSTYLE)
+	win.SetWindowLong(t.host, win.GWL_EXSTYLE, ex|win.WS_EX_LAYERED)
+	if !setLayeredAlpha(t.host, 70) {
+		unlayered(t.host) // layered children unsupported: show at once
+		return
+	}
+	a.fading = true
+	a.fadeRamping = false
+	a.fadeReady = false
+	a.fadeHost = t.host
+	a.fadePrev = prevHost
+	a.fadeAlpha = 70
+	a.fadeTicks = 0
+	win.SetTimer(a.hwnd, 2, 16, 0)
+}
+
+// fadeTick advances the new-tab cross-fade (WM_TIMER id 2).
+func (a *app) fadeTick() {
+	if !a.fading {
+		win.KillTimer(a.hwnd, 2)
+		return
+	}
+	a.fadeTicks++
+	if !isWnd(a.fadeHost) {
+		a.endTabFade()
+		return
+	}
+	if !a.fadeRamping && (a.fadeReady || a.fadeTicks > 45) {
+		a.fadeRamping = true // first paint done, or ~700ms fallback
+	}
+	if a.fadeRamping {
+		a.fadeAlpha += 26
+		if a.fadeAlpha >= 255 {
+			a.endTabFade()
+			return
+		}
+		setLayeredAlpha(a.fadeHost, byte(a.fadeAlpha))
+	}
+}
+
+// endTabFade finishes the cross-fade: full opacity, previous view retired.
+func (a *app) endTabFade() {
+	win.KillTimer(a.hwnd, 2)
+	if isWnd(a.fadeHost) {
+		setLayeredAlpha(a.fadeHost, 255)
+		unlayered(a.fadeHost)
+	}
+	prev := a.fadePrev
+	a.fading = false
+	a.fadeHost = 0
+	a.fadePrev = 0
+	if isWnd(prev) {
+		win.ShowWindow(prev, win.SW_HIDE)
+	}
+	a.layout()
+}
+
 // reorderTab moves the tab at index from to index to.
 func (a *app) reorderTab(from, to int) {
 	if from == to || from < 0 || to < 0 || from >= len(a.tabs) || to >= len(a.tabs) {
@@ -341,6 +407,9 @@ func (a *app) onNavStarting(t *tab, args *edge.ICoreWebView2NavigationStartingEv
 func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompletedEventArgs) {
 	if t.chromium == nil {
 		return
+	}
+	if a.fading && t.host == a.fadeHost {
+		a.fadeReady = true // first paint done - begin the liquid ramp
 	}
 	if a.isActive(t) {
 		a.execActive("window.__okLoad&&window.__okLoad(false)")

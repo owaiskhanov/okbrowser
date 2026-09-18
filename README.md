@@ -29,12 +29,12 @@ just content:
 
 - **Immersive, content-first**: the page fills the whole window — nothing
   sits on top of your content while you browse. The glass bar (tabs, `+`,
-  address bubble) hides away and glides back the instant your mouse touches
-  the top edge, and reveals itself on `Ctrl+T`, `Ctrl+L` and tab switches;
-  it slides away again when you leave it. Min / max / close live in a small
-  **always-visible glass capsule** at the top right. Drag the bar's empty
-  middle to move the window, double-click it to maximize; the top edge
-  resizes the window while the bar is hidden. No native title bar in any
+  address bubble) **with the min / max / close capsule** hides away and
+  glides back together the instant your mouse touches the top edge, and
+  reveals itself on `Ctrl+T`, `Ctrl+L` and tab switches; it slides away
+  again when you leave it. Drag the bar's empty middle to move the window,
+  double-click it to maximize; the top edge resizes the window while the
+  bar is hidden. No native title bar in any
   state (borderless `WS_POPUP | WS_THICKFRAME | WS_CAPTION` style +
   `WM_NCCALCSIZE`, DWM shadow kept alive) — CI hit-tests the real window in
   both states to prove no native caption or button area exists, and
@@ -48,6 +48,9 @@ just content:
 - Light and dark glass follow Windows automatically; everything hides during
   fullscreen video and printing
 
+- **Liquid new tabs**: a new tab doesn't flash — it opens as a soft
+  translucent layer over the previous tab and liquidly fades to full once
+  its first page has painted
 - **Tabs with favicons**: each tab shows the site's own icon (letter
   avatar as fallback). Pills **auto-collapse to favicon-only** when the tab
   strip gets crowded and grow back when there's room; hover a collapsed

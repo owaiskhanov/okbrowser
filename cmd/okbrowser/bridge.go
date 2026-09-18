@@ -162,6 +162,7 @@ const barJS = `
     ".drag{flex:1 1 auto;height:100%;pointer-events:auto}",
     ".wcap{position:fixed;top:5px;right:6px;height:26px;display:flex;align-items:center;",
     "padding:0 3px;border-radius:14px;z-index:2147483647;pointer-events:auto;",
+    "transform:translateY(0);transition:transform .24s cubic-bezier(.32,.72,.24,1),opacity .2s}",
     "background:rgba(250,250,252,.5);",
     "backdrop-filter:blur(24px) saturate(1.7);-webkit-backdrop-filter:blur(24px) saturate(1.7);",
     "box-shadow:0 2px 12px rgba(0,0,0,.14),inset 0 1px 0 rgba(255,255,255,.5),",
@@ -169,6 +170,7 @@ const barJS = `
     "@media (prefers-color-scheme:dark){.wcap{background:rgba(28,28,32,.55);",
     "box-shadow:0 2px 12px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.09),",
     "inset 0 0 0 .5px rgba(255,255,255,.08)}}",
+    ".wcap.hid{transform:translateY(-160%);opacity:0;pointer-events:none}",
     ".wbtn{width:40px;height:22px;border-radius:11px;display:grid;place-items:center;color:#3c4043;",
     "cursor:default;transition:background .12s,opacity .12s}",
     ".menu,.ctx{position:fixed;top:34px;right:6px;width:224px;padding:6px;border-radius:16px;",
@@ -346,12 +348,20 @@ const barJS = `
   var hideTimer = 0;
   var briefTimer = 0;
 
-  function hideBar() { strip.classList.remove('open'); }
+  function hideBar() {
+    strip.classList.remove('open');
+    var wc = root.getElementById('wcap');
+    if (wc) wc.classList.add('hid'); // the capsule hides with the bar
+    closeMenu();
+    closeCtx();
+  }
   function hideIfIdle() {
     if (!barPinned && document.activeElement !== input) hideBar();
   }
   function revealBar(brief) {
     strip.classList.add('open');
+    var wc = root.getElementById('wcap');
+    if (wc) wc.classList.remove('hid');
     if (hideTimer) { clearTimeout(hideTimer); hideTimer = 0; }
     if (briefTimer) { clearTimeout(briefTimer); briefTimer = 0; }
     if (brief && !barPinned) {
@@ -501,7 +511,9 @@ const barJS = `
   ctxAction('c-close', 'close');
   ctxAction('c-others', 'close-others');
   document.addEventListener('mousedown', function (e) {
-    if (ctx.classList.contains('open') && !ctx.contains(e.target)) closeCtx();
+    if (!ctx.classList.contains('open')) return;
+    if (inRect(ctx, e.clientX, e.clientY)) return;
+    closeCtx();
   }, true);
   function render() {
     var tabs = S.tabs || [];
@@ -699,9 +711,22 @@ const barJS = `
       });
     })(mrow, mids[mi].slice(2));
   }
+  // Events crossing out of a CLOSED shadow root are retargeted: at
+  // document level every click's target is the shadow host - even for the
+  // menu's own rows - and composedPath() hides closed-root internals too.
+  // So the closer hit-tests COORDINATES instead (mouse coordinates are
+  // never retargeted): clicks inside the menu or the menu button keep it
+  // open, everything else closes it. (This was the dead-menu bug.)
+  function inRect(el, x, y) {
+    try {
+      var r = el.getBoundingClientRect();
+      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    } catch (e) { return false; }
+  }
   document.addEventListener('mousedown', function (e) {
-    if (menu.classList.contains('open') &&
-        e.target !== wmenu && !menu.contains(e.target)) closeMenu();
+    if (!menu.classList.contains('open')) return;
+    if (inRect(menu, e.clientX, e.clientY) || inRect(wmenu, e.clientX, e.clientY)) return;
+    closeMenu();
   }, true);
   root.getElementById('wmin').addEventListener('click', function () { post({ t: 'ui', a: 'wmin' }); });
   root.getElementById('wmax').addEventListener('click', function () { post({ t: 'ui', a: 'wmaxtoggle' }); });

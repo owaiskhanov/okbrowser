@@ -289,6 +289,16 @@ assert.ok(shadow.getElementById('prog').classList.contains('on'), 'loading line 
 win.__okLoad(false);
 assert.ok(shadow.getElementById('prog').classList.contains('done'), 'loading line completes');
 
+// menu: clicks retargeted to the shadow host (what document-level
+// listeners see in a real browser for ALL shadow content) must NOT close
+// the menu - this was the bug that made every menu item dead.
+wmenu.dispatch('click', { stopProjection() {}, stopPropagation() {} });
+assert.ok(menu.classList.contains('open'), 'menu opens');
+(docListeners['mousedown'] || []).forEach(f => f({ clientX: 200, clientY: 110, target: createdHost }));
+assert.ok(menu.classList.contains('open'), 'a click inside the menu (retargeted target, real coordinates) must not close it');
+(docListeners['mousedown'] || []).forEach(f => f({ clientX: 10, clientY: 400, target: createdHost }));
+assert.ok(!menu.classList.contains('open'), 'a click outside the menu closes it');
+
 // menu carries the new entries
 sent.length = 0;
 wmenu.dispatch('click', { stopPropagation() {} });
@@ -392,6 +402,7 @@ setTimeout(() => {
 
   (docListeners['mousemove'] || []).forEach(f => f({ clientY: 2 }));
   assert.ok(strip.classList.contains('open'), 'mouse at the top edge reveals the bar');
+  assert.ok(!shadow.getElementById('wcap').classList.contains('hid'), 'the capsule returns with the bar');
   strip.dispatch('mouseenter', {});
   win.__okBar({ tabs: [{ t: 'A' }, { t: 'B' }, { t: 'C' }, { t: 'D' }], a: 3, u: '', b: false, f: false, m: false });
   assert.ok(strip.classList.contains('open'), 'tab switch keeps the bar visible');
@@ -403,6 +414,7 @@ setTimeout(() => {
   strip.dispatch('mouseleave', {});
   setTimeout(() => {
     assert.ok(!strip.classList.contains('open'), 'bar hides again after the mouse leaves');
+    assert.ok(shadow.getElementById('wcap').classList.contains('hid'), 'the capsule hides with the bar');
     console.log('shell UI logic tests: ALL PASSED');
   }, 550);
 }, 550);
