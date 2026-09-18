@@ -1,0 +1,8 @@
+# Build output
+dist/
+*.exe
+*.test
+
+# Editor noise
+.vscode/
+.idea/

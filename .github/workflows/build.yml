@@ -1,0 +1,53 @@
+name: Build
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Unit tests
+        run: go test ./...
+
+      - name: Build
+        run: |
+          go build -trimpath -ldflags "-s -w -H windowsgui" -o dist/OKBrowser.exe ./cmd/okbrowser
+          Get-Item dist\OKBrowser.exe | Select-Object Name, Length | Format-List
+
+      - name: Smoke test on real Windows
+        shell: pwsh
+        run: ./scripts/smoke-test.ps1 -Exe dist/OKBrowser.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OKBrowser-windows-amd64
+          path: dist/OKBrowser.exe
+
+      # Push the verified binary back to the working branch so the agent (and
+      # anyone else) can fetch the exact exe that passed the Windows test.
+      - name: Publish verified build to working branch
+        if: success() && startsWith(github.ref, 'refs/heads/arena/')
+        shell: bash
+        run: |
+          git config user.name "arena-ci"
+          git config user.email "noreply@arena.ai"
+          mkdir -p .ci-build
+          cp dist/OKBrowser.exe .ci-build/
+          git add -f .ci-build/OKBrowser.exe
+          git commit -m "ci: Windows-verified build of ${GITHUB_SHA:0:7} [ci skip]" || echo "no changes to publish"
+          git push
