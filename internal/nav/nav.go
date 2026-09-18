@@ -9,8 +9,12 @@ import (
 	"strings"
 )
 
-// SearchEngine is the search provider used when input is not a URL.
-const SearchEngine = "https://www.google.com/search?q="
+// Engines maps the supported search engines to their query URL prefixes.
+var Engines = map[string]string{
+	"Google":     "https://www.google.com/search?q=",
+	"Bing":       "https://www.bing.com/search?q=",
+	"DuckDuckGo": "https://duckduckgo.com/?q=",
+}
 
 // Parse converts raw address-bar input into a URL to navigate to.
 //
@@ -23,7 +27,32 @@ const SearchEngine = "https://www.google.com/search?q="
 //	"[::1]:8080"           -> http://[::1]:8080
 //	"how to boil rice"     -> https://www.google.com/search?q=how+to+boil+rice
 //	"giraffe"              -> https://www.google.com/search?q=giraffe
-func Parse(input string) string {
+//
+// The search provider is chosen with ParseWithEngine; Parse uses Google.
+func Parse(input string) string { return ParseWithEngine(input, "Google") }
+
+// ParseWithEngine converts raw address-bar input into a URL, searching
+// with the named engine (see Engines; unknown names fall back to Google).
+func ParseWithEngine(input, engine string) string {
+	searchURL := Engines["Google"]
+	if u, ok := Engines[engine]; ok {
+		searchURL = u
+	}
+	return parse(input, searchURL)
+}
+
+// IsSearchURL reports whether u is a search-engine results page - such
+// pages are excluded from history tiles and most-visited rankings.
+func IsSearchURL(u string) bool {
+	for _, prefix := range Engines {
+		if strings.HasPrefix(u, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func parse(input, searchURL string) string {
 	s := strings.TrimSpace(input)
 	s = strings.Trim(s, "\"'")
 	if s == "" {
@@ -45,7 +74,7 @@ func Parse(input string) string {
 
 	// Anything with a space is treated as a search query.
 	if strings.Contains(s, " ") {
-		return SearchEngine + url.QueryEscape(s)
+		return searchURL + url.QueryEscape(s)
 	}
 
 	// Isolate the host part (strip path, query and fragment).
@@ -68,7 +97,7 @@ func Parse(input string) string {
 
 	// No dot in the host: not a domain, so search for it.
 	if !strings.Contains(host, ".") {
-		return SearchEngine + url.QueryEscape(s)
+		return searchURL + url.QueryEscape(s)
 	}
 
 	// Looks like a domain name: default to HTTPS.

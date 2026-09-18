@@ -59,15 +59,6 @@ func TestParseIsDeterministicAndTrimmed(t *testing.T) {
 	}
 }
 
-func TestStartHTML(t *testing.T) {
-	if len(StartHTML) == 0 {
-		t.Fatal("StartHTML is empty")
-	}
-	// Sanity: the page posts through the host bridge, not directly.
-	if !contains(StartHTML, `window.__ok({ t: "go", u: q })`) {
-		t.Error("start page must route searches through the host bridge")
-	}
-}
 
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (func() bool {
@@ -78,4 +69,19 @@ func contains(s, sub string) bool {
 		}
 		return false
 	})()
+}
+
+func TestParseWithEngine(t *testing.T) {
+	if got := ParseWithEngine("giraffe", "Bing"); got != "https://www.bing.com/search?q=giraffe" {
+		t.Errorf("ParseWithEngine(bing) = %q", got)
+	}
+	if got := ParseWithEngine("giraffe", "DuckDuckGo"); got != "https://duckduckgo.com/?q=giraffe" {
+		t.Errorf("ParseWithEngine(ddg) = %q", got)
+	}
+	if got := ParseWithEngine("giraffe", "Nope"); got != "https://www.google.com/search?q=giraffe" {
+		t.Errorf("ParseWithEngine(unknown) = %q", got)
+	}
+	if !IsSearchURL("https://www.google.com/search?q=x") || IsSearchURL("https://example.com/") {
+		t.Error("IsSearchURL misclassifies")
+	}
 }

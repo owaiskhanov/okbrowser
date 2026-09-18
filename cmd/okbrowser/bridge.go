@@ -5,11 +5,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/lxn/win"
-
-	"github.com/owaiskhanov/okbrowser/internal/nav"
 )
 
 // bridgeJS is injected into every page before any of its own scripts run.
@@ -61,7 +60,7 @@ const barJS = `
   if (window.__okBarInstalled) return;
   window.__okBarInstalled = true;
 
-  var S = { tabs: [{ t: "New Tab" }], a: 0, u: "", b: false, f: false, m: false };
+  var S = { tabs: [{ t: "New Tab" }], a: 0, u: "", b: false, f: false, m: false, k: false, e: "Google" };
 
   var SV = function (inner) {
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + inner + '</svg>';
@@ -78,6 +77,11 @@ const barJS = `
   var I_RST  = SV('<rect x="8.5" y="5.5" width="10" height="10" rx="2"/><path d="M5.5 15.5a3.5 3.5 0 0 0 3.5 3.5h7"/>');
   var I_UP   = SV('<path d="M6 15l6-6 6 6"/>');
   var I_DOWN = SV('<path d="M6 9l6 6 6-6"/>');
+  var I_STAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3.2l2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1L3.2 9.6l6.1-.9z"/></svg>';
+  var I_STARF = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 3.2l2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1L3.2 9.6l6.1-.9z"/></svg>';
+  var I_MENU = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>';
+  var I_CLK  = SV('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>');
+  var I_SET  = SV('<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>');
 
   var host = document.createElement('div');
   var root = host.attachShadow({ mode: 'closed' });
@@ -152,6 +156,45 @@ const barJS = `
     "inset 0 0 0 .5px rgba(255,255,255,.08)}}",
     ".wbtn{width:40px;height:22px;border-radius:11px;display:grid;place-items:center;color:#3c4043;",
     "cursor:default;transition:background .12s,opacity .12s}",
+    ".menu{position:fixed;top:34px;right:6px;width:224px;padding:6px;border-radius:16px;",
+    "z-index:2147483647;pointer-events:auto;display:none;",
+    "font-family:-apple-system,'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;",
+    "background:rgba(250,250,252,.72);",
+    "backdrop-filter:blur(30px) saturate(1.8);-webkit-backdrop-filter:blur(30px) saturate(1.8);",
+    "box-shadow:0 14px 44px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.6),",
+    "inset 0 0 0 .5px rgba(255,255,255,.35)}",
+    ".menu.open{display:block;animation:okin .16s ease}",
+    "@media (prefers-color-scheme:dark){.menu{background:rgba(30,30,34,.76);",
+    "box-shadow:0 14px 44px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.09),",
+    "inset 0 0 0 .5px rgba(255,255,255,.07)}}",
+    ".mrow{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:11px;",
+    "font-size:13px;font-weight:500;color:#202124;cursor:default;transition:background .13s}",
+    ".mrow:hover{background:rgba(120,128,138,.16)}",
+    ".mrow svg{width:14px;height:14px;color:#5f6368}",
+    "@media (prefers-color-scheme:dark){.mrow{color:#e8eaed}.mrow svg{color:#9aa0a6}}",
+    ".mfoot{padding:8px 12px 5px;font-size:11px;color:#80868b}",
+    ".sug{position:fixed;top:42px;width:340px;max-width:calc(100vw - 20px);padding:6px;",
+    "border-radius:16px;z-index:2147483647;pointer-events:auto;display:none;",
+    "font-family:-apple-system,'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;",
+    "background:rgba(250,250,252,.78);",
+    "backdrop-filter:blur(30px) saturate(1.8);-webkit-backdrop-filter:blur(30px) saturate(1.8);",
+    "box-shadow:0 14px 44px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.6),",
+    "inset 0 0 0 .5px rgba(255,255,255,.35)}",
+    ".sug.open{display:block;animation:okin .14s ease}",
+    "@media (prefers-color-scheme:dark){.sug{background:rgba(30,30,34,.8);",
+    "box-shadow:0 14px 44px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.09),",
+    "inset 0 0 0 .5px rgba(255,255,255,.07)}}",
+    ".srow{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:11px;",
+    "cursor:default;transition:background .1s}",
+    ".srow:hover,.srow.son{background:rgba(10,132,255,.14)}",
+    ".sic{flex:0 0 auto;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;",
+    "color:#5f6368;background:rgba(120,128,138,.12)}",
+    ".sic svg{width:12px;height:12px}",
+    "@media (prefers-color-scheme:dark){.sic{color:#9aa0a6;background:rgba(200,205,214,.12)}}",
+    ".smeta{flex:1 1 auto;min-width:0}",
+    ".stt{font-size:12.5px;font-weight:550;color:#202124;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+    "@media (prefers-color-scheme:dark){.stt{color:#e8eaed}}",
+    ".suu{font-size:11px;color:#80868b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
     "@media (prefers-color-scheme:dark){.wbtn{color:#e8eaed}}",
     ".wbtn svg{width:11px;height:11px}",
     ".wbtn:hover{background:rgba(120,128,138,.20)}",
@@ -233,16 +276,26 @@ const barJS = `
           '<div class="bb" id="bfwd" title="Forward">' + I_FWD + '</div>' +
           '<div class="bb" id="brl" title="Reload">' + I_RL + '</div>' +
           '<input id="q" placeholder="Search or enter address" spellcheck="false" autocomplete="off" autocapitalize="off">' +
+          '<div class="bb" id="bstar" title="Bookmark this page (Ctrl+D)">' + I_STAR + '</div>' +
           '<div class="go" id="go" title="Go">' + I_GO + '</div>' +
         '</div>' +
       '</div>' +
       '<div class="drag" id="drag"></div>' +
     '</div>' +
     '<div class="wcap" id="wcap">' +
+      '<div class="wbtn" id="wmenu" title="Menu">' + I_MENU + '</div>' +
       '<div class="wbtn" id="wmin" title="Minimize">' + I_MIN + '</div>' +
       '<div class="wbtn" id="wmax" title="Maximize">' + I_MAX + '</div>' +
       '<div class="wbtn close" id="wclose" title="Close">' + I_X + '</div>' +
     '</div>' +
+    '<div class="menu" id="menu">' +
+      '<div class="mrow" id="m-newtab" data-m="newtab">' + I_PLUS + 'New tab</div>' +
+      '<div class="mrow" id="m-bookmarks" data-m="bookmarks">' + I_STARF + 'Bookmarks</div>' +
+      '<div class="mrow" id="m-history" data-m="history">' + I_CLK + 'History</div>' +
+      '<div class="mrow" id="m-settings" data-m="settings">' + I_SET + 'Settings</div>' +
+      '<div class="mfoot" id="m-foot">OK Browser</div>' +
+    '</div>' +
+    '<div class="sug" id="sug"></div>' +
     '<div class="find" id="find">' +
       '<input id="fq" placeholder="Find in page" spellcheck="false">' +
       '<div class="fc" id="fc">0/0</div>' +
@@ -352,6 +405,7 @@ const barJS = `
     root.getElementById('bback').toggleAttribute('disabled', !S.b);
     root.getElementById('bfwd').toggleAttribute('disabled', !S.f);
     root.getElementById('wmax').innerHTML = S.m ? I_RST : I_MAX;
+    root.getElementById('bstar').innerHTML = S.k ? I_STARF : I_STAR;
     if (stateLive && prevA !== S.a) revealBar(true); // tab switched
     prevA = S.a;
   }
@@ -376,26 +430,153 @@ const barJS = `
   });
   input.addEventListener('focus', function () { setOpen(true); });
 
-  function submit() {
-    if (input.value.trim()) post({ t: 'go', u: input.value });
+  function submit(url) {
+    var v = url || input.value.trim();
+    if (v) post({ t: 'go', u: v });
     input.blur();
     post({ t: 'ui', a: 'refocus' });
   }
+
+  // --- suggestions (history + bookmarks) ------------------------------------
+  var sug = root.getElementById('sug');
+  var sugItems = [];
+  var sugSel = -1; // -1 = the typed/search row, 0.. = items
+  var sugTimer = 0;
+
+  function hideSug() {
+    sug.classList.remove('open');
+    sug.textContent = '';
+    sugItems = [];
+    sugSel = -1;
+  }
+  function sugPaint() {
+    var rows = sug.children;
+    for (var i = 0; i < rows.length; i++) rows[i].classList.toggle('son', i === sugSel + 1);
+  }
+  function sugBuild() {
+    sug.textContent = '';
+    try {
+      var br = okb.getBoundingClientRect();
+      var iw = window.innerWidth || 1200;
+      sug.style.left = Math.max(8, Math.min(br.left, iw - 352)) + 'px';
+      sug.style.top = (br.bottom + 6) + 'px';
+    } catch (e) {}
+    var q = input.value.trim();
+    var r0 = document.createElement('div');
+    r0.className = 'srow';
+    var ic0 = document.createElement('div');
+    ic0.className = 'sic';
+    ic0.innerHTML = I_LENS;
+    r0.appendChild(ic0);
+    var m0 = document.createElement('div');
+    m0.className = 'smeta';
+    var t0 = document.createElement('div');
+    t0.className = 'stt';
+    t0.textContent = 'Search ' + (S.e || 'Google') + ' for \u201C' + q.replace(/[<>&]/g, '') + '\u201D';
+    m0.appendChild(t0);
+    r0.appendChild(m0);
+    r0.addEventListener('mousedown', function (e) { e.preventDefault(); submit(); });
+    sug.appendChild(r0);
+    for (var i = 0; i < sugItems.length; i++) {
+      (function (it, idx) {
+        var r = document.createElement('div');
+        r.className = 'srow';
+        var ic = document.createElement('div');
+        ic.className = 'sic';
+        ic.innerHTML = it.s === 'b' ? I_STARF : I_CLK;
+        r.appendChild(ic);
+        var meta = document.createElement('div');
+        meta.className = 'smeta';
+        var tt = document.createElement('div');
+        tt.className = 'stt';
+        var uu = document.createElement('div');
+        uu.className = 'suu';
+        meta.appendChild(tt);
+        meta.appendChild(uu);
+        r.appendChild(meta);
+        tt.textContent = it.t || it.u;
+        uu.textContent = it.u;
+        r.addEventListener('mousedown', function (e) { e.preventDefault(); submit(it.u); });
+        r.addEventListener('mouseenter', function () { sugSel = idx; sugPaint(); });
+        sug.appendChild(r);
+      })(sugItems[i], i);
+    }
+    sug.classList.add('open');
+    sugPaint();
+  }
+  window.__okSuggest = function (list) {
+    sugItems = list || [];
+    if (document.activeElement === input && input.value.trim()) {
+      sugBuild();
+    }
+  };
+  input.addEventListener('input', function () {
+    if (sugTimer) clearTimeout(sugTimer);
+    if (!input.value.trim()) { hideSug(); return; }
+    sugTimer = setTimeout(function () {
+      sugTimer = 0;
+      post({ t: 'suggest', u: input.value });
+    }, 120);
+  });
+  input.addEventListener('blur', function () {
+    setTimeout(hideSug, 150); // let a mousedown-click land first
+  });
+
   input.addEventListener('keydown', function (e) {
     if (e.key === 'Enter') {
       e.preventDefault();
-      submit();
+      if (sug.classList.contains('open') && sugSel >= 0 && sugItems[sugSel]) {
+        submit(sugItems[sugSel].u);
+      } else {
+        submit();
+      }
+    } else if (e.key === 'ArrowDown' && sug.classList.contains('open')) {
+      e.preventDefault();
+      sugSel = Math.min(sugSel + 1, sugItems.length - 1);
+      sugPaint();
+    } else if (e.key === 'ArrowUp' && sug.classList.contains('open')) {
+      e.preventDefault();
+      sugSel = Math.max(sugSel - 1, -1);
+      sugPaint();
     } else if (e.key === 'Escape') {
       e.preventDefault();
+      if (sug.classList.contains('open')) { hideSug(); return; }
       input.value = S.u || '';
       input.blur();
       post({ t: 'ui', a: 'refocus' });
     }
   });
-  root.getElementById('go').addEventListener('click', submit);
+  root.getElementById('go').addEventListener('click', function () { submit(); });
+  root.getElementById('bstar').addEventListener('click', function () {
+    post({ t: 'bm' });
+  });
 
   // --- top bar buttons ------------------------------------------------------
   root.getElementById('plus').addEventListener('click', function () { post({ t: 'ui', a: 'new' }); });
+
+  // --- the menu beside minimize ----------------------------------------------
+  var menu = root.getElementById('menu');
+  var wmenu = root.getElementById('wmenu');
+  function closeMenu() { menu.classList.remove('open'); }
+  wmenu.addEventListener('click', function (e) {
+    e.stopPropagation();
+    menu.classList.toggle('open');
+  });
+  var mids = ['m-newtab', 'm-bookmarks', 'm-history', 'm-settings'];
+  for (var mi = 0; mi < mids.length; mi++) {
+    var mrow = root.getElementById(mids[mi]);
+    if (!mrow) continue;
+    (function (r, act) {
+      r.addEventListener('click', function () {
+        post({ t: 'menu', m: act });
+        closeMenu();
+      });
+    })(mrow, mids[mi].slice(2));
+  }
+  document.addEventListener('mousedown', function (e) {
+    if (menu.classList.contains('open') &&
+        e.target !== wmenu && !menu.contains(e.target)) closeMenu();
+  }, true);
   root.getElementById('wmin').addEventListener('click', function () { post({ t: 'ui', a: 'wmin' }); });
   root.getElementById('wmax').addEventListener('click', function () { post({ t: 'ui', a: 'wmaxtoggle' }); });
   root.getElementById('wclose').addEventListener('click', function () { post({ t: 'ui', a: 'wclose' }); });
@@ -586,6 +767,8 @@ type barState struct {
 	B    bool     `json:"b"`
 	F    bool     `json:"f"`
 	M    bool     `json:"m"` // window maximized
+	K    bool     `json:"k"` // current page bookmarked
+	E    string   `json:"e"` // search engine name
 }
 
 // pushBarState sends tab list, address and window state to the shell of the
@@ -610,6 +793,8 @@ func (a *app) pushBarState() {
 		B:    t.chromium.CanGoBack(),
 		F:    t.chromium.CanGoForward(),
 		M:    a.maximized,
+		K:    t.url != "" && !t.isStart && a.store.IsBookmarked(t.url),
+		E:    a.store.Settings().Engine,
 	}
 	b, err := json.Marshal(st)
 	if err != nil {
@@ -670,13 +855,15 @@ func (a *app) allowSpawn() bool {
 // onWebMessage receives JSON messages posted by tab t via window.__ok.
 func (a *app) onWebMessage(t *tab, msg string) {
 	var m struct {
-		T string  `json:"t"`
-		U string  `json:"u"`
-		D string  `json:"d"`
-		A string  `json:"a"`
-		I int     `json:"i"`
-		X float64 `json:"x"`
-		Y float64 `json:"y"`
+		T  string  `json:"t"`
+		U  string  `json:"u"`
+		D  string  `json:"d"`
+		A  string  `json:"a"`
+		M  string  `json:"m"`
+		I  int     `json:"i"`
+		X  float64 `json:"x"`
+		Y  float64 `json:"y"`
+		Ts int64   `json:"ts"`
 	}
 	if err := json.Unmarshal([]byte(msg), &m); err != nil {
 		return
@@ -706,18 +893,13 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			a.postTask(func() { a.newTab(url, true) })
 		}
 
-	case "go": // address bubble (or start page) - parsed the same way
-		if u := nav.Parse(m.U); u != "" && t.chromium != nil {
-			t.isStart = false
-			t.url = u
-			if a.isActive(t) {
-				a.pushBarState()
-			}
-			t.chromium.Navigate(u)
-			t.chromium.Focus()
-		}
+	case "go": // address bubble, start page or built-in pages
+		a.navigateTab(t, m.U)
 
 	case "nav": // page reported its URL and title
+		if !a.inSelfTest && m.U != "" && m.U != "about:blank" && !strings.HasPrefix(m.U, "okbrowser://") {
+			a.store.AddHistory(m.U, m.D)
+		}
 		if m.U == "" || m.U == "about:blank" {
 			t.isStart = true
 			t.title = "New Tab"
@@ -734,6 +916,61 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		a.syncTitle()
 		a.pushBarState()
 		a.scheduleBarPush(false)
+
+	case "bm": // star button: toggle bookmark for the active tab
+		if t != nil && t.url != "" && !t.isStart && !strings.HasPrefix(t.url, "okbrowser://") {
+			a.store.ToggleBookmark(t.url, t.title)
+			a.pushBarState()
+		}
+
+	case "bm-del": // bookmarks page: remove one
+		a.store.RemoveBookmark(m.U)
+
+	case "hist-del": // history page: remove one visit
+		a.store.RemoveHistory(m.U, m.Ts)
+
+	case "clear": // settings / history page: clear a data set
+		switch m.M {
+		case "history":
+			a.store.ClearHistory()
+		case "bookmarks":
+			a.store.ClearBookmarks()
+		case "session":
+			a.store.ClearSession()
+		}
+
+	case "set": // settings page: change a setting
+		st := a.store.Settings()
+		switch m.M {
+		case "engine":
+			st.Engine = m.U
+		case "restore":
+			st.RestoreSession = m.U == "1"
+		}
+		a.store.SetSettings(st)
+
+	case "suggest": // address bubble typing: reply with suggestions
+		q := m.U
+		a.postTask(func() {
+			sug := a.store.Suggest(q, 6)
+			b, err := json.Marshal(sug)
+			if err != nil {
+				return
+			}
+			a.execActive("window.__okSuggest&&window.__okSuggest(" + string(b) + ")")
+		})
+
+	case "menu": // the menu button beside minimize
+		switch m.M {
+		case "newtab":
+			a.postNewTab("")
+		case "bookmarks":
+			a.postTask(func() { a.navigateTab(a.active(), "okbrowser://bookmarks") })
+		case "history":
+			a.postTask(func() { a.navigateTab(a.active(), "okbrowser://history") })
+		case "settings":
+			a.postTask(func() { a.navigateTab(a.active(), "okbrowser://settings") })
+		}
 
 	case "ui": // the glass shell
 		switch m.A {

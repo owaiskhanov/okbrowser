@@ -51,7 +51,13 @@ just content:
 - **Tabs**: click to switch, `+` for a new one, middle-click or ✕ to close,
   `Ctrl+Tab` / `Ctrl+Shift+Tab` to cycle. Every tab is its own web engine
   instance sharing one engine process, so tabs stay isolated and cheap
-- Address bar with smart parsing: `example.com` → `https://example.com`, plain words → **Google** search, `localhost:3000` / `192.168.x.x` → `http://`
+- Address bar with smart parsing: `example.com` → `https://example.com`, plain words → search (engine selectable in Settings: **Google** / Bing / DuckDuckGo), `localhost:3000` / `192.168.x.x` → `http://`
+- **Suggestions while you type**: your history and bookmarks appear in a glass dropdown under the address bubble (↑/↓ to pick, Enter to go)
+- **Bookmarks**: tap the ★ in the address bubble (or `Ctrl+D`); manage them on the bookmarks page (`Ctrl+Shift+O` or the ☰ menu)
+- **History**: every visit is logged locally (`Ctrl+H`) with per-entry delete, search and clear-all
+- **New Tab speed dial**: your most-visited sites as glass tiles, plus a big search field
+- **Session restore**: your tabs and window position come back on the next start (toggle in Settings)
+- **☰ menu** beside the minimize button: new tab, bookmarks, history and settings — all in glass
 - The address bar updates **the instant** you navigate (not after the page loads)
 - Back / forward / reload appear as tiny glyphs that light up only when usable (real history state)
 - `target="_blank"` links, middle-click on links and `window.open()` open a **new tab**; `Ctrl+N` opens a new window
@@ -83,6 +89,9 @@ just content:
 | `Ctrl+9` | Switch to the last tab |
 | Middle-click a tab | Close tab |
 | `Ctrl+F` | Find in page (`Enter` / `Shift+Enter` next / previous, `F3` / `Ctrl+G` / `Ctrl+Shift+G` also cycle, `Esc` closes) |
+| `Ctrl+D` | Bookmark this page |
+| `Ctrl+H` | History |
+| `Ctrl+Shift+O` | Bookmarks |
 | `Ctrl+Shift+R` / `Shift+F5` | Hard reload (bypasses cache) |
 | `F12` / `Ctrl+Shift+I` | DevTools |
 | `Ctrl+ +` / `Ctrl+-` / `Ctrl+0` | Zoom in / out / reset |

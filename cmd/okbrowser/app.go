@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -48,7 +49,13 @@ const (
 	cmdFindNext    = 235
 	cmdFindPrev    = 236
 	cmdDevTools    = 237
+	cmdBookmark    = 238
+	cmdHistoryPage = 239
+	cmdBmPage      = 240
 )
+
+// appVersion is shown in the settings page.
+const appVersion = "1.9.0"
 
 // app is the browser window. The entire UI - the Liquid Glass bar with tabs,
 // address field and buttons - is rendered inside the web engine as a frosted
@@ -74,6 +81,9 @@ type app struct {
 
 	// closedTabs remembers recently closed tab URLs for Ctrl+Shift+T.
 	closedTabs []string
+
+	// store is the local data vault: history, bookmarks, settings, session.
+	store *store
 
 	// taskMu + taskQueue: work posted from engine callbacks, executed in
 	// the normal window-proc context via WM_APP. Engine callbacks must not
@@ -249,6 +259,10 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		return 1 // the webview covers everything
 
 	case win.WM_DESTROY:
+		a.saveSession()
+		if a.store != nil {
+			a.store.Flush()
+		}
 		win.PostQuitMessage(0)
 		return 0
 	}
@@ -262,6 +276,7 @@ func NewApp(startURL string) (*app, bool) {
 
 	a := &app{activeIdx: -1}
 	a.scale = float64(dpiOf(0)) / 96.0
+	a.store = newStore()
 	theApp = a
 
 	a.instance = win.GetModuleHandle(nil)
@@ -303,6 +318,28 @@ func NewApp(startURL string) (*app, bool) {
 	}
 	// Keep the DWM drop shadow for the borderless window.
 	dwmExtendFrame(a.hwnd)
+
+	// Restore the last session when the user wants it and no URL was
+	// passed on the command line.
+	var sess *sessionData
+	if startURL == "" && !selfTestMode && a.store.Settings().RestoreSession {
+		sess = a.store.LoadSession()
+	}
+	if sess != nil && sess.Rect != [4]int32{} {
+		showCmd := uint32(win.SW_SHOWNORMAL)
+		if sess.Maximized {
+			showCmd = win.SW_SHOWMAXIMIZED
+		}
+		wp := win.WINDOWPLACEMENT{
+			Length:  uint32(unsafe.Sizeof(win.WINDOWPLACEMENT{})),
+			ShowCmd: showCmd,
+			RcNormalPosition: win.RECT{
+				Left: sess.Rect[0], Top: sess.Rect[1],
+				Right: sess.Rect[2], Bottom: sess.Rect[3],
+			},
+		}
+		win.SetWindowPlacement(a.hwnd, &wp)
+	}
 	if d := dpiOf(a.hwnd); d > 0 && d != int(a.scale*96) {
 		a.scale = float64(d) / 96.0
 	}
@@ -311,15 +348,58 @@ func NewApp(startURL string) (*app, bool) {
 
 	// Show the window immediately so the browser feels instant; the glass
 	// bar and page appear a moment later.
-	win.ShowWindow(a.hwnd, win.SW_SHOW)
+	if sess != nil && sess.Maximized {
+		win.ShowWindow(a.hwnd, win.SW_SHOWMAXIMIZED)
+	} else {
+		win.ShowWindow(a.hwnd, win.SW_SHOW)
+	}
 	win.UpdateWindow(a.hwnd)
 
 	// The first tab embeds the engine; if the runtime is missing the
 	// constructor already showed the download dialog.
+	if sess != nil && len(sess.Tabs) > 0 {
+		active := sess.Active
+		if active < 0 || active >= len(sess.Tabs) {
+			active = 0
+		}
+		for i, st := range sess.Tabs {
+			if a.newTab(st.URL, i == active) == nil && i == 0 {
+				return nil, false
+			}
+		}
+		a.switchToTab(active)
+		a.scheduleBarPush(false)
+		return a, true
+	}
 	if a.newTab(startURL, true) == nil {
 		return nil, false
 	}
 	return a, true
+}
+
+// saveSession snapshots the open tabs and window state for the next start.
+func (a *app) saveSession() {
+	if a.store == nil {
+		return
+	}
+	sd := &sessionData{Active: a.activeIdx, Maximized: a.maximized}
+	for _, t := range a.tabs {
+		u := t.url
+		if strings.HasPrefix(u, "okbrowser://") {
+			u = "" // built-in pages restore as fresh start pages
+		}
+		sd.Tabs = append(sd.Tabs, sessionTab{URL: u, Title: t.title})
+	}
+	if len(sd.Tabs) == 0 {
+		return // closing the last tab means: start fresh next time
+	}
+	var wp win.WINDOWPLACEMENT
+	wp.Length = uint32(unsafe.Sizeof(wp))
+	if win.GetWindowPlacement(a.hwnd, &wp) {
+		r := wp.RcNormalPosition
+		sd.Rect = [4]int32{r.Left, r.Top, r.Right, r.Bottom}
+	}
+	a.store.SaveSession(sd)
 }
 
 // registerClass registers a window class for the main window or tab hosts.
@@ -419,6 +499,9 @@ func (a *app) createAccelerators() {
 		{fVirtKey, win.VK_F12, cmdDevTools},
 		{fVirtKey | fControl, win.VK_NEXT, cmdNextTab},
 		{fVirtKey | fControl, win.VK_PRIOR, cmdPrevTab},
+		{fVirtKey | fControl, 'D', cmdBookmark},
+		{fVirtKey | fControl, 'H', cmdHistoryPage},
+		{fVirtKey | fControl | fShift, 'O', cmdBmPage},
 	})
 }
 
@@ -510,6 +593,12 @@ func (a *app) onAccelerator(vk uint) bool {
 		case 'G':
 			a.onCommand(cmdFindNext)
 			return true
+		case 'D':
+			a.onCommand(cmdBookmark)
+			return true
+		case 'H':
+			a.onCommand(cmdHistoryPage)
+			return true
 		case '1', '2', '3', '4', '5', '6', '7', '8':
 			a.onCommand(cmdSelectTab + int(vk-'1'))
 			return true
@@ -555,6 +644,9 @@ func (a *app) onAccelerator(vk uint) bool {
 			return true
 		case 'I':
 			a.onCommand(cmdDevTools)
+			return true
+		case 'O':
+			a.onCommand(cmdBmPage)
 			return true
 		case win.VK_F3:
 			a.onCommand(cmdFindPrev)
@@ -695,6 +787,15 @@ func (a *app) onCommand(id int) {
 		if t != nil && t.chromium != nil {
 			t.chromium.OpenDevTools()
 		}
+	case cmdBookmark:
+		if t != nil && t.url != "" && !t.isStart && !strings.HasPrefix(t.url, "okbrowser://") {
+			a.store.ToggleBookmark(t.url, t.title)
+			a.pushBarState()
+		}
+	case cmdHistoryPage:
+		a.navigateTab(a.active(), "okbrowser://history")
+	case cmdBmPage:
+		a.navigateTab(a.active(), "okbrowser://bookmarks")
 	}
 }
 

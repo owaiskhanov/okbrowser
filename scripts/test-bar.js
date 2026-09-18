@@ -61,6 +61,7 @@ class FakeElement {
   }
   toggleAttribute(n, v) { if (v) this.attributes[n] = ''; else delete this.attributes[n]; }
   focus() { this.focused = true; global.document.activeElement = this; }
+  getBoundingClientRect() { return { left: 100, top: 100, right: 500, bottom: 126, width: 400, height: 26 }; }
   select() { this.selected = true; }
   blur() {
     this.focused = false;
@@ -205,6 +206,36 @@ assert.ok(!findEl.classList.contains('open'), 'Esc closes the find bar');
     global.window = prevWindow; global.document = prevDocument;
   }
 }
+
+// --- menu (beside minimize), star, suggestions ---
+sent.length = 0; // earlier sections leave consumed messages in the queue
+const menu = shadow.getElementById('menu');
+const wmenu = shadow.getElementById('wmenu');
+assert.ok(menu && wmenu, 'menu button + popover exist');
+wmenu.dispatch('click', { stopPropagation() {} });
+assert.ok(menu.classList.contains('open'), 'menu opens');
+shadow.getElementById('m-history').dispatch('click', EV);
+expect({ t: 'menu', m: 'history' });
+assert.ok(!menu.classList.contains('open'), 'menu closes after an action');
+
+const bstar = shadow.getElementById('bstar');
+win.__okBar({ tabs: [{ t: 'A' }], a: 0, u: 'https://x', b: false, f: false, m: false, k: true, e: 'Google' });
+assert.ok(bstar._html.includes('fill="currentColor"'), 'star fills for a bookmarked page');
+win.__okBar({ tabs: [{ t: 'A' }], a: 0, u: 'https://y', b: false, f: false, m: false, k: false, e: 'Google' });
+assert.ok(!bstar._html.includes('fill="currentColor"'), 'star is hollow when not bookmarked');
+bstar.dispatch('click', EV);
+expect({ t: 'bm' });
+
+assert.strictEqual(typeof win.__okSuggest, 'function', 'suggest API installed');
+input.focus();
+input.value = 'exam';
+win.__okSuggest([{ u: 'https://example.com', t: 'Example', s: 'h' }]);
+const sug = shadow.getElementById('sug');
+assert.ok(sug.classList.contains('open'), 'suggestion list opens');
+assert.strictEqual(sug.children.length, 2, 'search row + one suggestion row');
+input.dispatch('keydown', { key: 'ArrowDown', preventDefault() {} });
+input.dispatch('keydown', { key: 'Enter', preventDefault() {} });
+expect({ t: 'go', u: 'https://example.com' }); // Enter on the selected suggestion
 
 // --- immersive auto-hide bar ---
 const strip = shadow.getElementById('strip');

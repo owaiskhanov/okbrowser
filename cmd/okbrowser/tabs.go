@@ -119,8 +119,7 @@ func (a *app) newTab(url string, activate bool) *tab {
 	}
 
 	if url != "" {
-		t.isStart = false
-		c.Navigate(nav.Parse(url))
+		a.navigateTab(t, url)
 	} else {
 		a.showStartPage(t)
 	}
@@ -195,16 +194,68 @@ func (a *app) closeTab(i int) {
 	a.pushBarState()
 }
 
-// showStartPage navigates tab t to the built-in start page.
-func (a *app) showStartPage(t *tab) {
-	t.isStart = true
-	t.url = ""
-	t.title = "New Tab"
-	t.chromium.NavigateToString(nav.StartHTML)
+// navigateTab navigates tab t to raw user input: an okbrowser:// built-in
+// page or a web URL parsed with the selected search engine.
+func (a *app) navigateTab(t *tab, raw string) {
+	if t == nil || t.chromium == nil {
+		return
+	}
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return
+	}
+	low := strings.ToLower(s)
+	if strings.HasPrefix(low, "okbrowser://") {
+		a.showInternal(t, strings.TrimPrefix(low, "okbrowser://"))
+		return
+	}
+	u := nav.ParseWithEngine(s, a.store.Settings().Engine)
+	if u == "" {
+		return
+	}
+	t.isStart = false
+	t.errPage = false
+	t.url = u
+	if a.isActive(t) {
+		a.pushBarState()
+	}
+	t.chromium.Navigate(u)
+	t.chromium.Focus()
+}
+
+// showInternal renders one of the built-in okbrowser:// pages in tab t.
+func (a *app) showInternal(t *tab, page string) {
+	var html, title string
+	isStart := false
+	switch page {
+	case "bookmarks":
+		html, title = BookmarksHTML(a.store.SnapshotBookmarks()), "Bookmarks"
+	case "history":
+		html, title = HistoryHTML(a.store.SnapshotHistory()), "History"
+	case "settings":
+		html, title = SettingsHTML(a.store.Settings(), appVersion), "Settings"
+	default: // start
+		html, title = StartPageHTML(a.store.MostVisited(8), a.store.Settings().Engine), "New Tab"
+		page, isStart = "start", true
+	}
+	t.isStart = isStart
+	t.errPage = false
+	t.title = title
+	if isStart {
+		t.url = ""
+	} else {
+		t.url = "okbrowser://" + page
+	}
 	if a.isActive(t) {
 		a.syncTitle()
 		a.pushBarState()
 	}
+	t.chromium.NavigateToString(html)
+}
+
+// showStartPage navigates tab t to the built-in start page.
+func (a *app) showStartPage(t *tab) {
+	a.showInternal(t, "start")
 }
 
 // syncTitle updates the window title from the active tab.
