@@ -470,13 +470,15 @@ func (a *app) onCommand(id int) {
 	case cmdFocusAddress:
 		a.execActive("window.__okBubbleFocus&&window.__okBubbleFocus()")
 	case cmdNewTab:
-		a.newTab("", true)
-		a.scheduleBarPush(true) // focus the address bubble once ready
+		// May be invoked from inside the engine's accelerator callback;
+		// engine creation must happen in the window-proc context.
+		a.postNewTab("")
 	case cmdNewWindow:
 		spawnNewWindow("")
 	case cmdCloseTab:
 		if len(a.tabs) > 0 {
-			a.closeTab(a.activeIdx)
+			i := a.activeIdx
+			a.postTask(func() { a.closeTab(i) })
 		}
 	case cmdNextTab:
 		if len(a.tabs) > 1 {

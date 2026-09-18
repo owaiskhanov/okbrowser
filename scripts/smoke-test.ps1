@@ -92,6 +92,7 @@ try {
     # same-tab navigation) and window.open (renderer-initiated new tab).
     $stFile = Join-Path (Split-Path $Exe -Parent) "selftest.txt"
     if (Test-Path $stFile) { Remove-Item $stFile -Force }
+    Start-Sleep -Seconds 5  # let the killed instance's engine processes exit
     Log "running self test..."
     $stProc = Start-Process -FilePath $full -ArgumentList "--selftest" -PassThru
     $exited = $stProc.WaitForExit(120000)

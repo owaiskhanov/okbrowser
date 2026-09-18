@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"syscall"
@@ -75,8 +76,12 @@ func (a *app) newTab(url string, activate bool) *tab {
 	t.chromium = c
 
 	if !c.Embed(uintptr(h)) {
-		showRuntimeMissingDialog()
 		win.DestroyWindow(h)
+		if a.inSelfTest {
+			a.stlog("[selftest] FAIL: web engine failed to start (profile locked or runtime missing)")
+			os.Exit(1)
+		}
+		showRuntimeMissingDialog()
 		return nil
 	}
 
@@ -107,6 +112,15 @@ func (a *app) newTab(url string, activate bool) *tab {
 }
 
 // switchToTab displays tab i and syncs title and glass-bar state.
+// postNewTab queues a new tab (used from contexts that may sit inside
+// engine callbacks).
+func (a *app) postNewTab(url string) {
+	a.postTask(func() {
+		a.newTab(url, true)
+		a.scheduleBarPush(true)
+	})
+}
+
 func (a *app) switchToTab(i int) {
 	if i < 0 || i >= len(a.tabs) {
 		return

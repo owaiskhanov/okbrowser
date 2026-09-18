@@ -60,6 +60,9 @@ func main() {
 
 	app, ok := NewApp(startURL)
 	if !ok {
+		if selfTest {
+			_ = os.WriteFile("selftest.txt", []byte("[selftest] FAIL: startup failed\n"), 0644)
+		}
 		os.Exit(1)
 	}
 	if selfTest {
