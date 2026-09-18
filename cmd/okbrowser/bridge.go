@@ -440,6 +440,9 @@ func (a *app) onWebMessage(t *tab, msg string) {
 
 	switch m.T {
 	case "open": // link explicitly asking for a new window
+		if a.inSelfTest {
+			a.stlog("[selftest] bridge open request: %s", m.U)
+		}
 		if m.U != "" && a.allowSpawn() {
 			// Never create engines from inside the message callback: post
 			// the work to the window-proc context instead.

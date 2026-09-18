@@ -56,3 +56,17 @@ func (i *ICoreWebView2NewWindowRequestedEventArgs) PutHandled(handled bool) erro
 	}
 	return nil
 }
+
+// GetIsUserInitiated reports whether the request came from a user gesture
+// (as opposed to script without activation).
+func (i *ICoreWebView2NewWindowRequestedEventArgs) GetIsUserInitiated() (bool, error) {
+	var v int32 // COM BOOL is 32-bit
+	_, _, err := i.vtbl.GetIsUserInitiated.Call(
+		uintptr(unsafe.Pointer(i)),
+		uintptr(unsafe.Pointer(&v)),
+	)
+	if err != windows.ERROR_SUCCESS {
+		return false, err
+	}
+	return v != 0, nil
+}

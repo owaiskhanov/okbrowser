@@ -56,6 +56,10 @@ func main() {
 	}
 	if selfTest {
 		startURL = "https://example.com"
+		// The scripted test has no user gesture, so Chromium's popup
+		// blocker would suppress window.open before the engine's
+		// NewWindowRequested event fires. Real clicks are never blocked.
+		_ = os.Setenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--disable-popup-blocking")
 	}
 
 	app, ok := NewApp(startURL)

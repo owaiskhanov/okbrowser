@@ -62,8 +62,13 @@ func (a *app) newTab(url string, activate bool) *tab {
 	// window.open) - covers cases the page-side bridge cannot see (e.g.
 	// links inside closed shadow DOMs).
 	c.NewWindowRequestedCallback = func(args *edge.ICoreWebView2NewWindowRequestedEventArgs) {
+		uri, _ := args.GetUri()
+		user, _ := args.GetIsUserInitiated()
+		if a.inSelfTest {
+			a.stlog("[selftest] engine NewWindowRequested: uri=%s user=%v", uri, user)
+		}
 		_ = args.PutHandled(true)
-		if uri, err := args.GetUri(); err == nil && uri != "" && a.allowSpawn() {
+		if uri != "" && a.allowSpawn() {
 			a.postTask(func() { a.newTab(uri, true) })
 		}
 	}
@@ -108,6 +113,9 @@ func (a *app) newTab(url string, activate bool) *tab {
 		a.showStartPage(t)
 	}
 	a.scheduleBarPush(false)
+	if a.inSelfTest {
+		a.stlog("[selftest] tab %d created (url=%s)", len(a.tabs), url)
+	}
 	return t
 }
 
