@@ -61,6 +61,29 @@ jobs:
             dist/OKBrowser.exe
             dist/smoke-diagnostics.txt
 
+      # On-demand: push the Windows-verified exe + diagnostics back to the
+      # working branch. Triggers when the commit message contains "[publish]".
+      - name: Publish verified build to working branch
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[publish]') && startsWith(github.ref, 'refs/heads/arena/')
+        shell: bash
+        run: |
+          git config user.name "arena-ci"
+          git config user.email "noreply@arena.ai"
+          mkdir -p ".ci-build/${{ matrix.tag }}"
+          cp dist/OKBrowser.exe ".ci-build/${{ matrix.tag }}/" 2>/dev/null || true
+          cp dist/smoke-diagnostics.txt ".ci-build/${{ matrix.tag }}/" 2>/dev/null || true
+          git add -f ".ci-build/${{ matrix.tag }}"
+          git commit -m "ci: verified build + diagnostics for ${{ matrix.tag }} [ci skip]" >/dev/null 2>&1 || echo "no changes to publish"
+          for i in 1 2 3 4 5; do
+            if git pull --rebase --autostash origin "$GITHUB_REF_NAME" >/dev/null 2>&1 && git push >/dev/null 2>&1; then
+              echo "published .ci-build/${{ matrix.tag }}"
+              exit 0
+            fi
+            sleep $((i * 3))
+          done
+          echo "could not publish back to branch (continuing without failing the build)"
+          exit 0
+
   # Publishes a GitHub release containing the Windows-verified exe.
   # Triggers: workflow_dispatch with release=true, or a push whose commit
   # message contains "[release]".
