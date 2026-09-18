@@ -8,9 +8,11 @@
 package main
 
 import (
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 
 	"github.com/jchv/go-webview2/webviewloader"
@@ -34,6 +36,11 @@ func localFileOrURL(arg string) string {
 	return u.String()
 }
 
+// selfTestMode is set before the app is built so that even the earliest
+// code paths (engine startup inside NewApp) know never to show a modal
+// dialog and always to log instead - a dialog would hang a scripted test.
+var selfTestMode bool
+
 func main() {
 	// The WebView2 Runtime ships with Windows 11 and up-to-date Windows 10.
 	// If it is missing we offer to open the official download page.
@@ -56,16 +63,26 @@ func main() {
 	}
 	if selfTest {
 		startURL = "https://example.com"
+		selfTestMode = true
 		// The scripted test has no user gesture, so Chromium's popup
 		// blocker would suppress window.open before the engine's
 		// NewWindowRequested event fires. Real clicks are never blocked.
 		_ = os.Setenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--disable-popup-blocking")
+		selfTestFileInit("[selftest] starting (pid " + fmt.Sprint(os.Getpid()) + ")\n")
+		// Panics on the main goroutine must reach the log file, not just
+		// the (uncaptured) console of a scripted run.
+		defer func() {
+			if r := recover(); r != nil {
+				selfTestFileInit(fmt.Sprintf("[selftest] PANIC: %v\n%s\n", r, debug.Stack()))
+				os.Exit(2)
+			}
+		}()
 	}
 
 	app, ok := NewApp(startURL)
 	if !ok {
 		if selfTest {
-			_ = os.WriteFile("selftest.txt", []byte("[selftest] FAIL: startup failed\n"), 0644)
+			selfTestFileInit("[selftest] FAIL: startup failed (NewApp returned false)\n")
 		}
 		os.Exit(1)
 	}

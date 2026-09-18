@@ -28,13 +28,29 @@ import (
 // the result are written to selftest.txt next to the executable, and the
 // exit code is 0 only when every phase passes.
 
-// startSelfTest enables the self test and writes progress to selftest.txt.
-func (a *app) startSelfTest() {
+// selfTestPath returns the log location: next to the executable.
+func selfTestPath() string {
 	exe, err := os.Executable()
+	if err != nil {
+		return "selftest.txt"
+	}
+	return filepath.Join(filepath.Dir(exe), "selftest.txt")
+}
+
+// selfTestFileInit writes (or appends) a line to the self-test log before
+// the app object exists, so even the earliest failures leave evidence.
+func selfTestFileInit(line string) {
+	f, err := os.OpenFile(selfTestPath(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return
 	}
-	f, err := os.Create(filepath.Join(filepath.Dir(exe), "selftest.txt"))
+	defer f.Close()
+	_, _ = f.WriteString(line)
+}
+
+// startSelfTest enables the self test and writes progress to selftest.txt.
+func (a *app) startSelfTest() {
+	f, err := os.OpenFile(selfTestPath(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return
 	}

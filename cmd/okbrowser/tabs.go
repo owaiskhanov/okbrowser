@@ -82,8 +82,8 @@ func (a *app) newTab(url string, activate bool) *tab {
 
 	if !c.Embed(uintptr(h)) {
 		win.DestroyWindow(h)
-		if a.inSelfTest {
-			a.stlog("[selftest] FAIL: web engine failed to start (profile locked or runtime missing)")
+		if selfTestMode {
+			selfTestFileInit(fmt.Sprintf("[selftest] FAIL: web engine failed to start for tab %d (profile locked or runtime missing)\n", a.hostSeq))
 			os.Exit(1)
 		}
 		showRuntimeMissingDialog()

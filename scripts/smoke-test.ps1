@@ -93,8 +93,12 @@ try {
     $stFile = Join-Path (Split-Path $Exe -Parent) "selftest.txt"
     if (Test-Path $stFile) { Remove-Item $stFile -Force }
     Start-Sleep -Seconds 5  # let the killed instance's engine processes exit
+    Get-Process msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2  # let the shared profile be released
     Log "running self test..."
-    $stProc = Start-Process -FilePath $full -ArgumentList "--selftest" -PassThru
+    $stErr = Join-Path (Split-Path $Exe -Parent) "selftest-stderr.txt"
+    $stOut = Join-Path (Split-Path $Exe -Parent) "selftest-stdout.txt"
+    $stProc = Start-Process -FilePath $full -ArgumentList "--selftest" -PassThru -RedirectStandardError $stErr -RedirectStandardOutput $stOut
     $exited = $stProc.WaitForExit(120000)
     if (-not $exited) {
         Stop-Process -Id $stProc.Id -Force -ErrorAction SilentlyContinue
@@ -107,6 +111,12 @@ try {
         }
         Log ("selftest exit code: " + $stProc.ExitCode)
         if ($stProc.ExitCode -ne 0 -and $fail -eq "") { $fail = "self test failed" }
+    }
+    foreach ($sf in @($stErr, $stOut)) {
+        if (Test-Path $sf) {
+            $t = (Get-Content $sf -Raw -ErrorAction SilentlyContinue)
+            if ($t) { Log ("selftest io " + (Split-Path $sf -Leaf) + ": " + $t.Trim()) }
+        }
     }
 }
 catch {
