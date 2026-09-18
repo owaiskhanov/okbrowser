@@ -96,9 +96,12 @@ func (a *app) selftestNavHook(t *tab) {
 	case a.selfPhase == 2 && strings.Contains(t.url, "iana.org/about") && len(a.tabs) > 1:
 		a.stlog("[selftest] phase 3 OK: window.open opened a new tab (now %d tabs)", len(a.tabs))
 		a.selfPhase = 3
-		// Restore the NATIVE window.open so the request reaches the engine:
-		// the NewWindowRequested event must mark it handled and open a tab.
-		t.chromium.Eval(`delete window.open; window.open('https://www.iana.org/domains')`)
+		// Inject a target=_blank link marked data-ok-engine (the bridge
+		// deliberately does not intercept it) and report its center; the
+		// host then dispatches a TRUSTED CDP mouse click on it. This is
+		// the exact Gmail scenario: a real user click on a _blank link
+		// must reach the engine's NewWindowRequested event.
+		t.chromium.Eval(`(function(){var a=document.createElement('a');a.href='https://www.iana.org/domains';a.target='_blank';a.setAttribute('data-ok-engine','1');a.style.cssText='position:fixed;left:30vw;top:35vh;width:40vw;height:20vh;background:#c22;color:#fff;font-size:20px';a.textContent='selftest engine click';document.body.appendChild(a);var r=a.getBoundingClientRect();window.__ok({t:'stclick',x:r.left+r.width/2,y:r.top+r.height/2});return 'injected'})()`)
 
 	case a.selfPhase == 3 && strings.Contains(t.url, "iana.org/domains") && len(a.tabs) > 2:
 		a.stlog("[selftest] phase 4 OK: engine NewWindowRequested opened a new tab (now %d tabs)", len(a.tabs))

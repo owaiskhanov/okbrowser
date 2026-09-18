@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/lxn/win"
@@ -26,14 +27,14 @@ window.__ok = function (o) {
   function anchor(el) { return el && el.closest ? el.closest("a") : null; }
   document.addEventListener("click", function (e) {
     var a = anchor(e.target);
-    if (a && a.target && a.target !== "_self") {
+    if (a && a.target && a.target !== "_self" && !a.hasAttribute("data-ok-engine")) {
       e.preventDefault();
       window.__ok({ t: "open", u: a.href });
     }
   }, true);
   document.addEventListener("auxclick", function (e) {
     var a = anchor(e.target);
-    if (a && e.button === 1) {
+    if (a && e.button === 1 && !a.hasAttribute("data-ok-engine")) {
       e.preventDefault();
       window.__ok({ t: "open", u: a.href });
     }
@@ -428,17 +429,28 @@ func (a *app) allowSpawn() bool {
 // onWebMessage receives JSON messages posted by tab t via window.__ok.
 func (a *app) onWebMessage(t *tab, msg string) {
 	var m struct {
-		T string `json:"t"`
-		U string `json:"u"`
-		D string `json:"d"`
-		A string `json:"a"`
-		I int    `json:"i"`
+		T string  `json:"t"`
+		U string  `json:"u"`
+		D string  `json:"d"`
+		A string  `json:"a"`
+		I int     `json:"i"`
+		X float64 `json:"x"`
+		Y float64 `json:"y"`
 	}
 	if err := json.Unmarshal([]byte(msg), &m); err != nil {
 		return
 	}
 
 	switch m.T {
+	case "stclick": // self test only: dispatch a trusted click at x,y
+		if a.inSelfTest && t != nil && t.chromium != nil {
+			a.stlog("[selftest] dispatching trusted click at %.0f,%.0f", m.X, m.Y)
+			t.chromium.CallDevToolsProtocol("Input.dispatchMouseEvent",
+				fmt.Sprintf(`{"type":"mousePressed","x":%.1f,"y":%.1f,"button":"left","clickCount":1}`, m.X, m.Y))
+			t.chromium.CallDevToolsProtocol("Input.dispatchMouseEvent",
+				fmt.Sprintf(`{"type":"mouseReleased","x":%.1f,"y":%.1f,"button":"left","clickCount":1}`, m.X, m.Y))
+		}
+
 	case "open": // link explicitly asking for a new window
 		if a.inSelfTest {
 			a.stlog("[selftest] bridge open request: %s", m.U)

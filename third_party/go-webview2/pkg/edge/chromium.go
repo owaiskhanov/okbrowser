@@ -30,6 +30,10 @@ type Chromium struct {
 	navigationStarting    *ICoreWebView2NavigationStartingEventHandler // OK Browser addition
 	newWindowRequested    *ICoreWebView2NewWindowRequestedEventHandler // OK Browser addition
 
+	// OK Browser addition: keeps per-call DevTools handlers referenced so
+	// the GC cannot collect them while native code still holds a pointer.
+	devToolsHandlers []*ICoreWebView2CallDevToolsProtocolMethodCompletedHandler
+
 	environment *ICoreWebView2Environment
 
 	// Settings
@@ -376,6 +380,24 @@ func (e *Chromium) NewWindowRequested(sender *ICoreWebView2, args *ICoreWebView2
 		e.NewWindowRequestedCallback(args)
 	}
 	return 0
+}
+
+// DevToolsProtocolMethodCompleted ignores CDP results (fire-and-forget).
+// (OK Browser addition.)
+func (e *Chromium) DevToolsProtocolMethodCompleted(errorCode uintptr, returnObjectAsJSON string) uintptr {
+	return 0
+}
+
+// CallDevToolsProtocol runs a DevTools protocol method, e.g.
+// Input.dispatchMouseEvent to synthesize a trusted click. The result is
+// ignored. (OK Browser addition; used by the self test.)
+func (e *Chromium) CallDevToolsProtocol(method, paramsJSON string) {
+	if e.webview == nil {
+		return
+	}
+	h := newICoreWebView2CallDevToolsProtocolMethodCompletedHandler(e)
+	e.devToolsHandlers = append(e.devToolsHandlers, h)
+	_ = e.webview.CallDevToolsProtocolMethod(method, paramsJSON, h)
 }
 
 // CanGoBack reports whether there is back history. (OK Browser addition.)
