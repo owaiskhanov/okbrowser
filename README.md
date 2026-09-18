@@ -24,14 +24,21 @@ on a real Windows machine** by CI before it is published.
 
 ## Features
 
+**Minimal, content-first UI** — a single slim bar (~44 px) holds everything:
+pill-shaped tabs, a capsule address bar and tiny utility glyphs. Buttons you
+cannot click are nearly invisible; the page gets all the remaining space. The
+palette follows Windows light/dark mode automatically.
+
+- **Tabs**: click to switch, `+` for a new one, middle-click or ✕ to close,
+  `Ctrl+Tab` / `Ctrl+Shift+Tab` to cycle. Every tab is its own web engine
+  instance sharing one engine process, so tabs stay isolated and cheap
 - Address bar with smart parsing: `example.com` → `https://example.com`, plain words → **Google** search, `localhost:3000` / `192.168.x.x` → `http://`
-- The address bar updates **the instant** you navigate (not after the page loads), and shows the final URL after redirects
-- Back, forward, reload, home buttons that enable/disable with real history + an offline start page (with automatic dark mode)
-- `target="_blank"` links, middle-click and `window.open()` open a **new OK Browser window** (one window per process — each stays feather-light)
-- Per-window web engine isolation; a crashed page never takes the browser down
-- Zoom (`Ctrl+ +` / `Ctrl+-` / `Ctrl+0` / Ctrl+mouse-wheel), print (`Ctrl+P`), fullscreen (`F11`), mouse back/forward buttons
-- Right-click context menus, F12 DevTools, hover link preview, downloads (the engine's download UI) — the browser basics you expect
-- High-DPI aware (crisp on any monitor, follows the window between screens)
+- The address bar updates **the instant** you navigate (not after the page loads)
+- Back / forward / reload appear as tiny glyphs that light up only when usable (real history state)
+- `target="_blank"` links, middle-click on links and `window.open()` open a **new tab**; `Ctrl+N` opens a new window
+- Zoom (`Ctrl+ +` / `Ctrl+-` / `Ctrl+0`), print (`Ctrl+P`), fullscreen (`F11`), mouse buttons 4/5 for back/forward
+- Right-click context menus, F12 DevTools, hover link preview, downloads (the engine's download UI)
+- High-DPI aware (crisp on any monitor, follows the window between screens); the bar reflows correctly at **any window size**
 - Persistent profile: logins and cookies are kept in `%LOCALAPPDATA%\OKBrowser`
 - Proper Windows app icon, version info and GUI subsystem (no console flash)
 
@@ -45,8 +52,11 @@ on a real Windows machine** by CI before it is published.
 | Mouse button 4 / 5 | Back / forward |
 | `F5` / `Ctrl+R` | Reload |
 | `Alt+Home` | Start page |
-| `Ctrl+N` / `Ctrl+T` | New window |
-| `Ctrl+W` | Close window |
+| `Ctrl+T` | New tab |
+| `Ctrl+N` | New window |
+| `Ctrl+W` | Close tab (window when last tab) |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
+| Middle-click a tab | Close tab |
 | `Ctrl+ +` / `Ctrl+-` / `Ctrl+0` | Zoom in / out / reset |
 | `Ctrl+P` | Print |
 | `F11` | Fullscreen |
@@ -87,8 +97,9 @@ OK Browser deliberately trades “features” for **lightness and speed**:
 ```
 cmd/okbrowser/        the browser (Windows-only)
   main.go             entry point + WebView2 runtime check
-  app.go              window, toolbar, layout, hotkeys, message loop
-  bridge.go           page ↔ host bridge (URL/title sync, new-window requests)
+  app.go              window, slim tab bar, layout, hotkeys, message loop
+  tabs.go             tab lifecycle + per-tab engine wiring
+  bridge.go           page ↔ host bridge (URL/title sync, new-tab requests)
   winx.go             a few raw Win32 calls lxn/win lacks
   resource.syso       icon + manifest + version info (compiled resource)
 internal/nav/         pure, unit-tested URL parsing + start page

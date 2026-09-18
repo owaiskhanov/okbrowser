@@ -401,6 +401,16 @@ func (e *Chromium) Reload() {
 	e.webview.vtbl.Reload.Call(uintptr(unsafe.Pointer(e.webview)))
 }
 
+// Close releases the engine controller for this tab. (OK Browser addition.)
+func (e *Chromium) Close() {
+	if e.controller == nil {
+		return
+	}
+	e.controller.vtbl.Close.Call(uintptr(unsafe.Pointer(e.controller)))
+	e.controller = nil
+	e.webview = nil
+}
+
 // NOTE (OK Browser): the controller's PutZoomFactor takes a raw `double`
 // parameter. Go's syscall ABI on windows/amd64 passes arguments in integer
 // registers only, so a double argument would arrive as garbage (the runtime
