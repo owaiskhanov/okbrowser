@@ -399,7 +399,10 @@ const barJS = `
       '<div class="permrow">Camera<select data-perm="camera"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div>' +
       '<div class="permrow">Microphone<select data-perm="microphone"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div>' +
       '<div class="permrow">Location<select data-perm="location"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div>' +
-      '<div class="permrow">Notifications<select data-perm="notifications"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div></div>' +
+      '<div class="permrow">Notifications<select data-perm="notifications"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div>' +
+      '<div class="permrow">Clipboard<select data-perm="clipboard"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div>' +
+      '<div class="permrow">Sensors<select data-perm="sensors"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div>' +
+      '<div class="permrow"><div class="mrow" id="clear-perms">Reset permissions</div><div class="mrow" id="clear-site">Clear site data</div></div></div>' +
     '<div class="menu" id="menu">' +
       '<div class="mrow" id="m-newtab" data-m="newtab">' + I_PLUS + 'New tab</div>' +
       '<div class="mrow" id="m-incognito" data-m="incognito">' + I_INC + 'New incognito window</div>' +
@@ -468,7 +471,7 @@ const barJS = `
     if (!S.u || barPinned || document.activeElement === input) return;
     // Popovers anchored to the bar (menu, tab menu, suggestions, find)
     // are part of it: the bar must never retire while one is open.
-    if (uiOpen('menu') || uiOpen('ctx') || uiOpen('sug') || uiOpen('find')) return;
+    if (uiOpen('menu') || uiOpen('ctx') || uiOpen('sug') || uiOpen('find') || uiOpen('sitepanel')) return;
     hideBar();
   }
   function revealBar(brief) {
@@ -738,6 +741,8 @@ const barJS = `
   for (var pi=0;pi<permissionSelects.length;pi++) permissionSelects[pi].addEventListener('change', function () {
     post({t:'ui',a:'permission',m:this.getAttribute('data-perm'),u:this.value});
   });
+  root.getElementById('clear-perms').addEventListener('click', function(){post({t:'ui',a:'clear-permissions'});sitepanel.classList.remove('open');});
+  root.getElementById('clear-site').addEventListener('click', function(){if(confirm('Clear cookies and storage for this site?'))post({t:'ui',a:'clear-site-data'});sitepanel.classList.remove('open');});
 
   // --- the address bubble (in the top bar, beside the +) --------------------
   function setOpen(v) { okb.className = v ? 'okb open' : 'okb'; }
@@ -912,6 +917,7 @@ const barJS = `
   }
   pinFromPopover(menu, closeMenu);
   pinFromPopover(ctx, closeCtx);
+  pinFromPopover(sitepanel, function(){ sitepanel.classList.remove('open'); });
 
   var mids = ['m-newtab', 'm-incognito', 'm-bookmarks', 'm-history', 'm-downloads', 'm-settings'];
   for (var mi = 0; mi < mids.length; mi++) {
@@ -1169,14 +1175,11 @@ type barState struct {
 	L    bool              `json:"l"` // this is the left/original pane
 }
 
-func permissionStateFor(t *tab) map[string]string {
-	out := map[string]string{"camera":"default", "microphone":"default", "location":"default", "notifications":"default"}
+func (a *app) permissionStateFor(t *tab) map[string]string {
+	out := map[string]string{"camera":"default", "microphone":"default", "location":"default", "notifications":"default", "clipboard":"default", "sensors":"default"}
 	if t == nil { return out }
-	states := t.permissions[permissionOrigin(t.url)]
-	for name, kind := range map[string]edge.CoreWebView2PermissionKind{"camera":edge.CoreWebView2PermissionKindCamera,"microphone":edge.CoreWebView2PermissionKindMicrophone,"location":edge.CoreWebView2PermissionKindGeolocation,"notifications":edge.CoreWebView2PermissionKindNotifications} {
-		if states[kind] == edge.CoreWebView2PermissionStateAllow { out[name] = "allow" }
-		if states[kind] == edge.CoreWebView2PermissionStateDeny { out[name] = "deny" }
-	}
+	origin := permissionOrigin(t.url)
+	for name := range out { if state := a.store.Permission(origin, name); state != "" { out[name] = state } }
 	return out
 }
 
@@ -1209,7 +1212,7 @@ func (a *app) pushBarState() {
 			K:    view.url != "" && !view.isStart && a.store.IsBookmarked(view.url),
 			E:    a.store.Settings().Engine,
 			V:    a.splitTab != nil,
-			Pms:  permissionStateFor(view),
+			Pms:  a.permissionStateFor(view),
 			Q:    a.commandTab() == view,
 			L:    view == a.active(),
 		}
@@ -1529,16 +1532,31 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			a.postTask(func() { a.reorderTab(from, to) })
 			return
 		case "permission":
-			kinds := map[string]edge.CoreWebView2PermissionKind{"camera":edge.CoreWebView2PermissionKindCamera,"microphone":edge.CoreWebView2PermissionKindMicrophone,"location":edge.CoreWebView2PermissionKindGeolocation,"notifications":edge.CoreWebView2PermissionKindNotifications}
+			kinds := map[string]edge.CoreWebView2PermissionKind{"camera":edge.CoreWebView2PermissionKindCamera,"microphone":edge.CoreWebView2PermissionKindMicrophone,"location":edge.CoreWebView2PermissionKindGeolocation,"notifications":edge.CoreWebView2PermissionKindNotifications,"clipboard":edge.CoreWebView2PermissionKindClipboardRead,"sensors":edge.CoreWebView2PermissionKindOtherSensors}
 			kind, ok := kinds[m.M]
 			if ok {
 				state := edge.CoreWebView2PermissionStateDefault
 				if m.U == "allow" { state = edge.CoreWebView2PermissionStateAllow }
 				if m.U == "deny" { state = edge.CoreWebView2PermissionStateDeny }
 				origin := permissionOrigin(t.url)
-				if t.permissions[origin] == nil { t.permissions[origin] = make(map[edge.CoreWebView2PermissionKind]edge.CoreWebView2PermissionState) }
-				t.permissions[origin][kind] = state
+				a.store.SetPermission(origin, m.M, m.U)
+				t.chromium.SetPermission(kind, state)
 				a.pushBarState()
+			}
+			return
+		case "clear-permissions":
+			origin := permissionOrigin(t.url)
+			a.store.ClearPermissions(origin)
+			for _, kind := range []edge.CoreWebView2PermissionKind{edge.CoreWebView2PermissionKindCamera,edge.CoreWebView2PermissionKindMicrophone,edge.CoreWebView2PermissionKindGeolocation,edge.CoreWebView2PermissionKindNotifications,edge.CoreWebView2PermissionKindClipboardRead,edge.CoreWebView2PermissionKindOtherSensors} { t.chromium.SetPermission(kind, edge.CoreWebView2PermissionStateDefault) }
+			a.pushBarState()
+			return
+		case "clear-site-data":
+			origin := permissionOrigin(t.url)
+			if origin != "" {
+				params, _ := json.Marshal(map[string]string{"origin":origin,"storageTypes":"all"})
+				t.chromium.CallDevToolsProtocol("Storage.clearDataForOrigin", string(params))
+				a.store.ClearPermissions(origin)
+				t.chromium.Reload()
 			}
 			return
 		case "close-split":

@@ -75,7 +75,9 @@ just content:
   Split View session restore
 - **Site identity and permissions**: the lock control reports whether the
   current connection uses HTTPS and offers per-site Ask / Allow / Block choices
-  for camera, microphone, location and notifications
+  for camera, microphone, location, notifications, clipboard and sensors;
+  choices persist by origin, with one-click permission reset and per-site
+  cookie/storage clearing
 - **Windows-protected autofill**: password saving, passkeys, addresses and
   payment autofill are delegated directly to the WebView2 profile; OK Browser
   never reads or stores credential values itself

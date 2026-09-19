@@ -25,6 +25,7 @@ type store struct {
 	history   []histEntry
 	bookmarks []bmEntry
 	settings  Settings
+	permissions map[string]map[string]string // origin -> permission -> default/allow/deny
 
 	dirty      map[string]bool
 	flushTimer *time.Timer
@@ -100,11 +101,14 @@ func newStore() *store {
 			Autofill:       true,
 			SleepMinutes:   5,
 		},
+		permissions: make(map[string]map[string]string),
 		dirty: map[string]bool{},
 	}
 	s.load("history.json", &s.history)
 	s.load("bookmarks.json", &s.bookmarks)
 	s.load("settings.json", &s.settings)
+	s.load("permissions.json", &s.permissions)
+	if s.permissions == nil { s.permissions = make(map[string]map[string]string) }
 	if !validEngine(s.settings.Engine) { s.settings.Engine = "Google" }
 	if s.settings.SleepMinutes < 0 || s.settings.SleepMinutes > 120 { s.settings.SleepMinutes = 5 }
 	return s
@@ -165,6 +169,8 @@ func (s *store) flushLocked() {
 			v = s.bookmarks
 		case "settings.json":
 			v = s.settings
+		case "permissions.json":
+			v = s.permissions
 		default:
 			continue
 		}
@@ -446,6 +452,24 @@ func (s *store) Suggest(q string, n int) []suggestion {
 		out = append(out, c.s)
 	}
 	return out
+}
+
+// ---- site permissions ------------------------------------------------------
+func (s *store) Permission(origin, kind string) string {
+	s.mu.Lock(); defer s.mu.Unlock()
+	if byKind := s.permissions[origin]; byKind != nil { return byKind[kind] }
+	return ""
+}
+func (s *store) SetPermission(origin, kind, state string) {
+	if origin == "" { return }
+	s.mu.Lock(); defer s.mu.Unlock()
+	if s.permissions[origin] == nil { s.permissions[origin] = make(map[string]string) }
+	if state == "default" || state == "" { delete(s.permissions[origin], kind) } else { s.permissions[origin][kind] = state }
+	if len(s.permissions[origin]) == 0 { delete(s.permissions, origin) }
+	s.markDirty("permissions.json")
+}
+func (s *store) ClearPermissions(origin string) {
+	s.mu.Lock(); defer s.mu.Unlock(); delete(s.permissions, origin); s.markDirty("permissions.json")
 }
 
 // ---- settings + session -----------------------------------------------------

@@ -36,9 +36,20 @@ type tab struct {
 	inactiveSince time.Time
 	sleeping     bool
 	audioPlaying bool
-	permissions  map[string]map[edge.CoreWebView2PermissionKind]edge.CoreWebView2PermissionState
 	crashCount   int
 	lastCrash    time.Time
+}
+
+func permissionName(kind edge.CoreWebView2PermissionKind) string {
+	switch kind {
+	case edge.CoreWebView2PermissionKindCamera: return "camera"
+	case edge.CoreWebView2PermissionKindMicrophone: return "microphone"
+	case edge.CoreWebView2PermissionKindGeolocation: return "location"
+	case edge.CoreWebView2PermissionKindNotifications: return "notifications"
+	case edge.CoreWebView2PermissionKindClipboardRead: return "clipboard"
+	case edge.CoreWebView2PermissionKindOtherSensors: return "sensors"
+	}
+	return "unknown"
 }
 
 func permissionOrigin(raw string) string {
@@ -82,17 +93,17 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 		return nil
 	}
 
-	t := &tab{host: h, title: "New Tab", zoom: 1.0, permissions: make(map[string]map[edge.CoreWebView2PermissionKind]edge.CoreWebView2PermissionState)}
+	t := &tab{host: h, title: "New Tab", zoom: 1.0}
 
 	c := edge.NewChromium()
 	c.DataPath = dataPath()
 	c.MessageCallback = func(msg string) { a.onWebMessage(t, msg) }
 	c.AcceleratorKeyCallback = func(vk uint) bool { a.focusedTab = t; return a.onAccelerator(vk) }
 	c.PermissionRequestedCallback = func(raw string, kind edge.CoreWebView2PermissionKind) edge.CoreWebView2PermissionState {
-		origin := permissionOrigin(raw)
-		if byKind := t.permissions[origin]; byKind != nil {
-			if state, ok := byKind[kind]; ok { return state }
-		}
+		name := permissionName(kind)
+		saved := a.store.Permission(permissionOrigin(raw), name)
+		if saved == "allow" { return edge.CoreWebView2PermissionStateAllow }
+		if saved == "deny" { return edge.CoreWebView2PermissionStateDeny }
 		return edge.CoreWebView2PermissionStateDefault
 	}
 	// The engine-level safety net for new windows (target=_blank,
