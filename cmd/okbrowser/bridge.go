@@ -362,6 +362,10 @@ const barJS = `
     ".splitdivider:after{content:'';position:absolute;left:3px;top:35%;width:2px;height:30%;",
     "border-radius:2px;background:rgba(120,128,138,.45)}",
     "*:focus-visible{outline:2px solid #0a84ff !important;outline-offset:2px}",
+    ".sr{position:fixed;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}",
+    ":host(.large) .strip{height:46px}:host(.large) .tab{height:32px;border-radius:16px}",
+    ":host(.large) .wcap{height:34px}:host(.large) .wbtn{height:30px;width:46px}",
+    ":host(.large) .okb{height:34px;border-radius:18px}",
     "@media (prefers-reduced-motion:reduce){*{animation:none !important;transition-duration:.01ms !important}}",
     "@media (forced-colors:active){.strip,.wcap,.okb,.menu,.ctx,.sug,.find{background:Canvas;border:1px solid CanvasText;backdrop-filter:none}.tab.on{outline:2px solid Highlight}}",
     "@media print{.strip,.wcap,.edge,.find,.edgeact{display:none !important}}"
@@ -372,6 +376,7 @@ const barJS = `
   root.adoptedStyleSheets = [sheet];
 
   root.innerHTML =
+    '<div class="sr" id="live" role="status" aria-live="polite"></div>' +
     '<div class="prog" id="prog"></div>' +
     '<div class="edge" id="edge"></div>' +
     '<div class="strip" id="strip">' +
@@ -437,6 +442,21 @@ const barJS = `
       '<div class="fb" id="fnext" title="Next (Enter)">' + I_DOWN + '</div>' +
       '<div class="fb" id="fclose" title="Close (Esc)">' + I_X + '</div>' +
     '</div>';
+
+  var live = root.getElementById('live');
+  function announce(text) { live.textContent = ''; setTimeout(function(){ live.textContent = text; }, 20); }
+  var buttonIDs = ['plus','lens','bsite','bback','bfwd','brl','bstar','go','wmenu','wmin','wmax','wclose','fprev','fnext','fclose','split-swap','split-tab','split-close'];
+  for (var ai=0;ai<buttonIDs.length;ai++) {
+    var control=root.getElementById(buttonIDs[ai]); if(!control)continue;
+    control.setAttribute('role','button'); control.setAttribute('tabindex','0');
+    if(control.title) control.setAttribute('aria-label',control.title);
+    control.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();this.click();}});
+  }
+  input = root.getElementById('q'); input.setAttribute('aria-label','Address and search');
+  root.getElementById('tz').setAttribute('role','tablist');
+  root.getElementById('menu').setAttribute('role','menu');
+  root.getElementById('sitepanel').setAttribute('role','dialog');
+  root.getElementById('sitepanel').setAttribute('aria-label','Site information and permissions');
 
   var post = function (o) { window.__ok(o); };
   document.addEventListener('pointerdown', function () { post({t:'pane-focus'}); }, true);
@@ -595,6 +615,7 @@ const barJS = `
     var el = document.createElement('div');
     el.className = 'tab';
     el.draggable = true;
+    el.setAttribute('role','tab'); el.setAttribute('tabindex','0');
     var ic = document.createElement('div');
     ic.className = 'ic';
     el.appendChild(ic);
@@ -603,7 +624,7 @@ const barJS = `
     el.appendChild(sp);
     var x = document.createElement('div');
     x.className = 'tx';
-    x.innerHTML = I_X;
+    x.innerHTML = I_X; x.setAttribute('role','button'); x.setAttribute('aria-label','Close tab'); x.setAttribute('tabindex','-1');
     x.addEventListener('click', function (ev) {
       ev.stopPropagation();
       post({ t: 'ui', a: 'close', i: el.__idx });
@@ -611,6 +632,11 @@ const barJS = `
     el.appendChild(x);
     el.addEventListener('click', function () {
       if (el.__idx !== S.a) post({ t: 'ui', a: 'switch', i: el.__idx });
+    });
+    el.addEventListener('keydown', function(ev) {
+      if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();post({t:'ui',a:'switch',i:el.__idx});}
+      else if(ev.key==='Delete'){ev.preventDefault();post({t:'ui',a:'close',i:el.__idx});}
+      else if(ev.key==='ArrowRight'||ev.key==='ArrowLeft'){ev.preventDefault();var n=(el.__idx+(ev.key==='ArrowRight'?1:-1)+tabEls.length)%tabEls.length;if(tabEls[n])tabEls[n].focus();}
     });
     el.addEventListener('auxclick', function (ev) {
       if (ev.button === 1) { ev.preventDefault(); post({ t: 'ui', a: 'close', i: el.__idx }); }
@@ -720,6 +746,7 @@ const barJS = `
       }
       el.__idx = i;
       el.classList.toggle('on', i === S.a);
+      el.setAttribute('aria-selected', i === S.a ? 'true' : 'false');
       el.classList.toggle('pin', !!(tabs[i] && tabs[i].p));
       el.classList.toggle('sleep', !!(tabs[i] && tabs[i].s));
       if (tabs[i] && tabs[i].s) el.title = (tabs[i].t || 'Tab') + ' — sleeping';
@@ -903,6 +930,7 @@ const barJS = `
   wmenu.addEventListener('click', function (e) {
     e.stopPropagation();
     menu.classList.toggle('open');
+    if(menu.classList.contains('open')){var first=root.getElementById('m-newtab');if(first)first.focus();}
   });
   // Hovering a popover anchored to the bar pins it (the capsule's
   // mouseleave must not retire the bar while the user is INSIDE the menu).
@@ -931,6 +959,7 @@ const barJS = `
   for (var mi = 0; mi < mids.length; mi++) {
     var mrow = root.getElementById(mids[mi]);
     if (!mrow) continue;
+    mrow.setAttribute('role','menuitem'); mrow.setAttribute('tabindex','-1');
     (function (r, act) {
       r.addEventListener('click', function () {
         post({ t: 'menu', m: act });
@@ -938,6 +967,15 @@ const barJS = `
       });
     })(mrow, mids[mi].slice(2));
   }
+  menu.addEventListener('keydown', function(e){
+    if(e.key==='Escape'){closeMenu();wmenu.focus();return;}
+    if(e.key!=='ArrowDown'&&e.key!=='ArrowUp'&&e.key!=='Enter'&&e.key!==' ')return;
+    var rows=[];for(var i=0;i<mids.length;i++){var r=root.getElementById(mids[i]);if(r)rows.push(r);}
+    var at=rows.indexOf(document.activeElement);
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();at=(at+(e.key==='ArrowDown'?1:-1)+rows.length)%rows.length;rows[at].focus();}
+    else if(at>=0){e.preventDefault();rows[at].click();}
+  });
+
   // Events crossing out of a CLOSED shadow root are retargeted: at
   // document level every click's target is the shadow host - even for the
   // menu's own rows - and composedPath() hides closed-root internals too.
@@ -1110,9 +1148,11 @@ const barJS = `
   var prog = root.getElementById('prog');
   window.__okLoad = function (on) {
     if (on) {
+      announce('Page loading');
       prog.classList.remove('done');
       prog.classList.add('on');
     } else {
+      announce('Page loaded');
       prog.classList.remove('on');
       prog.classList.add('done');
       setTimeout(function () { prog.classList.remove('done'); }, 450);
@@ -1182,6 +1222,7 @@ type barState struct {
 	Pms  map[string]string `json:"pms,omitempty"`
 	Q    bool              `json:"q"` // this is the focused split pane
 	L    bool              `json:"l"` // this is the left/original pane
+	G    bool              `json:"g"` // larger browser controls
 }
 
 func (a *app) permissionStateFor(t *tab) map[string]string {
@@ -1224,6 +1265,7 @@ func (a *app) pushBarState() {
 			Pms:  a.permissionStateFor(view),
 			Q:    a.commandTab() == view,
 			L:    view == a.active(),
+			G:    a.store.Settings().LargeControls,
 		}
 		b, err := json.Marshal(st)
 		if err == nil {
@@ -1432,6 +1474,8 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			st.RestoreSession = m.U == "1"
 		case "autofill":
 			st.Autofill = m.U == "1"
+		case "large":
+			st.LargeControls = m.U == "1"
 		case "sleep":
 			if n, err := strconv.Atoi(m.U); err == nil && n >= 0 && n <= 120 { st.SleepMinutes = n }
 		}

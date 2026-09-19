@@ -304,6 +304,13 @@ func SettingsHTML(s Settings, version string) string {
 	}
 	b.WriteString(`</select></div></div>`)
 
+	// Accessibility
+	b.WriteString(`<div style="font-size:12px;font-weight:650;opacity:.5;margin:22px 4px 8px;text-transform:uppercase;letter-spacing:.06em">Accessibility</div><div class="card">`)
+	large := ""
+	if s.LargeControls { large = " checked" }
+	b.WriteString(`<div class="row"><div class="meta"><div class="tt">Larger browser controls</div><div class="uu">Increases tabs, window buttons and the address field</div></div><input id="large" type="checkbox"` + large + `></div>`)
+	b.WriteString(`<div class="row"><div class="meta"><div class="tt">System accessibility</div><div class="uu">Reduced motion, high contrast and keyboard focus are followed automatically</div></div></div></div>`)
+
 	// Privacy
 	b.WriteString(`<div style="font-size:12px;font-weight:650;opacity:.5;margin:22px 4px 8px;text-transform:uppercase;letter-spacing:.06em">Privacy</div>`)
 	b.WriteString(`<div class="card">`)
@@ -483,6 +490,7 @@ const settingsPageJS = `(function(){
       toast(on?'Tabs will reopen on startup':'Tabs start fresh');
     });
   }
+  var lg=document.getElementById('large');if(lg)lg.addEventListener('change',function(){post({t:'set',m:'large',u:this.checked?'1':'0'});toast('Browser controls updated');});
   var af=document.getElementById('autofill');
   if(af) af.addEventListener('change',function(){post({t:'set',m:'autofill',u:this.checked?'1':'0'});toast(this.checked?'Autofill enabled':'Autofill disabled');});
   var sl=document.getElementById('sleep');

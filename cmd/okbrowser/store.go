@@ -52,6 +52,7 @@ type Settings struct {
 	Autofill       bool   `json:"autofill"` // WebView2 password/address autofill
 	SleepMinutes   int    `json:"sleepMin"` // 0 disables sleeping tabs
 	NeverSleep     map[string]bool `json:"neverSleep,omitempty"`
+	LargeControls  bool `json:"largeControls"`
 }
 
 // sessionTab is one tab of a saved session.

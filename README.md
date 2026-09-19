@@ -113,6 +113,9 @@ just content:
 - Zoom (`Ctrl+ +` / `Ctrl+-` / `Ctrl+0`), print (`Ctrl+P`), fullscreen (`F11`), mouse buttons 4/5 for back/forward
 - Right-click context menus, F12 DevTools, hover link preview, downloads (the engine's download UI)
 - **Find in page** (`Ctrl+F`) with a match counter, next / previous and highlight
+- **Accessible glass UI**: semantic tabs, buttons, menus and dialogs; complete
+  keyboard tab/menu navigation, screen-reader loading announcements, visible
+  focus, reduced-motion and forced-colors support, plus optional larger controls
 - High-DPI aware (crisp on any monitor, follows the window between screens); the bar reflows correctly at **any window size**
 - Persistent profile: logins and cookies are kept in `%LOCALAPPDATA%\OKBrowser`
 - Proper Windows app icon, version info and GUI subsystem (no console flash)
