@@ -46,8 +46,10 @@ type bmEntry struct {
 
 // Settings are the user's choices (settings page / menu).
 type Settings struct {
-	Engine         string `json:"engine"`  // Google | Bing | DuckDuckGo
-	RestoreSession bool   `json:"restore"` // reopen tabs on startup
+	Engine         string `json:"engine"`   // Google | Bing | DuckDuckGo
+	RestoreSession bool   `json:"restore"`  // reopen tabs on startup
+	Autofill       bool   `json:"autofill"` // WebView2 password/address autofill
+	SleepMinutes   int    `json:"sleepMin"` // 0 disables sleeping tabs
 }
 
 // sessionTab is one tab of a saved session.
@@ -93,15 +95,16 @@ func newStore() *store {
 		settings: Settings{
 			Engine:         "Google",
 			RestoreSession: true,
+			Autofill:       true,
+			SleepMinutes:   5,
 		},
 		dirty: map[string]bool{},
 	}
 	s.load("history.json", &s.history)
 	s.load("bookmarks.json", &s.bookmarks)
 	s.load("settings.json", &s.settings)
-	if !validEngine(s.settings.Engine) {
-		s.settings.Engine = "Google"
-	}
+	if !validEngine(s.settings.Engine) { s.settings.Engine = "Google" }
+	if s.settings.SleepMinutes < 0 || s.settings.SleepMinutes > 120 { s.settings.SleepMinutes = 5 }
 	return s
 }
 
@@ -119,11 +122,11 @@ func dataDir() string {
 }
 
 func (s *store) load(name string, v interface{}) {
-	b, err := os.ReadFile(filepath.Join(s.dir, name))
-	if err != nil {
-		return
-	}
-	_ = json.Unmarshal(b, v)
+	p := filepath.Join(s.dir, name)
+	b, err := os.ReadFile(p)
+	if err == nil && json.Unmarshal(b, v) == nil { return }
+	// A truncated/corrupt primary never destroys the user's last good data.
+	if backup, e := os.ReadFile(p + ".bak"); e == nil { _ = json.Unmarshal(backup, v) }
 }
 
 // markDirty schedules a debounced flush (2s after the first change).
@@ -178,9 +181,8 @@ func (s *store) write(name string, v interface{}) {
 	}
 	p := filepath.Join(s.dir, name)
 	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return
-	}
+	if err := os.WriteFile(tmp, b, 0o644); err != nil { return }
+	if old, err := os.ReadFile(p); err == nil { _ = os.WriteFile(p+".bak", old, 0o644) }
 	_ = os.Rename(tmp, p)
 }
 

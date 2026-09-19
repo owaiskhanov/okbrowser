@@ -30,6 +30,9 @@ background:linear-gradient(160deg,#f6f7fa 0%,#eceef4 55%,#e7e9f2 100%);
 color:#1d1d1f;-webkit-tap-highlight-color:transparent}
 @media (prefers-color-scheme:dark){body{
 background:linear-gradient(160deg,#151519 0%,#101014 55%,#0c0c10 100%);color:#f2f2f7}}
+*:focus-visible{outline:2px solid #0a84ff;outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media (forced-colors:active){body{background:Canvas;color:CanvasText}.card{border:1px solid CanvasText}}
 .wrap{width:min(720px,92vw);padding:48px 0 64px}
 h1{font-size:26px;font-weight:700;letter-spacing:-.02em;margin:0 0 20px}
 .card{background:rgba(255,255,255,.55);border-radius:18px;
@@ -287,6 +290,20 @@ func SettingsHTML(s Settings, version string) string {
 			return `left:2px`
 		}() + `"></div></div></div></div>`)
 
+	// Performance and autofill
+	b.WriteString(`<div style="font-size:12px;font-weight:650;opacity:.5;margin:22px 4px 8px;text-transform:uppercase;letter-spacing:.06em">Performance & autofill</div><div class="card">`)
+	checked := ""
+	if s.Autofill { checked = " checked" }
+	b.WriteString(`<div class="row"><div class="meta"><div class="tt">Password and address autofill</div><div class="uu">Protected by WebView2; OK Browser cannot read saved values</div></div><input id="autofill" type="checkbox"` + checked + `></div>`)
+	b.WriteString(`<div class="row"><div class="meta"><div class="tt">Sleep background tabs</div><div class="uu">Pinned and Split View tabs stay active</div></div><select id="sleep">`)
+	for _, n := range []int{0, 5, 15, 30, 60} {
+		label, selected := fmt.Sprintf("%d min", n), ""
+		if n == 0 { label = "Never" }
+		if s.SleepMinutes == n { selected = " selected" }
+		b.WriteString(`<option value="` + strconv.Itoa(n) + `"` + selected + `>` + label + `</option>`)
+	}
+	b.WriteString(`</select></div></div>`)
+
 	// Privacy
 	b.WriteString(`<div style="font-size:12px;font-weight:650;opacity:.5;margin:22px 4px 8px;text-transform:uppercase;letter-spacing:.06em">Privacy</div>`)
 	b.WriteString(`<div class="card">`)
@@ -297,7 +314,8 @@ func SettingsHTML(s Settings, version string) string {
 
 	// About
 	b.WriteString(`<div style="font-size:12px;font-weight:650;opacity:.5;margin:22px 4px 8px;text-transform:uppercase;letter-spacing:.06em">About</div>`)
-	b.WriteString(`<div class="card"><div class="row" style="padding:14px 16px"><div class="av">OK</div><div class="meta"><div class="tt">OK Browser ` + version + `</div><div class="uu">Light and fast · WebView2 edition</div></div></div></div>`)
+	b.WriteString(`<div class="card"><div class="row" style="padding:14px 16px"><div class="av">OK</div><div class="meta"><div class="tt">OK Browser ` + version + `</div><div class="uu">Light and fast · WebView2 edition</div></div></div>`)
+	b.WriteString(`<div class="row" id="updates"><div class="meta"><div class="tt">Check for updates</div><div class="uu">Open the verified latest release and checksum</div></div><div class="xx">Open ›</div></div></div>`)
 	b.WriteString(`</div>`)
 
 	b.WriteString("<script>" + settingsPageJS + "</script>")
@@ -444,6 +462,10 @@ const settingsPageJS = `(function(){
       toast(on?'Tabs will reopen on startup':'Tabs start fresh');
     });
   }
+  var af=document.getElementById('autofill');
+  if(af) af.addEventListener('change',function(){post({t:'set',m:'autofill',u:this.checked?'1':'0'});toast(this.checked?'Autofill enabled':'Autofill disabled');});
+  var sl=document.getElementById('sleep');
+  if(sl) sl.addEventListener('change',function(){post({t:'set',m:'sleep',u:this.value});toast(this.value==='0'?'Sleeping tabs disabled':'Tabs sleep after '+this.value+' minutes');});
   function act(id,m,msg){
     var el=document.getElementById(id);
     if(el) el.addEventListener('click',function(){
@@ -454,4 +476,5 @@ const settingsPageJS = `(function(){
   act('ch','history','Browsing history cleared');
   act('cb','bookmarks','Bookmarks cleared');
   act('cs','session','Saved session forgotten');
+  var up=document.getElementById('updates');if(up)up.addEventListener('click',function(){post({t:'ui',a:'updates'});});
 })();`

@@ -124,8 +124,8 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 		_ = st.PutIsZoomControlEnabled(true)
 		// Passwords, passkeys and profile autofill stay inside WebView2's
 		// Windows-protected profile; the browser host never sees the values.
-		_ = st.PutIsPasswordAutosaveEnabled(true)
-		_ = st.PutIsGeneralAutofillEnabled(true)
+		_ = st.PutIsPasswordAutosaveEnabled(a.store.Settings().Autofill && !incognitoMode)
+		_ = st.PutIsGeneralAutofillEnabled(a.store.Settings().Autofill && !incognitoMode)
 	}
 	c.Init(bridgeJS)
 	if secondary { c.Init("window.__okSecondary=true;") }
@@ -349,10 +349,12 @@ func (a *app) showInternal(t *tab, page string) {
 // tabs and either Split View pane stay live. WebView2 keeps page state in memory
 // and resumes it instantly when selected.
 func (a *app) sleepInactiveTabs() {
+	minutes := a.store.Settings().SleepMinutes
+	if minutes <= 0 { return }
 	now := time.Now()
 	for _, t := range a.tabs {
 		if t == a.active() || t == a.splitTab || t.pinned || t.sleeping || t.inactiveSince.IsZero() { continue }
-		if now.Sub(t.inactiveSince) < 5*time.Minute { continue }
+		if now.Sub(t.inactiveSince) < time.Duration(minutes)*time.Minute { continue }
 		t.chromium.CallDevToolsProtocol("Page.setWebLifecycleState", `{"state":"frozen"}`)
 		t.sleeping = true
 	}

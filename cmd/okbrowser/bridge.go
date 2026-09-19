@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -339,6 +340,9 @@ const barJS = `
     "display:none;cursor:col-resize;pointer-events:auto}.splitdivider.show{display:block}",
     ".splitdivider:after{content:'';position:absolute;left:3px;top:35%;width:2px;height:30%;",
     "border-radius:2px;background:rgba(120,128,138,.45)}",
+    "*:focus-visible{outline:2px solid #0a84ff !important;outline-offset:2px}",
+    "@media (prefers-reduced-motion:reduce){*{animation:none !important;transition-duration:.01ms !important}}",
+    "@media (forced-colors:active){.strip,.wcap,.okb,.menu,.ctx,.sug,.find{background:Canvas;border:1px solid CanvasText;backdrop-filter:none}.tab.on{outline:2px solid Highlight}}",
     "@media print{.strip,.wcap,.edge,.find,.edgeact{display:none !important}}"
   ].join("");
 
@@ -1341,8 +1345,21 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			st.Engine = m.U
 		case "restore":
 			st.RestoreSession = m.U == "1"
+		case "autofill":
+			st.Autofill = m.U == "1"
+		case "sleep":
+			if n, err := strconv.Atoi(m.U); err == nil && n >= 0 && n <= 120 { st.SleepMinutes = n }
 		}
 		a.store.SetSettings(st)
+		if m.M == "autofill" {
+			for _, tab := range a.tabs {
+				if settings, err := tab.chromium.GetSettings(); err == nil {
+					on := st.Autofill && !incognitoMode
+					_ = settings.PutIsPasswordAutosaveEnabled(on)
+					_ = settings.PutIsGeneralAutofillEnabled(on)
+				}
+			}
+		}
 		a.pushBarState() // the address suggestions label follows the engine
 
 	case "suggest": // address bubble typing: reply with suggestions
@@ -1455,7 +1472,10 @@ func (a *app) onWebMessage(t *tab, msg string) {
 				a.postTask(func() { a.windowAction("wclose") })
 			}
 			return
-			case "dl-open": // downloads page: open a validated file
+			case "updates":
+			openExternal("https://github.com/owaiskhanov/okbrowser/releases/latest")
+			return
+		case "dl-open": // downloads page: open a validated file
 			if isDownloadPath(m.U) { openPath(m.U) }
 			return
 		case "dl-show": // downloads page: reveal a validated file in Explorer
