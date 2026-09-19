@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jchv/go-webview2/pkg/edge"
 	"github.com/lxn/win"
 )
 
@@ -31,6 +32,14 @@ window.__ok = function (o) {
     return;
   }
   function anchor(el) { return el && el.closest ? el.closest("a") : null; }
+  function reportAudio() {
+    var media = document.querySelectorAll('audio,video'), playing = false;
+    for (var i=0;i<media.length;i++) if (!media[i].paused && !media[i].ended) { playing=true; break; }
+    window.__ok({t:'audio', a:playing?'1':'0'});
+  }
+  document.addEventListener('play', reportAudio, true);
+  document.addEventListener('pause', reportAudio, true);
+  document.addEventListener('ended', reportAudio, true);
   document.addEventListener("click", function (e) {
     var a = anchor(e.target);
     if (a && a.target && a.target !== "_self" && !a.hasAttribute("data-ok-engine")) {
@@ -107,6 +116,7 @@ const barJS = `
   var I_PLUS = SV('<path d="M12 5v14M5 12h14"/>');
   var I_X    = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>';
   var I_LENS = SV('<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/>');
+  var I_LOCK = SV('<rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>');
   var I_GO   = SV('<path d="M5 12h13"/><path d="M13 6l6 6-6 6"/>');
   var I_MIN  = SV('<path d="M5 12h14"/>');
   var I_MAX  = SV('<rect x="5.5" y="5.5" width="13" height="13" rx="2"/>');
@@ -214,6 +224,14 @@ const barJS = `
     ".wcap.hid.near{pointer-events:auto}",
     ".wbtn{width:40px;height:22px;border-radius:11px;display:grid;place-items:center;color:#3c4043;",
     "cursor:default;transition:background .12s,opacity .12s}",
+    ".sitepanel{position:fixed;top:40px;left:8px;width:290px;padding:12px;border-radius:18px;z-index:2147483647;",
+    "display:none;pointer-events:auto;font:12px -apple-system,'Segoe UI',sans-serif;color:#202124;",
+    "background:rgba(250,250,252,.88);backdrop-filter:blur(32px) saturate(1.8);box-shadow:0 16px 50px rgba(0,0,0,.28)}",
+    ".sitepanel.open{display:block;animation:okin .16s ease}.sitehead{font-size:14px;font-weight:700;margin:2px 4px 3px}",
+    ".siteorigin{font-size:11px;opacity:.58;margin:0 4px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+    ".permrow{display:flex;align-items:center;justify-content:space-between;padding:7px 4px;border-top:1px solid rgba(120,128,138,.14)}",
+    ".permrow select{border:0;border-radius:9px;padding:4px 6px;background:rgba(120,128,138,.13);color:inherit}",
+    "@media(prefers-color-scheme:dark){.sitepanel{background:rgba(28,28,32,.9);color:#f2f2f7}}",
     ".menu,.ctx{position:fixed;top:34px;right:6px;width:224px;padding:6px;border-radius:16px;",
     "z-index:2147483647;pointer-events:auto;display:none;",
     "font-family:-apple-system,'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;",
@@ -359,6 +377,7 @@ const barJS = `
       '<div class="okb" id="okb">' +
         '<div class="lens" id="lens">' + I_LENS + '</div>' +
         '<div class="inner">' +
+          '<div class="bb" id="bsite" title="Site information">' + I_LOCK + '</div>' +
           '<div class="bb" id="bback" title="Back">' + I_BACK + '</div>' +
           '<div class="bb" id="bfwd" title="Forward">' + I_FWD + '</div>' +
           '<div class="bb" id="brl" title="Reload">' + I_RL + '</div>' +
@@ -375,6 +394,11 @@ const barJS = `
       '<div class="wbtn" id="wmax" title="Maximize">' + I_MAX + '</div>' +
       '<div class="wbtn close" id="wclose" title="Close">' + I_X + '</div>' +
     '</div>' +
+    '<div class="sitepanel" id="sitepanel"><div class="sitehead" id="sitehead">Site information</div><div class="siteorigin" id="siteorigin"></div>' +
+      '<div class="permrow">Camera<select data-perm="camera"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div>' +
+      '<div class="permrow">Microphone<select data-perm="microphone"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div>' +
+      '<div class="permrow">Location<select data-perm="location"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div>' +
+      '<div class="permrow">Notifications<select data-perm="notifications"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div></div>' +
     '<div class="menu" id="menu">' +
       '<div class="mrow" id="m-newtab" data-m="newtab">' + I_PLUS + 'New tab</div>' +
       '<div class="mrow" id="m-incognito" data-m="incognito">' + I_INC + 'New incognito window</div>' +
@@ -684,6 +708,7 @@ const barJS = `
       el.classList.toggle('pin', !!(tabs[i] && tabs[i].p));
       el.classList.toggle('sleep', !!(tabs[i] && tabs[i].s));
       if (tabs[i] && tabs[i].s) el.title = (tabs[i].t || 'Tab') + ' — sleeping';
+      if (tabs[i] && tabs[i].a) el.title = (tabs[i].t || 'Tab') + ' — playing audio';
       el.__set(tabs[i].t || 'New Tab', (tabs[i] && tabs[i].u) || '', (tabs[i] && tabs[i].f) || '');
     }
     root.getElementById('bback').toggleAttribute('disabled', !S.b);
@@ -693,6 +718,22 @@ const barJS = `
     if (stateLive && prevA !== S.a) revealBar(true); // tab switched
     prevA = S.a;
   }
+
+  // --- site identity and per-site permissions -------------------------------
+  var sitepanel = root.getElementById('sitepanel');
+  root.getElementById('bsite').addEventListener('click', function (e) {
+    e.stopPropagation();
+    var secure = /^https:\/\//i.test(S.u || '');
+    root.getElementById('sitehead').textContent = secure ? 'Connection is secure' : 'Connection is not secure';
+    root.getElementById('siteorigin').textContent = S.u || 'New Tab';
+    var selects = sitepanel.querySelectorAll ? sitepanel.querySelectorAll('select[data-perm]') : [];
+    for (var i=0;i<selects.length;i++) selects[i].value = (S.pms && S.pms[selects[i].getAttribute('data-perm')]) || 'default';
+    sitepanel.classList.toggle('open');
+  });
+  var permissionSelects = sitepanel.querySelectorAll ? sitepanel.querySelectorAll('select[data-perm]') : [];
+  for (var pi=0;pi<permissionSelects.length;pi++) permissionSelects[pi].addEventListener('change', function () {
+    post({t:'ui',a:'permission',m:this.getAttribute('data-perm'),u:this.value});
+  });
 
   // --- the address bubble (in the top bar, beside the +) --------------------
   function setOpen(v) { okb.className = v ? 'okb open' : 'okb'; }
@@ -1105,6 +1146,7 @@ type barTab struct {
 	F string `json:"f"` // favicon URL ('' = letter)
 	P bool   `json:"p"` // pinned (favicon-only pill)
 	S bool   `json:"s"` // sleeping to save memory
+	A bool   `json:"a"` // currently playing audio
 }
 
 // barState is the full state pushed to the active tab's shell UI.
@@ -1117,7 +1159,19 @@ type barState struct {
 	M    bool     `json:"m"` // window maximized
 	K    bool     `json:"k"` // current page bookmarked
 	E    string   `json:"e"` // search engine name
-	V    bool     `json:"v"` // split view is active
+	V    bool              `json:"v"` // split view is active
+	Pms  map[string]string `json:"pms,omitempty"`
+}
+
+func permissionStateFor(t *tab) map[string]string {
+	out := map[string]string{"camera":"default", "microphone":"default", "location":"default", "notifications":"default"}
+	if t == nil { return out }
+	states := t.permissions[permissionOrigin(t.url)]
+	for name, kind := range map[string]edge.CoreWebView2PermissionKind{"camera":edge.CoreWebView2PermissionKindCamera,"microphone":edge.CoreWebView2PermissionKindMicrophone,"location":edge.CoreWebView2PermissionKindGeolocation,"notifications":edge.CoreWebView2PermissionKindNotifications} {
+		if states[kind] == edge.CoreWebView2PermissionStateAllow { out[name] = "allow" }
+		if states[kind] == edge.CoreWebView2PermissionStateDeny { out[name] = "deny" }
+	}
+	return out
 }
 
 // pushBarState sends tab list, address and window state to the shell of the
@@ -1133,7 +1187,7 @@ func (a *app) pushBarState() {
 		if title == "" {
 			title = "New Tab"
 		}
-		tabs[i] = barTab{T: title, U: tb.url, F: tb.favicon, P: tb.pinned, S: tb.sleeping}
+		tabs[i] = barTab{T: title, U: tb.url, F: tb.favicon, P: tb.pinned, S: tb.sleeping, A: tb.audioPlaying}
 	}
 	push := func(view *tab, idx int) {
 		if view == nil || view.chromium == nil {
@@ -1149,6 +1203,7 @@ func (a *app) pushBarState() {
 			K:    view.url != "" && !view.isStart && a.store.IsBookmarked(view.url),
 			E:    a.store.Settings().Engine,
 			V:    a.splitTab != nil,
+			Pms:  permissionStateFor(view),
 		}
 		b, err := json.Marshal(st)
 		if err == nil {
@@ -1256,6 +1311,10 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			a.stClickTab, a.stClickX, a.stClickY, a.stClickTicks = t, m.X, m.Y, 0
 			win.SetTimer(a.hwnd, 3, 50, 0)
 		}
+
+	case "audio":
+		t.audioPlaying = m.A == "1"
+		a.pushBarState()
 
 	case "proximity":
 		if t == a.active() { a.execActive("window.__okProximityReveal&&window.__okProximityReveal()") }
@@ -1449,6 +1508,19 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		case "reorder": // drag & drop
 			from, to := m.I, m.To
 			a.postTask(func() { a.reorderTab(from, to) })
+			return
+		case "permission":
+			kinds := map[string]edge.CoreWebView2PermissionKind{"camera":edge.CoreWebView2PermissionKindCamera,"microphone":edge.CoreWebView2PermissionKindMicrophone,"location":edge.CoreWebView2PermissionKindGeolocation,"notifications":edge.CoreWebView2PermissionKindNotifications}
+			kind, ok := kinds[m.M]
+			if ok {
+				state := edge.CoreWebView2PermissionStateDefault
+				if m.U == "allow" { state = edge.CoreWebView2PermissionStateAllow }
+				if m.U == "deny" { state = edge.CoreWebView2PermissionStateDeny }
+				origin := permissionOrigin(t.url)
+				if t.permissions[origin] == nil { t.permissions[origin] = make(map[edge.CoreWebView2PermissionKind]edge.CoreWebView2PermissionState) }
+				t.permissions[origin][kind] = state
+				a.pushBarState()
+			}
 			return
 		case "close-split":
 			a.postTask(func() { a.closeSplit() })

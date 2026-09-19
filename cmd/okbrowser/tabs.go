@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -33,6 +34,14 @@ type tab struct {
 	zoom         float64
 	inactiveSince time.Time
 	sleeping     bool
+	audioPlaying bool
+	permissions  map[string]map[edge.CoreWebView2PermissionKind]edge.CoreWebView2PermissionState
+}
+
+func permissionOrigin(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" { return "" }
+	return strings.ToLower(u.Scheme + "://" + u.Host)
 }
 
 // active returns the currently displayed tab, or nil.
@@ -64,12 +73,19 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 		return nil
 	}
 
-	t := &tab{host: h, title: "New Tab", zoom: 1.0}
+	t := &tab{host: h, title: "New Tab", zoom: 1.0, permissions: make(map[string]map[edge.CoreWebView2PermissionKind]edge.CoreWebView2PermissionState)}
 
 	c := edge.NewChromium()
 	c.DataPath = dataPath()
 	c.MessageCallback = func(msg string) { a.onWebMessage(t, msg) }
 	c.AcceleratorKeyCallback = a.onAccelerator
+	c.PermissionRequestedCallback = func(raw string, kind edge.CoreWebView2PermissionKind) edge.CoreWebView2PermissionState {
+		origin := permissionOrigin(raw)
+		if byKind := t.permissions[origin]; byKind != nil {
+			if state, ok := byKind[kind]; ok { return state }
+		}
+		return edge.CoreWebView2PermissionStateDefault
+	}
 	// The engine-level safety net for new windows (target=_blank,
 	// window.open) - covers cases the page-side bridge cannot see (e.g.
 	// links inside closed shadow DOMs).
@@ -353,7 +369,7 @@ func (a *app) sleepInactiveTabs() {
 	if minutes <= 0 { return }
 	now := time.Now()
 	for _, t := range a.tabs {
-		if t == a.active() || t == a.splitTab || t.pinned || t.sleeping || t.inactiveSince.IsZero() { continue }
+		if t == a.active() || t == a.splitTab || t.pinned || t.audioPlaying || t.sleeping || t.inactiveSince.IsZero() { continue }
 		if now.Sub(t.inactiveSince) < time.Duration(minutes)*time.Minute { continue }
 		t.chromium.CallDevToolsProtocol("Page.setWebLifecycleState", `{"state":"frozen"}`)
 		t.sleeping = true

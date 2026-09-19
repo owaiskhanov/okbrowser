@@ -50,6 +50,7 @@ type Chromium struct {
 	NavigationCompletedCallback  func(sender *ICoreWebView2, args *ICoreWebView2NavigationCompletedEventArgs)
 	NavigationStartingCallback   func(sender *ICoreWebView2, args *ICoreWebView2NavigationStartingEventArgs) // OK Browser addition
 	NewWindowRequestedCallback   func(args *ICoreWebView2NewWindowRequestedEventArgs)                        // OK Browser addition
+	PermissionRequestedCallback  func(uri string, kind CoreWebView2PermissionKind) CoreWebView2PermissionState // OK Browser addition
 	AcceleratorKeyCallback       func(uint) bool
 }
 
@@ -291,8 +292,14 @@ func (e *Chromium) PermissionRequested(_ *ICoreWebView2, args *iCoreWebView2Perm
 		uintptr(unsafe.Pointer(args)),
 		uintptr(unsafe.Pointer(&kind)),
 	)
+	var uriPtr *uint16
+	_, _, _ = args.vtbl.GetURI.Call(uintptr(unsafe.Pointer(args)), uintptr(unsafe.Pointer(&uriPtr)))
+	uri := w32.Utf16PtrToString(uriPtr)
+	if uriPtr != nil { windows.CoTaskMemFree(unsafe.Pointer(uriPtr)) }
 	var result CoreWebView2PermissionState
-	if e.globalPermission != nil {
+	if e.PermissionRequestedCallback != nil {
+		result = e.PermissionRequestedCallback(uri, kind)
+	} else if e.globalPermission != nil {
 		result = *e.globalPermission
 	} else {
 		var ok bool

@@ -72,12 +72,15 @@ just content:
   an iframe—keeps browser controls available across both panes, and includes a
   compact controls to resize, swap, promote, or close panes and return to a
   single view
+- **Site identity and permissions**: the lock control reports whether the
+  current connection uses HTTPS and offers per-site Ask / Allow / Block choices
+  for camera, microphone, location and notifications
 - **Windows-protected autofill**: password saving, passkeys, addresses and
   payment autofill are delegated directly to the WebView2 profile; OK Browser
   never reads or stores credential values itself
-- **Sleeping tabs**: inactive background pages freeze after five minutes to
-  reduce CPU and memory pressure, wake instantly when selected, and visibly
-  dim while asleep; pinned tabs and both Split View panes always stay live
+- **Sleeping tabs**: inactive background pages freeze after a configurable
+  delay, wake instantly when selected, and visibly dim while asleep; pinned
+  tabs, audio-playing tabs and both Split View panes always stay live
 - **Liquid loading line**: a thin blue hairline runs along the top edge
   while a page loads and sweeps away when it's done
 - **Incognito** (`Ctrl+Shift+N`): a private window with a throwaway
