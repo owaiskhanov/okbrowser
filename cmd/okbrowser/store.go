@@ -226,6 +226,18 @@ func (s *store) AddHistory(url, title string) {
 	s.markDirty("history.json")
 }
 
+// HistoryStamp is a cheap change token for the speed-dial tiles: it moves
+// whenever a visit is recorded or history is cleared. The pre-warmed new
+// tab compares it to decide whether its rendered tiles are still current.
+func (s *store) HistoryStamp() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if n := len(s.history); n > 0 {
+		return int64(n)<<20 ^ s.history[n-1].TS
+	}
+	return 0
+}
+
 // SnapshotHistory returns a copy of the history, newest last.
 func (s *store) SnapshotHistory() []histEntry {
 	s.mu.Lock()

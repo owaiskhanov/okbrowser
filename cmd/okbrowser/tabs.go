@@ -32,6 +32,9 @@ type tab struct {
 	isStart bool
 	errPage bool // the currently shown page is our error page
 	pinned  bool // pinned tabs render as favicon-only pills
+	altTried bool // the apex/www alternate was already retried in this chain
+	warmStart   bool // carries a pre-rendered start page (skip re-rendering)
+	warmPainted bool // that start page has already painted (instant reveal)
 	zoom         float64
 	inactiveSince time.Time
 	sleeping     bool
@@ -82,7 +85,30 @@ func (a *app) newTab(url string, activate bool) *tab {
 	return a.newTabMode(url, activate, false)
 }
 
+// newTabMode creates (or adopts a pre-warmed) tab and shows it.
+//
+// Building a WebView2 controller blocks the UI thread inside a nested
+// message pump, which is what made Ctrl+T feel slow. A spare engine is
+// therefore kept warm in the background: when one is available this
+// function just adopts it, so the tab appears immediately.
 func (a *app) newTabMode(url string, activate, secondary bool) *tab {
+	t := a.takeSpare(secondary)
+	if t == nil {
+		t = a.buildTab(secondary)
+	}
+	if t == nil {
+		return nil
+	}
+	a.attachTab(t, url, activate)
+	// Replace the spare we just consumed, once the UI is idle again.
+	a.scheduleSpareWarm()
+	return t
+}
+
+// buildTab creates a tab's host window and web engine. This is the
+// expensive part (a nested message pump runs until the engine exists), so
+// it is what gets pre-warmed.
+func (a *app) buildTab(secondary bool) *tab {
 	tn, _ := syscall.UTF16PtrFromString(tabHostClassName)
 	a.hostSeq++
 	h := win.CreateWindowEx(0, tn, nil, win.WS_CHILD,
@@ -172,7 +198,12 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 	c.Init(bridgeJS)
 	if secondary { c.Init("window.__okSecondary=true;") }
 	c.Init(barJS)
+	return t
+}
 
+// attachTab adds an already-built tab to the strip, shows it and points it
+// at its first page. Cheap: no engine creation happens here.
+func (a *app) attachTab(t *tab, url string, activate bool) {
 	a.tabs = append(a.tabs, t)
 	win.SetTimer(a.hwnd, 4, 30000, 0) // periodic inactive-tab memory trim
 	if activate || len(a.tabs) == 1 {
@@ -183,6 +214,13 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 		prev := a.active()
 		if prev != nil && prev != t && isWnd(prev.host) {
 			a.beginTabFade(t, prev.host)
+			// A pre-warmed tab has already painted its start page, so its
+			// NavigationCompleted (which normally arms the reveal) fired
+			// before adoption. Arm it here or the fade would sit through
+			// its full ~700ms fallback - the opposite of instant.
+			if t.warmPainted {
+				a.fadeReady = true
+			}
 		}
 		a.switchToTab(len(a.tabs) - 1)
 	} else {
@@ -190,7 +228,17 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 	}
 
 	if url != "" {
+		t.warmStart, t.warmPainted = false, false // start page is about to be replaced
 		a.navigateTab(t, url)
+	} else if t.warmStart {
+		// A pre-warmed spare already rendered the start page: re-rendering
+		// it would throw away the very work that makes Ctrl+T instant.
+		// Just refresh the chrome so the bar shows the new empty tab.
+		t.warmStart, t.warmPainted = false, false
+		if a.isActive(t) {
+			a.syncTitle()
+			a.pushBarState()
+		}
 	} else {
 		a.showStartPage(t)
 	}
@@ -198,7 +246,88 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 	if a.inSelfTest {
 		a.stlog("[selftest] tab %d created (url=%s)", len(a.tabs), url)
 	}
+}
+
+// takeSpare hands over the pre-warmed tab if one is ready and usable.
+//
+// The spare is only valid for a primary tab: a secondary (split) pane is
+// initialised with an extra script before its engine is created, so it
+// cannot be swapped in after the fact.
+func (a *app) takeSpare(secondary bool) *tab {
+	if secondary || a.spare == nil {
+		return nil
+	}
+	t := a.spare
+	a.spare = nil
+	if t.chromium == nil || !isWnd(t.host) {
+		return nil // stale spare: fall back to building one inline
+	}
+	// The speed-dial tiles were rendered when the spare was warmed. If the
+	// user has browsed since, re-render so a new tab never shows a stale
+	// list. The engine already exists, so this is cheap - it is the
+	// controller creation, not the HTML, that used to cost the delay.
+	if t.warmStart && a.spareStamp != a.store.HistoryStamp() {
+		t.chromium.NavigateToString(StartPageHTML(a.store.MostVisited(12), a.store.Settings().Engine))
+		// It still carries the start page (so attachTab must not render a
+		// third time), but that render has not painted yet - so the reveal
+		// waits for first paint as usual instead of showing a blank frame.
+		t.warmPainted = false
+	}
+	if a.inSelfTest {
+		a.stlog("[selftest] adopted pre-warmed tab engine")
+	}
 	return t
+}
+
+// scheduleSpareWarm asks for a background spare to be built once the
+// message queue is drained, so the cost never lands on a keystroke.
+func (a *app) scheduleSpareWarm() {
+	// selfTestMode (not a.inSelfTest) is the right guard: it is set before
+	// the app is built, whereas inSelfTest is only set after the first tab
+	// already exists. The self test counts engines and tabs, so it must
+	// not race a background one.
+	if a.spare != nil || a.warmingSpare || a.hwnd == 0 || selfTestMode {
+		return
+	}
+	a.warmingSpare = true
+	win.SetTimer(a.hwnd, 6, 120, 0)
+}
+
+// warmSpare builds the spare engine. Called from the idle timer, never
+// from an engine callback.
+func (a *app) warmSpare() {
+	a.warmingSpare = false
+	if a.spare != nil || a.hwnd == 0 {
+		return
+	}
+	// Don't hold engines open for an unbounded number of windows/tabs:
+	// one spare is enough to make Ctrl+T instant.
+	if t := a.buildTab(false); t != nil {
+		a.spare = t
+		// Render the start page now so the first paint is already done
+		// when the tab is adopted - this is what removes the blank
+		// flash as well as the delay.
+		t.isStart = true
+		t.title = "New Tab"
+		t.warmStart, t.warmPainted = true, true
+		a.spareStamp = a.store.HistoryStamp()
+		t.chromium.NavigateToString(StartPageHTML(a.store.MostVisited(12), a.store.Settings().Engine))
+	}
+}
+
+// discardSpare tears down an unused pre-warmed engine (on shutdown).
+func (a *app) discardSpare() {
+	t := a.spare
+	a.spare = nil
+	if t == nil {
+		return
+	}
+	if t.chromium != nil {
+		t.chromium.Close()
+	}
+	if isWnd(t.host) {
+		win.DestroyWindow(t.host)
+	}
 }
 
 // switchToTab displays tab i and syncs title and glass-bar state.
@@ -206,7 +335,13 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 // engine callbacks).
 func (a *app) postNewTab(url string) {
 	a.postTask(func() {
-		a.newTab(url, true)
+		t := a.newTab(url, true)
+		// A pre-warmed tab already has the shell script running, so the
+		// address bar can be focused right now instead of waiting out the
+		// 150ms "bar push" timer that exists for engines still booting.
+		if t != nil && url == "" && t.chromium != nil {
+			t.chromium.Eval("window.__okBubbleFocus&&window.__okBubbleFocus()")
+		}
 		a.scheduleBarPush(true)
 	})
 }
@@ -378,6 +513,8 @@ func (a *app) navigateTab(t *tab, raw string) {
 	}
 	t.isStart = false
 	t.errPage = false
+	// A fresh user-initiated navigation earns a fresh apex/www retry.
+	t.altTried = false
 	t.url = u
 	if a.isActive(t) {
 		a.pushBarState()
@@ -681,16 +818,114 @@ func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompleted
 			// 14 = OperationCanceled (user stopped or replaced the
 			// navigation) - not an error worth showing.
 			if code != 0 && code != 14 && t.url != "" {
+				// Many domains only answer on one of apex / www. Retry
+				// the other name once before admitting defeat, exactly
+				// as mainstream browsers do from their address bar.
+				if a.retryAltHost(t, code) {
+					return
+				}
 				a.showErrorPage(t, code)
 				return
 			}
 		}
 	}
+	// A page actually loaded, so this navigation chain is over: give the
+	// next one a fresh apex/www retry. Re-arming here (rather than when a
+	// navigation *starts*) is deliberate - an HTTP redirect raises another
+	// NavigationStarting with the same navigation id, and re-arming there
+	// would let an apex -> www redirect whose target keeps failing retry
+	// forever.
+	t.altTried = false
+
 	a.applyZoomTab(t)
 	a.pushBarState()
 	a.scheduleBarPush(false)
 	a.selftestNavHook(t)
 	t.chromium.Eval(`window.__ok && window.__ok({ t: "nav", u: location.href, d: document.title, f: (function(){try{var l=document.querySelector('link[rel~="shortcut icon"],link[rel~="icon"]');return l&&l.href?l.href:(location.origin+'/favicon.ico')}catch(e){return ''}})() })`)
+}
+
+// hostErrorIsRetryable reports whether a COREWEBVIEW2_WEB_ERROR_STATUS
+// describes a failure to reach or authenticate the *host*, as opposed to a
+// failure of the page itself. Only these are worth retrying on the
+// apex / www alternate: a site whose apex has stale DNS, refuses the
+// connection, times out, or presents a certificate issued only for the
+// "www" name all land here.
+func hostErrorIsRetryable(code uint32) bool {
+	switch code {
+	case 1, // CertificateCommonNameIsIncorrect - cert covers only www
+		2,  // CertificateExpired
+		4,  // CertificateRevoked
+		5,  // CertificateIsInvalid
+		6,  // ServerUnreachable
+		7,  // Timeout
+		9,  // ConnectionAborted
+		10, // ConnectionReset
+		12, // CannotConnect
+		13: // HostNameNotResolved
+		return true
+	}
+	return false
+}
+
+// altRetryTarget returns the URL a failed navigation should be retried on,
+// or "" when it should not be retried at all. Split out from retryAltHost
+// so the whole policy is unit-testable without a live web engine.
+func altRetryTarget(t *tab, code uint32) string {
+	if t == nil || t.altTried || !hostErrorIsRetryable(code) {
+		return ""
+	}
+	return nav.AltHostURL(t.url)
+}
+
+// retryAltHost transparently re-navigates a tab to the apex / www
+// alternate of a URL that just failed to load, and reports whether it did.
+//
+// Sites such as hthecofounder.com publish A records for the apex that no
+// longer serve the site while www.hthecofounder.com works - typing the
+// bare domain simply failed. Every mainstream browser papers over this by
+// retrying the other host, but that logic lives in their address bar;
+// WebView2 has no address bar, so OK Browser owns it.
+//
+// The retry is deliberately conservative: at most one per navigation
+// chain (t.altTried, cleared only when a page actually loads or the user
+// navigates somewhere new - never on a redirect hop, which would let the
+// pair retry each other forever), only for host-level failures, and only
+// when the tab is still alive. AltHostURL is an involution, so the single
+// retry can never ping-pong either.
+func (a *app) retryAltHost(t *tab, code uint32) bool {
+	alt := altRetryTarget(t, code)
+	if alt == "" || t.chromium == nil {
+		return false
+	}
+	t.altTried = true
+	if a.inSelfTest {
+		a.stlog("[selftest] host error %d on %s, retrying %s", code, t.url, alt)
+	}
+	// Navigating from inside the engine's own completion callback is not
+	// safe: hand the retry back to the window-proc context first.
+	a.postTask(func() {
+		if t.chromium == nil || !a.tabAlive(t) {
+			return
+		}
+		t.url = alt
+		t.errPage = false
+		if a.isActive(t) {
+			a.pushBarState()
+		}
+		t.chromium.Navigate(alt)
+	})
+	return true
+}
+
+// tabAlive reports whether t is still one of the app's live tabs - a tab
+// can be closed between posting a task and running it.
+func (a *app) tabAlive(t *tab) bool {
+	for _, x := range a.tabs {
+		if x == t {
+			return true
+		}
+	}
+	return t == a.splitTab && t != nil
 }
 
 // showErrorPage replaces the tab's content with a glass error page that

@@ -1165,7 +1165,16 @@ const barJS = `
   window.__okBar = function (s) {
     S = s; window.__okSplitActive = !!S.v; render(); sync(); stateLive = true;
     root.getElementById('wclose').title = S.v ? 'Close Split View' : 'Close';
-    if (!S.u) { revealBar(false); setOpen(true); if (!stateLive) { input.focus(); input.select(); } }
+    // New Tab: the address bar is the whole point of the page, so it stays
+    // open AND focused - you can type the instant the tab appears. Focus is
+    // re-asserted on every push while the tab is still empty (the engine
+    // steals focus back as the start page paints), but never while the user
+    // is already typing, which would fight the caret.
+    if (!S.u) {
+      revealBar(false);
+      setOpen(true);
+      if (document.activeElement !== input) { input.focus(); input.select(); }
+    }
   };
   window.__okProximityReveal = function () { revealBar(true); };
 

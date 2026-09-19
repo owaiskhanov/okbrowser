@@ -58,7 +58,7 @@ const (
 
 // appVersion is shown in the settings page. Release CI overrides it with
 // -ldflags so every verified executable carries its automatic build version.
-var appVersion = "1.12.2-dev"
+var appVersion = "1.17.0-dev"
 
 // app is the browser window. The entire UI - the Liquid Glass bar with tabs,
 // address field and buttons - is rendered inside the web engine as a frosted
@@ -82,6 +82,15 @@ type app struct {
 	pendingBubbleFocus bool // focus the address bubble after the next bar push
 
 	hostSeq int // child window id sequence
+
+	// spare is a fully built, already-warmed tab kept off-screen so that
+	// Ctrl+T is instant. Creating a WebView2 controller blocks the UI
+	// thread inside a nested message pump for hundreds of milliseconds,
+	// so that cost is paid in idle time instead of under the user's
+	// finger. newTabMode adopts it and warms a replacement.
+	spare        *tab
+	warmingSpare bool  // a spare build is already scheduled/running
+	spareStamp   int64 // store.HistoryStamp() when the spare rendered its tiles
 
 	// lastSpawn throttles popup storms from web pages.
 	lastSpawn time.Time
@@ -285,6 +294,12 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		}
 		if wp == 4 { a.sleepInactiveTabs() }
 		if wp == 5 { a.pollDownloads() }
+		if wp == 6 {
+			// One-shot: build the spare engine that makes the next
+			// Ctrl+T instant.
+			win.KillTimer(a.hwnd, 6)
+			a.warmSpare()
+		}
 		return 0
 
 	case win.WM_DPICHANGED:
@@ -316,6 +331,7 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		return 0
 	case win.WM_DESTROY:
 		a.saveSession()
+		a.discardSpare() // the warm engine is never part of the session
 		if a.store != nil {
 			a.store.Flush()
 		}
