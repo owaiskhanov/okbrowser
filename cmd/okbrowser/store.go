@@ -51,6 +51,7 @@ type Settings struct {
 	RestoreSession bool   `json:"restore"`  // reopen tabs on startup
 	Autofill       bool   `json:"autofill"` // WebView2 password/address autofill
 	SleepMinutes   int    `json:"sleepMin"` // 0 disables sleeping tabs
+	NeverSleep     map[string]bool `json:"neverSleep,omitempty"`
 }
 
 // sessionTab is one tab of a saved session.
@@ -111,6 +112,7 @@ func newStore() *store {
 	if s.permissions == nil { s.permissions = make(map[string]map[string]string) }
 	if !validEngine(s.settings.Engine) { s.settings.Engine = "Google" }
 	if s.settings.SleepMinutes < 0 || s.settings.SleepMinutes > 120 { s.settings.SleepMinutes = 5 }
+	if s.settings.NeverSleep == nil { s.settings.NeverSleep = make(map[string]bool) }
 	return s
 }
 
@@ -478,7 +480,10 @@ func (s *store) ClearPermissions(origin string) {
 func (s *store) Settings() Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.settings
+	out := s.settings
+	out.NeverSleep = make(map[string]bool, len(s.settings.NeverSleep))
+	for origin, value := range s.settings.NeverSleep { out.NeverSleep[origin] = value }
+	return out
 }
 
 // SetSettings saves the settings.

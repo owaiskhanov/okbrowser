@@ -36,6 +36,7 @@ type tab struct {
 	inactiveSince time.Time
 	sleeping     bool
 	audioPlaying bool
+	dirtyForm    bool
 	crashCount   int
 	lastCrash    time.Time
 }
@@ -129,11 +130,12 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 			a.postTask(func() { a.newTab(uri, true) })
 		}
 	}
-	c.DownloadStartingCallback = a.onDownloadStarting
+	c.DownloadStartingCallback = func(args *edge.ICoreWebView2DownloadStartingEventArgs) { a.onDownloadStarting(t, args) }
 	c.ProcessFailedCallback = func(kind edge.CoreWebView2ProcessFailedKind) {
 		a.postTask(func() { a.recoverFailedTab(t, kind) })
 	}
 	c.NavigationStartingCallback = func(_ *edge.ICoreWebView2, args *edge.ICoreWebView2NavigationStartingEventArgs) {
+		t.dirtyForm = false
 		a.onNavStarting(t, args)
 	}
 	c.NavigationCompletedCallback = func(_ *edge.ICoreWebView2, args *edge.ICoreWebView2NavigationCompletedEventArgs) {
@@ -411,16 +413,29 @@ func (a *app) recoverFailedTab(t *tab, kind edge.CoreWebView2ProcessFailedKind) 
 	a.pushBarState()
 }
 
+func (a *app) setTabSleeping(i int, sleep bool) {
+	if i < 0 || i >= len(a.tabs) { return }
+	t := a.tabs[i]
+	if sleep {
+		if t == a.active() || t == a.splitTab || t.audioPlaying || t.dirtyForm || a.hasActiveDownload(t) { return }
+		t.chromium.CallDevToolsProtocol("Page.setWebLifecycleState", `{"state":"frozen"}`)
+	} else { t.chromium.CallDevToolsProtocol("Page.setWebLifecycleState", `{"state":"active"}`) }
+	t.sleeping = sleep; a.pushBarState()
+}
+
 // sleepInactiveTabs freezes background pages after five idle minutes. Pinned
 // tabs and either Split View pane stay live. WebView2 keeps page state in memory
 // and resumes it instantly when selected.
 func (a *app) sleepInactiveTabs() {
-	minutes := a.store.Settings().SleepMinutes
-	if minutes <= 0 { return }
+	settings := a.store.Settings()
+	minutes := settings.SleepMinutes
+	pressure := systemMemoryLoad() >= 88
+	if minutes <= 0 && !pressure { return }
 	now := time.Now()
 	for _, t := range a.tabs {
-		if t == a.active() || t == a.splitTab || t.pinned || t.audioPlaying || t.sleeping || t.inactiveSince.IsZero() { continue }
-		if now.Sub(t.inactiveSince) < time.Duration(minutes)*time.Minute { continue }
+		if t == a.active() || t == a.splitTab || t.pinned || t.audioPlaying || t.dirtyForm || a.hasActiveDownload(t) || t.sleeping || t.inactiveSince.IsZero() { continue }
+		if settings.NeverSleep[permissionOrigin(t.url)] { continue }
+		if !pressure && now.Sub(t.inactiveSince) < time.Duration(minutes)*time.Minute { continue }
 		t.chromium.CallDevToolsProtocol("Page.setWebLifecycleState", `{"state":"frozen"}`)
 		t.sleeping = true
 	}

@@ -40,6 +40,8 @@ window.__ok = function (o) {
   document.addEventListener('play', reportAudio, true);
   document.addEventListener('pause', reportAudio, true);
   document.addEventListener('ended', reportAudio, true);
+  var formDirty=false;
+  document.addEventListener('input',function(e){if(!formDirty && e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)){formDirty=true;window.__ok({t:'form-dirty',a:'1'});}},true);
   document.addEventListener("click", function (e) {
     var a = anchor(e.target);
     if (a && a.target && a.target !== "_self" && !a.hasAttribute("data-ok-engine")) {
@@ -417,6 +419,8 @@ const barJS = `
       '<div class="mrow" id="c-dup">Duplicate</div>' +
       '<div class="mrow" id="c-pin">Pin tab</div>' +
       '<div class="mrow" id="c-split">Open in Split View</div>' +
+      '<div class="mrow" id="c-sleep">Sleep tab</div>' +
+      '<div class="mrow" id="c-never">Never sleep this site</div>' +
       '<div class="mrow" id="c-close">Close tab</div>' +
       '<div class="mrow" id="c-others">Close other tabs</div>' +
     '</div>' +
@@ -661,11 +665,13 @@ const barJS = `
     var pinRow = root.getElementById('c-pin');
     var tab = (S.tabs || [])[idx];
     if (pinRow) pinRow.textContent = (tab && tab.p) ? 'Unpin tab' : 'Pin tab';
+    var sleepRow=root.getElementById('c-sleep');if(sleepRow)sleepRow.textContent=(tab&&tab.s)?'Wake tab':'Sleep tab';
+    var neverRow=root.getElementById('c-never');if(neverRow)neverRow.textContent=(tab&&tab.n)?'Allow this site to sleep':'Never sleep this site';
     ctx.classList.add('open');
     try {
       var iw = window.innerWidth || 900, ih = window.innerHeight || 700;
       ctx.style.left = Math.max(6, Math.min(x, iw - 240)) + 'px';
-      ctx.style.top = Math.max(6, Math.min(y, ih - 230)) + 'px';
+      ctx.style.top = Math.max(6, Math.min(y, ih - 310)) + 'px';
     } catch (e) {}
   }
   function ctxAction(id, act) {
@@ -683,6 +689,8 @@ const barJS = `
   ctxAction('c-dup', 'dup');
   ctxAction('c-pin', 'pin');
   ctxAction('c-split', 'tab-split');
+  ctxAction('c-sleep', 'sleep');
+  ctxAction('c-never', 'never-sleep');
   ctxAction('c-close', 'close');
   ctxAction('c-others', 'close-others');
   document.addEventListener('mousedown', function (e) {
@@ -1157,6 +1165,7 @@ type barTab struct {
 	P bool   `json:"p"` // pinned (favicon-only pill)
 	S bool   `json:"s"` // sleeping to save memory
 	A bool   `json:"a"` // currently playing audio
+	N bool   `json:"n"` // site excluded from sleeping
 }
 
 // barState is the full state pushed to the active tab's shell UI.
@@ -1196,7 +1205,7 @@ func (a *app) pushBarState() {
 		if title == "" {
 			title = "New Tab"
 		}
-		tabs[i] = barTab{T: title, U: tb.url, F: tb.favicon, P: tb.pinned, S: tb.sleeping, A: tb.audioPlaying}
+		tabs[i] = barTab{T: title, U: tb.url, F: tb.favicon, P: tb.pinned, S: tb.sleeping, A: tb.audioPlaying, N: a.store.Settings().NeverSleep[permissionOrigin(tb.url)]}
 	}
 	push := func(view *tab, idx int) {
 		if view == nil || view.chromium == nil {
@@ -1322,6 +1331,9 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			a.stClickTab, a.stClickX, a.stClickY, a.stClickTicks = t, m.X, m.Y, 0
 			win.SetTimer(a.hwnd, 3, 50, 0)
 		}
+
+	case "form-dirty":
+		t.dirtyForm = m.A == "1"
 
 	case "pane-focus":
 		if t == a.active() || t == a.splitTab { a.focusedTab = t; a.pushBarState() }
@@ -1512,6 +1524,21 @@ func (a *app) onWebMessage(t *tab, msg string) {
 				if i >= 0 && i < len(a.tabs) {
 					a.tabs[i].pinned = !a.tabs[i].pinned
 					a.pushBarState()
+				}
+			})
+			return
+		case "sleep":
+			i := m.I
+			a.postTask(func() { if i >= 0 && i < len(a.tabs) { a.setTabSleeping(i, !a.tabs[i].sleeping) } })
+			return
+		case "never-sleep":
+			i := m.I
+			a.postTask(func() {
+				if i >= 0 && i < len(a.tabs) {
+					st := a.store.Settings(); origin := permissionOrigin(a.tabs[i].url)
+					if st.NeverSleep == nil { st.NeverSleep = make(map[string]bool) }
+					st.NeverSleep[origin] = !st.NeverSleep[origin]; if !st.NeverSleep[origin] { delete(st.NeverSleep, origin) }
+					a.store.SetSettings(st); a.pushBarState()
 				}
 			})
 			return

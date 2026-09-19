@@ -14,6 +14,7 @@ import (
 
 type managedDownload struct {
 	op *edge.ICoreWebView2DownloadOperation
+	owner *tab
 	path, source, mime string
 	received, total, lastBytes int64
 	state, reason uint32
@@ -23,11 +24,11 @@ type managedDownload struct {
 	paused bool
 }
 
-func (a *app) onDownloadStarting(args *edge.ICoreWebView2DownloadStartingEventArgs) {
+func (a *app) onDownloadStarting(owner *tab, args *edge.ICoreWebView2DownloadStartingEventArgs) {
 	op := args.GetDownloadOperation()
 	if op == nil { return }
 	op.AddRef()
-	d := &managedDownload{op:op, path:args.GetResultFilePath(), source:op.GetURI(), mime:op.GetMimeType(), lastPoll:time.Now()}
+	d := &managedDownload{op:op, owner:owner, path:args.GetResultFilePath(), source:op.GetURI(), mime:op.GetMimeType(), lastPoll:time.Now()}
 	a.downloads = append(a.downloads, d)
 	win.SetTimer(a.hwnd, 5, 500, 0)
 }
@@ -70,3 +71,8 @@ func (a *app) downloadAction(path, action string) bool {
 }
 
 func sourceHost(raw string) string { u, _ := url.Parse(raw); return u.Hostname() }
+
+func (a *app) hasActiveDownload(t *tab) bool {
+	for _, d := range a.downloads { if d.owner == t && d.state == 0 { return true } }
+	return false
+}

@@ -83,7 +83,9 @@ just content:
   never reads or stores credential values itself
 - **Sleeping tabs**: inactive background pages freeze after a configurable
   delay, wake instantly when selected, and visibly dim while asleep; pinned
-  tabs, audio-playing tabs and both Split View panes always stay live
+  tabs, audio-playing tabs, tabs with unsaved forms or active downloads, and
+  both Split View panes stay live. Right-click supports Sleep now and Never
+  sleep this site; severe Windows memory pressure triggers early sleeping
 - **Crash isolation and recovery**: renderer, GPU and browser-process failures
   are detected per tab, logged locally and automatically reloaded; repeated
   crashes stop safely on a recovery page instead of entering a reload loop
