@@ -13,7 +13,10 @@ A **very light and very fast** web browser for **Windows 10 and later**.
 
 Download `OKBrowser.exe` from the [Releases](../../releases) page, or build it
 yourself in one command (see below). Every release is built **and smoke-tested
-on a real Windows machine** by CI before it is published.
+on a real Windows machine** by CI before it is published. Releases include a
+SHA-256 checksum and GitHub provenance; when the repository's Authenticode
+secrets are configured, CI also signs, timestamps and verifies the EXE before
+smoke testing and publication (see [`docs/AUTHENTICODE.md`](docs/AUTHENTICODE.md)).
 
 ## Requirements
 

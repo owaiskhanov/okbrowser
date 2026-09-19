@@ -77,6 +77,38 @@ jobs:
           go build -trimpath -ldflags "-s -w -H windowsgui -X main.appVersion=$env:OK_VERSION" -o dist/OKBrowser.exe ./cmd/okbrowser
           Get-Item dist\OKBrowser.exe | Select-Object Name, Length | Format-List
 
+      - name: Authenticode sign and timestamp
+        if: env.WINDOWS_CERTIFICATE_BASE64 != '' && env.WINDOWS_CERTIFICATE_PASSWORD != ''
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pfx = Join-Path $env:RUNNER_TEMP 'okbrowser-signing.pfx'
+          try {
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe -Recurse |
+              Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+              Sort-Object FullName -Descending | Select-Object -First 1
+            if (-not $signtool) { throw 'signtool.exe was not found on the Windows runner' }
+            & $signtool.FullName sign /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 /f $pfx /p $env:WINDOWS_CERTIFICATE_PASSWORD dist\OKBrowser.exe
+            if ($LASTEXITCODE -ne 0) { throw "signtool sign failed with exit code $LASTEXITCODE" }
+            & $signtool.FullName verify /pa /all /v dist\OKBrowser.exe
+            if ($LASTEXITCODE -ne 0) { throw "Authenticode verification failed with exit code $LASTEXITCODE" }
+            Get-AuthenticodeSignature dist\OKBrowser.exe | Format-List Status,StatusMessage,SignerCertificate,TimeStamperCertificate
+          } finally {
+            Remove-Item $pfx -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Report unsigned build
+        if: env.WINDOWS_CERTIFICATE_BASE64 == '' || env.WINDOWS_CERTIFICATE_PASSWORD == ''
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: Write-Host 'Authenticode secrets are not configured; publishing the verified but unsigned build.'
+
       - name: Smoke test on real Windows
         shell: pwsh
         run: ./scripts/smoke-test.ps1 -Exe dist/OKBrowser.exe
