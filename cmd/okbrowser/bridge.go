@@ -1653,7 +1653,7 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			}
 			return
 			case "updates":
-			openExternal("https://github.com/owaiskhanov/okbrowser/releases/latest")
+			a.checkForUpdates()
 			return
 		case "dl-open": // downloads page: open a validated file
 			if isDownloadPath(m.U) { openPath(m.U) }

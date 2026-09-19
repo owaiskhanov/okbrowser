@@ -118,6 +118,10 @@ just content:
   focus, reduced-motion and forced-colors support, plus optional larger controls
 - High-DPI aware (crisp on any monitor, follows the window between screens); the bar reflows correctly at **any window size**
 - Persistent profile: logins and cookies are kept in `%LOCALAPPDATA%\OKBrowser`
+- **Verified in-app updates**: Settings checks GitHub for a newer release,
+  asks before downloading, verifies the published SHA-256 checksum and PE
+  header, asks again before restart, then safely replaces the portable EXE;
+  failures leave the current executable untouched
 - Proper Windows app icon, version info and GUI subsystem (no console flash)
 
 ### Keyboard shortcuts
