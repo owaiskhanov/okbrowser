@@ -56,8 +56,9 @@ const (
 	cmdIncognito   = 242
 )
 
-// appVersion is shown in the settings page.
-const appVersion = "1.12.1"
+// appVersion is shown in the settings page. Release CI overrides it with
+// -ldflags so every verified executable carries its automatic build version.
+var appVersion = "1.12.2-dev"
 
 // app is the browser window. The entire UI - the Liquid Glass bar with tabs,
 // address field and buttons - is rendered inside the web engine as a frosted

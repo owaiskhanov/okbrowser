@@ -12,6 +12,9 @@ on:
 permissions:
   contents: write
 
+env:
+  VERSION_BASE: "1.12.2"
+
 jobs:
   windows:
     strategy:
@@ -47,13 +50,29 @@ jobs:
         shell: pwsh
         run: node scripts/test-bar.js
 
+      - name: Stamp automatic build version
+        shell: pwsh
+        run: |
+          $version = "$env:VERSION_BASE.${{ github.run_number }}"
+          $parts = $env:VERSION_BASE.Split('.')
+          $info = Get-Content res/versioninfo.json -Raw | ConvertFrom-Json
+          $info.FixedFileInfo.FileVersion.Major = [int]$parts[0]
+          $info.FixedFileInfo.FileVersion.Minor = [int]$parts[1]
+          $info.FixedFileInfo.FileVersion.Patch = [int]$parts[2]
+          $info.FixedFileInfo.FileVersion.Build = [int]${{ github.run_number }}
+          $info.FixedFileInfo.ProductVersion = $info.FixedFileInfo.FileVersion
+          $info.StringFileInfo.FileVersion = $version
+          $info.StringFileInfo.ProductVersion = $version
+          $info | ConvertTo-Json -Depth 10 | Set-Content res/versioninfo.json
+          "OK_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Generate version resource
         working-directory: res
         run: go run github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest -o ../cmd/okbrowser/resource.syso versioninfo.json
 
       - name: Build
         run: |
-          go build -trimpath -ldflags "-s -w -H windowsgui" -o dist/OKBrowser.exe ./cmd/okbrowser
+          go build -trimpath -ldflags "-s -w -H windowsgui -X main.appVersion=$env:OK_VERSION" -o dist/OKBrowser.exe ./cmd/okbrowser
           Get-Item dist\OKBrowser.exe | Select-Object Name, Length | Format-List
 
       - name: Smoke test on real Windows
@@ -92,11 +111,10 @@ jobs:
           echo "could not publish back to branch (continuing without failing the build)"
           exit 0
 
-  # Publishes a GitHub release containing the Windows-verified exe.
-  # Triggers: workflow_dispatch with release=true, or a push whose commit
-  # message contains "[release]".
+  # Every successful source push publishes its Windows-verified executable.
+  # The workflow run number provides a monotonic fourth version component.
   release:
-    if: needs.windows.result == 'success' && ((github.event_name == 'workflow_dispatch' && inputs.release) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release]')))
+    if: needs.windows.result == 'success' && (github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[ci skip]'))
     needs: windows
     runs-on: ubuntu-latest
     steps:
@@ -107,25 +125,23 @@ jobs:
           name: OKBrowser-windows-amd64-win2022
           path: dist
 
-      - name: Create or update release
+      - name: Publish automatic version
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cat > notes.md <<'EOF'
-          **OK Browser 1.12.2** — a very light and very fast web browser for Windows 10 and later.
+          VERSION="${VERSION_BASE}.${GITHUB_RUN_NUMBER}"
+          TAG="v${VERSION}"
+          cat > notes.md <<EOF
+          **OK Browser ${VERSION}** — automatically built and verified from commit ${GITHUB_SHA:0:7}.
 
-          - Single **~4 MB** `OKBrowser.exe`, no installer needed
-          - Renders with the system's Microsoft Edge WebView2 (Chromium) engine
-          - Tabs and minimize/maximize/close controls now glide into view as the cursor approaches the top edge, with a wider magnetic range for fast upward movement
-          - Verified by CI on real Windows Server 2022 (Windows 10 era) and Server 2025 (Windows 11 era): window, title, engine and stability checks pass
+          - Single ~4 MB portable OKBrowser.exe
+          - Built and smoke-tested on Windows 2022 and Windows latest
+          - Includes the latest browser UX and stability changes
 
-          **Requirements:** Windows 10 (1607+) or Windows 11, 64-bit. The WebView2 Runtime is pre-installed on Windows 11 and updated Windows 10; if missing, OK Browser offers to open Microsoft's official download page.
+          **Requirements:** Windows 10 (1607+) or Windows 11, 64-bit, with Microsoft Edge WebView2 Runtime.
           EOF
-          if gh release view v1.12.2 >/dev/null 2>&1; then
-            gh release upload v1.12.2 dist/OKBrowser.exe --clobber
-          else
-            gh release create "v1.12.2" dist/OKBrowser.exe \
-              --title "OK Browser 1.12.2" \
-              --notes-file notes.md \
-              --target "$GITHUB_SHA"
-          fi
+          gh release create "$TAG" dist/OKBrowser.exe \
+            --title "OK Browser ${VERSION}" \
+            --notes-file notes.md \
+            --target "$GITHUB_SHA" \
+            --latest
