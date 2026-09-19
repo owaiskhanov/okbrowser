@@ -29,6 +29,7 @@ type tab struct {
 	title   string
 	url     string
 	favicon string // page-reported icon URL ('' = letter avatar)
+	tint    string // Ambient Glass: page's dominant color as "r,g,b" ('' = none)
 	isStart bool
 	errPage bool // the currently shown page is our error page
 	pinned  bool // pinned tabs render as favicon-only pills
@@ -719,7 +720,7 @@ func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompleted
 	a.pushBarState()
 	a.scheduleBarPush(false)
 	a.selftestNavHook(t)
-	t.chromium.Eval(`window.__ok && window.__ok({ t: "nav", u: location.href, d: document.title, f: (function(){try{var l=document.querySelector('link[rel~="shortcut icon"],link[rel~="icon"]');return l&&l.href?l.href:(location.origin+'/favicon.ico')}catch(e){return ''}})() })`)
+	t.chromium.Eval(`window.__ok && window.__ok({ t: "nav", u: location.href, d: document.title, a: (window.__okTint?window.__okTint():''), f: (function(){try{var l=document.querySelector('link[rel~="shortcut icon"],link[rel~="icon"]');return l&&l.href?l.href:(location.origin+'/favicon.ico')}catch(e){return ''}})() })`)
 }
 
 // showErrorPage replaces the tab's content with a glass error page that

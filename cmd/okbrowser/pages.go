@@ -318,6 +318,12 @@ func SettingsHTML(s Settings, version string) string {
 	}
 	b.WriteString(`</select></div></div>`)
 
+	// Appearance
+	b.WriteString(`<div style="font-size:12px;font-weight:650;opacity:.5;margin:22px 4px 8px;text-transform:uppercase;letter-spacing:.06em">Appearance</div><div class="card">`)
+	ambient := ""
+	if s.Ambient { ambient = " checked" }
+	b.WriteString(`<div class="row"><div class="meta"><div class="tt">Ambient Glass</div><div class="uu">Tint the browser glass with each page's dominant color</div></div><input id="ambient" type="checkbox"` + ambient + `></div></div>`)
+
 	// Privacy & content blocking
 	b.WriteString(`<div style="font-size:12px;font-weight:650;opacity:.5;margin:22px 4px 8px;text-transform:uppercase;letter-spacing:.06em">Privacy & content blocking</div><div class="card">`)
 	adblock := ""
@@ -534,6 +540,8 @@ const settingsPageJS = `(function(){
   if(af) af.addEventListener('change',function(){post({t:'set',m:'autofill',u:this.checked?'1':'0'});toast(this.checked?'Autofill enabled':'Autofill disabled');});
   var sl=document.getElementById('sleep');
   if(sl) sl.addEventListener('change',function(){post({t:'set',m:'sleep',u:this.value});toast(this.value==='0'?'Sleeping tabs disabled':'Tabs sleep after '+this.value+' minutes');});
+  var am=document.getElementById('ambient');
+  if(am) am.addEventListener('change',function(){post({t:'set',m:'ambient',u:this.checked?'1':'0'});toast(this.checked?'Ambient Glass on':'Ambient Glass off');});
   var ab=document.getElementById('adblock');
   if(ab) ab.addEventListener('change',function(){post({t:'set',m:'adblock',u:this.checked?'1':'0'});toast(this.checked?'Ad & tracker blocking on':'Ad & tracker blocking off');});
   var ss=document.getElementById('searchsuggest');

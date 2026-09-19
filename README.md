@@ -46,6 +46,15 @@ just content:
   `WM_NCCALCSIZE`, DWM shadow kept alive) — CI hit-tests the real window in
   both states to prove no native caption or button area exists, and
   verifies the bar stays flush with the top after maximize → restore
+- **Ambient Glass**: the bar, address bubble, active tab, window capsule,
+  menus and the loading hairline gently take on the **dominant color of the
+  page you're viewing**, sampled from its `theme-color`, header or background.
+  Each navigation is a liquid color shift, so the chrome feels like part of
+  the site. Blank, white or black pages keep the plain neutral glass, and the
+  tint layers at low opacity over both the light and dark frost so text stays
+  legible. It honors **prefers-reduced-motion** (instant, no animated ramp)
+  and is disabled entirely under **forced-colors / high-contrast**. On by
+  default; toggle it in **Settings → Appearance → Ambient Glass**
 - **The address bar is a tiny glass bubble right beside the `+` button** in
   the top bar. It stays out of sight; hover or click it (or press `Ctrl+L`)
   and it liquidly expands in place into the full address capsule with back /

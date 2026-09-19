@@ -14,7 +14,8 @@ const js = m[1];
 
 class FakeElement {
   constructor(tag) {
-    this.tagName = tag; this.children = []; this.style = { cssText: '', display: '' };
+    this.tagName = tag; this.children = [];
+    this.style = { cssText: '', display: '', _props: {}, setProperty(k, v) { this._props[k] = v; }, getPropertyValue(k) { return this._props[k] || ''; }, removeProperty(k) { delete this._props[k]; } };
     this._html = ''; this._text = ''; this.className = ''; this.disabled = false;
     this._listeners = {}; this.attributes = {}; this.id = '';
   }
@@ -80,6 +81,8 @@ let createdHost = null;
 const docListeners = {};
 global.setInterval = () => 0;
 global.clearInterval = () => {};
+// Ambient Glass reads these media queries; default to "no preference".
+global.matchMedia = q => ({ matches: false, media: q, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} });
 const win = { __ok: o => sent.push(o), __okBarInstalled: false };
 win.top = win; // act as the top frame
 global.window = win;
@@ -181,6 +184,19 @@ assert.ok(findEl.classList.contains('open'), '__okFind opens the find bar');
 assert.ok(shadow.getElementById('fq').focused, 'find input focused');
 shadow.getElementById('fq').dispatch('keydown', { key: 'Escape', preventDefault() {} });
 assert.ok(!findEl.classList.contains('open'), 'Esc closes the find bar');
+
+// --- Ambient Glass: the chrome tints itself with the page's color ---
+// A page color with the feature on tints the host and sets the accent property.
+win.__okBar({ tabs: [{ t: 'A' }], a: 0, u: 'https://example.com/', b: false, f: false, m: false, c: '30,120,220', am: true });
+assert.ok(createdHost.classList.contains('ambient'), 'ambient class added when a tint is present');
+assert.ok(createdHost.classList.contains('ambient-anim'), 'ambient-anim added when motion is allowed');
+assert.strictEqual(createdHost.style.getPropertyValue('--ok-accent'), '30,120,220', 'accent custom property set to the page color');
+// A neutral page (no usable color) keeps the plain glass.
+win.__okBar({ tabs: [{ t: 'A' }], a: 0, u: 'https://example.com/', b: false, f: false, m: false, c: '', am: true });
+assert.ok(!createdHost.classList.contains('ambient'), 'ambient class removed for a neutral page');
+// The setting off disables the tint even when a color is present.
+win.__okBar({ tabs: [{ t: 'A' }], a: 0, u: 'https://example.com/', b: false, f: false, m: false, c: '30,120,220', am: false });
+assert.ok(!createdHost.classList.contains('ambient'), 'ambient stays off when the setting is disabled');
 
 // --- deferred mounting: document-start before <html> exists ---
 {

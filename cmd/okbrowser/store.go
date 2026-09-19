@@ -56,6 +56,7 @@ type Settings struct {
 	LargeControls  bool `json:"largeControls"`
 	AdBlock        bool `json:"adblock"` // block ad/tracker network requests
 	SearchSuggest  bool `json:"searchSuggest"` // live search-engine autocomplete
+	Ambient        bool `json:"ambient"` // Ambient Glass: tint the UI with each page's color
 }
 
 // sessionTab is one tab of a saved session.
@@ -107,6 +108,7 @@ func newStore() *store {
 			SleepMinutes:   5,
 			AdBlock:        true,
 			SearchSuggest:  true,
+			Ambient:        true,
 		},
 		permissions: make(map[string]map[string]string),
 		favicons: make(map[string]string),
