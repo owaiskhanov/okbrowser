@@ -1,6 +1,9 @@
 package nav
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParse(t *testing.T) {
 	cases := []struct {
@@ -79,6 +82,21 @@ func TestAltHostURL(t *testing.T) {
 		// Deeper subdomains are left alone apart from the www label.
 		{"https://api.example.com/x", "https://www.api.example.com/x"},
 
+		// Punycode IDNs are plain ASCII, so they retry normally - this
+		// is the form the engine actually navigates with.
+		{"https://xn--mnchen-3ya.de/x", "https://www.xn--mnchen-3ya.de/x"},
+		{"https://www.xn--h2brj9c.xn--h2brj4f5a/", "https://xn--h2brj9c.xn--h2brj4f5a/"},
+
+		// Hosts the URL encoder would rewrite are refused outright: a
+		// retry must differ from the original ONLY in the host label,
+		// never in percent-escaping (which would never reach a fixed
+		// point). No retry is a safe no-op; a mangled URL is not.
+		{"https://münchen.de/x", ""},
+		{"https://a..b/x", ""},
+		{"https://-example.com/x", ""},
+		{"https://example-.com/x", ""},
+		{"https://exa mple.com/x", ""},
+
 		// No sensible alternate exists.
 		{"https://localhost:3000/x", ""},
 		{"http://127.0.0.1:8080/", ""},
@@ -98,11 +116,12 @@ func TestAltHostURL(t *testing.T) {
 }
 
 // TestAltHostURLIsAnInvolution checks the retry cannot ping-pong: applying
-// it twice must return the original URL, so one retry is always terminal.
+// it twice returns the original URL, so one retry is always terminal.
 func TestAltHostURLIsAnInvolution(t *testing.T) {
 	for _, in := range []string{
 		"https://hthecofounder.com/", "https://example.com/x?y=1",
 		"https://www.example.com/x", "http://example.com:8080/",
+		"https://user:pw@example.com/x", "https://xn--mnchen-3ya.de/x",
 	} {
 		alt := AltHostURL(in)
 		if alt == "" {
@@ -110,6 +129,31 @@ func TestAltHostURLIsAnInvolution(t *testing.T) {
 		}
 		if back := AltHostURL(alt); back != in {
 			t.Errorf("AltHostURL(AltHostURL(%q)) = %q, want %q", in, back, in)
+		}
+	}
+}
+
+// TestAltHostURLNeverMutatesBeyondTheHost is the property that actually
+// keeps the retry terminating: one hop must change the URL, and the hop
+// back must restore it exactly apart from host-case normalization. A URL
+// that kept changing (e.g. gaining percent-escapes) could be retried
+// forever. Mixed-case hosts are normalized, hence the case-insensitive
+// comparison.
+func TestAltHostURLNeverMutatesBeyondTheHost(t *testing.T) {
+	for _, in := range []string{
+		"https://hthecofounder.com/", "http://A.Example.COM/Path?Q=1#F",
+		"https://WWW.Example.com/", "http://example.com:8080/",
+	} {
+		a1 := AltHostURL(in)
+		if a1 == "" || strings.EqualFold(a1, in) {
+			t.Fatalf("AltHostURL(%q) = %q: hop must change the host", in, a1)
+		}
+		a2 := AltHostURL(a1)
+		if !strings.EqualFold(a2, in) {
+			t.Fatalf("%q -> %q -> %q: second hop must return to the first host", in, a1, a2)
+		}
+		if a3 := AltHostURL(a2); !strings.EqualFold(a3, a1) {
+			t.Fatalf("%q -> %q -> %q -> %q: no fixed point", in, a1, a2, a3)
 		}
 	}
 }

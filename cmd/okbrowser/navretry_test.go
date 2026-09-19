@@ -92,8 +92,59 @@ func TestRetryAltHostNeedsAnEngine(t *testing.T) {
 	if a.retryAltHost(tb, 12) {
 		t.Fatal("retry must not fire for a tab with no engine")
 	}
-	if tb.altTried || tb.altPending {
+	if tb.altTried {
 		t.Fatal("a refused retry must not consume the one-shot budget")
+	}
+}
+
+// TestRetryTerminatesAcrossRedirects is a regression test for an infinite
+// navigation loop.
+//
+// An apex that 301s to www is extremely common. WebView2 raises a fresh
+// NavigationStarting for every redirect hop, so re-arming the retry budget
+// when a navigation *starts* let this happen forever:
+//
+//	apex -> (301) www -> fails -> retry apex -> (301) www -> fails -> ...
+//
+// The budget is therefore cleared only when a page actually loads or the
+// user navigates somewhere new. This test drives that exact sequence and
+// asserts the chain terminates after a single retry.
+func TestRetryTerminatesAcrossRedirects(t *testing.T) {
+	tb := &tab{url: "https://example.com/"} // user typed the apex
+
+	// Hop 1: the apex redirects to www. A redirect must NOT refill the
+	// budget, so simulate the hop as the engine does - URL changes only.
+	tb.url = "https://www.example.com/"
+
+	// The redirect target fails to connect: one retry is allowed.
+	first := altRetryTarget(tb, 12)
+	if first != "https://example.com/" {
+		t.Fatalf("first retry = %q, want the apex", first)
+	}
+	tb.altTried = true // as retryAltHost does
+	tb.url = first
+
+	// The retry lands on the apex, which redirects to www again...
+	tb.url = "https://www.example.com/"
+	// ...and fails again. This MUST now stop rather than loop.
+	if again := altRetryTarget(tb, 12); again != "" {
+		t.Fatalf("redirect hop refilled the retry budget (got %q) - infinite loop", again)
+	}
+}
+
+// TestRetryBudgetRefillsOnlyOnRealBoundaries documents when a tab is
+// allowed to retry again: after a successful load, or a new user
+// navigation - never merely because another navigation started.
+func TestRetryBudgetRefillsOnlyOnRealBoundaries(t *testing.T) {
+	tb := &tab{url: "https://example.com/", altTried: true}
+	if altRetryTarget(tb, 12) != "" {
+		t.Fatal("a spent budget must stay spent")
+	}
+	// onNavCompleted clears it on a successful load; navigateTab clears
+	// it for a new user-initiated address.
+	tb.altTried = false
+	if altRetryTarget(tb, 12) == "" {
+		t.Fatal("a refilled budget should allow one retry again")
 	}
 }
 

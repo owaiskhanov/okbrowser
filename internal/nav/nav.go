@@ -136,7 +136,7 @@ func AltHostURL(rawURL string) string {
 	if host == "" || host == "localhost" || strings.HasSuffix(host, ".localhost") {
 		return ""
 	}
-	if net.ParseIP(host) != nil || !strings.Contains(host, ".") {
+	if net.ParseIP(host) != nil || !isDomainName(host) {
 		return ""
 	}
 
@@ -158,6 +158,36 @@ func AltHostURL(rawURL string) string {
 		u.Host = alt
 	}
 	return u.String()
+}
+
+// isDomainName reports whether host is a plain multi-label domain name
+// made only of characters that survive a URL round-trip unchanged.
+//
+// This is what keeps the apex/www retry safe. Anything the URL encoder
+// would rewrite - raw non-ASCII, spaces, empty labels, stray percent
+// escapes - is rejected outright, so the retry can only ever produce a
+// URL that differs from the original in the host label and nothing else.
+// (Punycode "xn--" hosts are plain ASCII and pass normally.)
+func isDomainName(host string) bool {
+	if len(host) > 253 || !strings.Contains(host, ".") {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "" || len(label) > 63 {
+			return false // empty label: "a..b", ".x", "x."
+		}
+		if label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			c := label[i]
+			isAlnum := (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+			if !isAlnum && c != '-' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // isIPv6Host reports whether host is a bracketed IPv6 literal,

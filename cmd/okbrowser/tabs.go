@@ -32,8 +32,7 @@ type tab struct {
 	isStart bool
 	errPage bool // the currently shown page is our error page
 	pinned  bool // pinned tabs render as favicon-only pills
-	altTried   bool // the apex/www alternate was already retried in this chain
-	altPending bool // the next navigation to start is that automatic retry
+	altTried bool // the apex/www alternate was already retried in this chain
 	zoom         float64
 	inactiveSince time.Time
 	sleeping     bool
@@ -381,7 +380,7 @@ func (a *app) navigateTab(t *tab, raw string) {
 	t.isStart = false
 	t.errPage = false
 	// A fresh user-initiated navigation earns a fresh apex/www retry.
-	t.altTried, t.altPending = false, false
+	t.altTried = false
 	t.url = u
 	if a.isActive(t) {
 		a.pushBarState()
@@ -660,14 +659,6 @@ func (a *app) onNavStarting(t *tab, args *edge.ICoreWebView2NavigationStartingEv
 	t.url = uri
 	t.isStart = false
 	t.errPage = false
-	// Every navigation the engine starts on its own behalf (a link click,
-	// a redirect, a form post) is a new address that deserves its own
-	// apex/www retry. The one exception is the retry we just scheduled.
-	if t.altPending {
-		t.altPending = false
-	} else {
-		t.altTried = false
-	}
 	if a.isActive(t) {
 		a.pushBarState()
 		a.execActive("window.__okLoad&&window.__okLoad(true)")
@@ -704,6 +695,14 @@ func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompleted
 			}
 		}
 	}
+	// A page actually loaded, so this navigation chain is over: give the
+	// next one a fresh apex/www retry. Re-arming here (rather than when a
+	// navigation *starts*) is deliberate - an HTTP redirect raises another
+	// NavigationStarting with the same navigation id, and re-arming there
+	// would let an apex -> www redirect whose target keeps failing retry
+	// forever.
+	t.altTried = false
+
 	a.applyZoomTab(t)
 	a.pushBarState()
 	a.scheduleBarPush(false)
@@ -754,15 +753,17 @@ func altRetryTarget(t *tab, code uint32) string {
 // WebView2 has no address bar, so OK Browser owns it.
 //
 // The retry is deliberately conservative: at most one per navigation
-// (tracked by t.altTried, and AltHostURL is an involution so the retry can
-// never ping-pong), only for host-level failures, and only when the tab is
-// still alive.
+// chain (t.altTried, cleared only when a page actually loads or the user
+// navigates somewhere new - never on a redirect hop, which would let the
+// pair retry each other forever), only for host-level failures, and only
+// when the tab is still alive. AltHostURL is an involution, so the single
+// retry can never ping-pong either.
 func (a *app) retryAltHost(t *tab, code uint32) bool {
 	alt := altRetryTarget(t, code)
 	if alt == "" || t.chromium == nil {
 		return false
 	}
-	t.altTried, t.altPending = true, true
+	t.altTried = true
 	if a.inSelfTest {
 		a.stlog("[selftest] host error %d on %s, retrying %s", code, t.url, alt)
 	}
