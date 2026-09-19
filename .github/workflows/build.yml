@@ -213,12 +213,13 @@ jobs:
         run: |
           UNSIGNED=mobile/build/outputs/apk/release/mobile-release-unsigned.apk
           INSTALLABLE=mobile/build/outputs/apk/debug/mobile-debug.apk
-          test -f "$UNSIGNED" && test -f "$INSTALLABLE"
-          if apksigner verify "$UNSIGNED"; then
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -n "$APKSIGNER" && test -f "$UNSIGNED" && test -f "$INSTALLABLE"
+          if "$APKSIGNER" verify "$UNSIGNED"; then
             echo "Release APK unexpectedly contains a valid signature" >&2
             exit 1
           fi
-          apksigner verify --verbose --print-certs "$INSTALLABLE"
+          "$APKSIGNER" verify --verbose --print-certs "$INSTALLABLE"
           echo "Verified unsigned archival APK and signed installable APK"
 
       - name: Upload APKs beside the Windows executable
