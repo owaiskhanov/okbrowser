@@ -32,6 +32,8 @@ type tab struct {
 	isStart bool
 	errPage bool // the currently shown page is our error page
 	pinned  bool // pinned tabs render as favicon-only pills
+	altTried   bool // the apex/www alternate was already retried in this chain
+	altPending bool // the next navigation to start is that automatic retry
 	zoom         float64
 	inactiveSince time.Time
 	sleeping     bool
@@ -378,6 +380,8 @@ func (a *app) navigateTab(t *tab, raw string) {
 	}
 	t.isStart = false
 	t.errPage = false
+	// A fresh user-initiated navigation earns a fresh apex/www retry.
+	t.altTried, t.altPending = false, false
 	t.url = u
 	if a.isActive(t) {
 		a.pushBarState()
@@ -656,6 +660,14 @@ func (a *app) onNavStarting(t *tab, args *edge.ICoreWebView2NavigationStartingEv
 	t.url = uri
 	t.isStart = false
 	t.errPage = false
+	// Every navigation the engine starts on its own behalf (a link click,
+	// a redirect, a form post) is a new address that deserves its own
+	// apex/www retry. The one exception is the retry we just scheduled.
+	if t.altPending {
+		t.altPending = false
+	} else {
+		t.altTried = false
+	}
 	if a.isActive(t) {
 		a.pushBarState()
 		a.execActive("window.__okLoad&&window.__okLoad(true)")
@@ -681,6 +693,12 @@ func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompleted
 			// 14 = OperationCanceled (user stopped or replaced the
 			// navigation) - not an error worth showing.
 			if code != 0 && code != 14 && t.url != "" {
+				// Many domains only answer on one of apex / www. Retry
+				// the other name once before admitting defeat, exactly
+				// as mainstream browsers do from their address bar.
+				if a.retryAltHost(t, code) {
+					return
+				}
 				a.showErrorPage(t, code)
 				return
 			}
@@ -691,6 +709,88 @@ func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompleted
 	a.scheduleBarPush(false)
 	a.selftestNavHook(t)
 	t.chromium.Eval(`window.__ok && window.__ok({ t: "nav", u: location.href, d: document.title, f: (function(){try{var l=document.querySelector('link[rel~="shortcut icon"],link[rel~="icon"]');return l&&l.href?l.href:(location.origin+'/favicon.ico')}catch(e){return ''}})() })`)
+}
+
+// hostErrorIsRetryable reports whether a COREWEBVIEW2_WEB_ERROR_STATUS
+// describes a failure to reach or authenticate the *host*, as opposed to a
+// failure of the page itself. Only these are worth retrying on the
+// apex / www alternate: a site whose apex has stale DNS, refuses the
+// connection, times out, or presents a certificate issued only for the
+// "www" name all land here.
+func hostErrorIsRetryable(code uint32) bool {
+	switch code {
+	case 1, // CertificateCommonNameIsIncorrect - cert covers only www
+		2,  // CertificateExpired
+		4,  // CertificateRevoked
+		5,  // CertificateIsInvalid
+		6,  // ServerUnreachable
+		7,  // Timeout
+		9,  // ConnectionAborted
+		10, // ConnectionReset
+		12, // CannotConnect
+		13: // HostNameNotResolved
+		return true
+	}
+	return false
+}
+
+// altRetryTarget returns the URL a failed navigation should be retried on,
+// or "" when it should not be retried at all. Split out from retryAltHost
+// so the whole policy is unit-testable without a live web engine.
+func altRetryTarget(t *tab, code uint32) string {
+	if t == nil || t.altTried || !hostErrorIsRetryable(code) {
+		return ""
+	}
+	return nav.AltHostURL(t.url)
+}
+
+// retryAltHost transparently re-navigates a tab to the apex / www
+// alternate of a URL that just failed to load, and reports whether it did.
+//
+// Sites such as hthecofounder.com publish A records for the apex that no
+// longer serve the site while www.hthecofounder.com works - typing the
+// bare domain simply failed. Every mainstream browser papers over this by
+// retrying the other host, but that logic lives in their address bar;
+// WebView2 has no address bar, so OK Browser owns it.
+//
+// The retry is deliberately conservative: at most one per navigation
+// (tracked by t.altTried, and AltHostURL is an involution so the retry can
+// never ping-pong), only for host-level failures, and only when the tab is
+// still alive.
+func (a *app) retryAltHost(t *tab, code uint32) bool {
+	alt := altRetryTarget(t, code)
+	if alt == "" || t.chromium == nil {
+		return false
+	}
+	t.altTried, t.altPending = true, true
+	if a.inSelfTest {
+		a.stlog("[selftest] host error %d on %s, retrying %s", code, t.url, alt)
+	}
+	// Navigating from inside the engine's own completion callback is not
+	// safe: hand the retry back to the window-proc context first.
+	a.postTask(func() {
+		if t.chromium == nil || !a.tabAlive(t) {
+			return
+		}
+		t.url = alt
+		t.errPage = false
+		if a.isActive(t) {
+			a.pushBarState()
+		}
+		t.chromium.Navigate(alt)
+	})
+	return true
+}
+
+// tabAlive reports whether t is still one of the app's live tabs - a tab
+// can be closed between posting a task and running it.
+func (a *app) tabAlive(t *tab) bool {
+	for _, x := range a.tabs {
+		if x == t {
+			return true
+		}
+	}
+	return t == a.splitTab && t != nil
 }
 
 // showErrorPage replaces the tab's content with a glass error page that

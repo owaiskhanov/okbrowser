@@ -60,6 +60,71 @@ func TestParseIsDeterministicAndTrimmed(t *testing.T) {
 }
 
 
+// TestAltHostURL covers the www <-> apex retry used when a navigation
+// fails at the network level (the hthecofounder.com class of bug: the
+// apex has A records that refuse connections while www works).
+func TestAltHostURL(t *testing.T) {
+	cases := []struct{ in, want string }{
+		// Apex gains www.
+		{"https://hthecofounder.com/", "https://www.hthecofounder.com/"},
+		{"https://example.com", "https://www.example.com"},
+		{"http://example.com/a/b?x=1#f", "http://www.example.com/a/b?x=1#f"},
+		{"https://example.co.uk/x", "https://www.example.co.uk/x"},
+		{"https://example.com:8443/x", "https://www.example.com:8443/x"},
+
+		// www is dropped, so a www-only failure retries the apex.
+		{"https://www.example.com/x", "https://example.com/x"},
+		{"http://www.example.com:8080/", "http://example.com:8080/"},
+
+		// Deeper subdomains are left alone apart from the www label.
+		{"https://api.example.com/x", "https://www.api.example.com/x"},
+
+		// No sensible alternate exists.
+		{"https://localhost:3000/x", ""},
+		{"http://127.0.0.1:8080/", ""},
+		{"http://[::1]:8080/", ""},
+		{"https://intranet/x", ""},
+		{"https://www.com/", ""},
+		{"file:///C:/tmp/page.html", ""},
+		{"about:blank", ""},
+		{"okbrowser://settings", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := AltHostURL(c.in); got != c.want {
+			t.Errorf("AltHostURL(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestAltHostURLIsAnInvolution checks the retry cannot ping-pong: applying
+// it twice must return the original URL, so one retry is always terminal.
+func TestAltHostURLIsAnInvolution(t *testing.T) {
+	for _, in := range []string{
+		"https://hthecofounder.com/", "https://example.com/x?y=1",
+		"https://www.example.com/x", "http://example.com:8080/",
+	} {
+		alt := AltHostURL(in)
+		if alt == "" {
+			t.Fatalf("AltHostURL(%q) unexpectedly empty", in)
+		}
+		if back := AltHostURL(alt); back != in {
+			t.Errorf("AltHostURL(AltHostURL(%q)) = %q, want %q", in, back, in)
+		}
+	}
+}
+
+// TestAltHostURLPreservesCredentialsAndCase keeps the retry faithful to
+// the original request.
+func TestAltHostURLPreservesCredentialsAndCase(t *testing.T) {
+	if got := AltHostURL("https://user:pw@example.com/x"); got != "https://user:pw@www.example.com/x" {
+		t.Errorf("credentials lost: %q", got)
+	}
+	if got := AltHostURL("https://EXAMPLE.com/Path"); got != "https://www.example.com/Path" {
+		t.Errorf("path case or host normalization wrong: %q", got)
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (func() bool {
 		for i := 0; i+len(sub) <= len(s); i++ {
