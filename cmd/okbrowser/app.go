@@ -70,6 +70,7 @@ type app struct {
 
 	tabs      []*tab
 	activeIdx int
+	splitTab  *tab // optional right-hand WebView opened by a link-edge drop
 
 	scale float64 // DPI scale factor (1.0 = 96 DPI)
 
@@ -562,12 +563,20 @@ func (a *app) layout() {
 		return
 	}
 	for i, t := range a.tabs {
-		if i == a.activeIdx {
+		isSplit := a.splitTab != nil && t == a.splitTab
+		if i == a.activeIdx || isSplit {
+			x, width := int32(0), w
+			if a.splitTab != nil {
+				gap := a.scaled(3)
+				left := (w - gap) / 2
+				if isSplit { x, width = left + gap, w - left - gap } else { width = left }
+			}
+
 			if a.fading && t.host == a.fadeHost && !a.fadeRamping {
 				// Pending reveal: the new tab stays hidden until its first
 				// content has painted - the previous tab shows meanwhile.
 			} else {
-				win.MoveWindow(t.host, 0, 0, w, h, false)
+				win.MoveWindow(t.host, x, 0, width, h, false)
 				win.ShowWindow(t.host, win.SW_SHOW)
 				if t.chromium != nil {
 					t.chromium.Show()

@@ -46,6 +46,10 @@ func (a *app) isActive(t *tab) bool { return a.active() == t }
 // newTab creates a tab, embeds a web engine in it and navigates to the
 // start page or the given URL. Returns nil when the engine fails to start.
 func (a *app) newTab(url string, activate bool) *tab {
+	return a.newTabMode(url, activate, false)
+}
+
+func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 	tn, _ := syscall.UTF16PtrFromString(tabHostClassName)
 	a.hostSeq++
 	h := win.CreateWindowEx(0, tn, nil, win.WS_CHILD,
@@ -117,6 +121,7 @@ func (a *app) newTab(url string, activate bool) *tab {
 		_ = st.PutIsZoomControlEnabled(true)
 	}
 	c.Init(bridgeJS)
+	if secondary { c.Init("window.__okSecondary=true;") }
 	c.Init(barJS)
 
 	a.tabs = append(a.tabs, t)
@@ -156,10 +161,25 @@ func (a *app) postNewTab(url string) {
 	})
 }
 
+// openSplit creates a real second WebView and places it beside the active page.
+// The link remains a normal tab, so switching tabs naturally promotes it later.
+func (a *app) openSplit(url string) {
+	if a.splitTab != nil {
+		a.splitTab = nil
+	}
+	t := a.newTabMode(url, false, true)
+	if t == nil { return }
+	a.splitTab = t
+	a.layout()
+	a.execActive("window.__okSplitToast&&window.__okSplitToast()")
+}
+
 func (a *app) switchToTab(i int) {
 	if i < 0 || i >= len(a.tabs) {
 		return
 	}
+	// Selecting either pane promotes it to a normal full-width tab.
+	a.splitTab = nil
 	if cur := a.active(); cur != nil {
 		win.ShowWindow(cur.host, win.SW_HIDE)
 		cur.chromium.Hide()
@@ -186,6 +206,7 @@ func (a *app) closeTab(i int) {
 		return
 	}
 	t := a.tabs[i]
+	if a.splitTab == t { a.splitTab = nil }
 	if t.url != "" && !t.isStart {
 		// Remember it for Ctrl+Shift+T (reopen closed tab).
 		a.closedTabs = append(a.closedTabs, t.url)

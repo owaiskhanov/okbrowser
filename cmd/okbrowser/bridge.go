@@ -37,6 +37,34 @@ window.__ok = function (o) {
       window.__ok({ t: "open", u: a.href });
     }
   }, true);
+  // Link edge gestures. Drag any ordinary link toward an edge: left previews
+  // a split view, right queues it as a background tab, top opens a tab.
+  var edgeLink = "";
+  function edgeSignal(phase, e) {
+    document.dispatchEvent(new CustomEvent("ok-link-edge", { detail: {
+      phase: phase, url: edgeLink, x: e.clientX || 0, y: e.clientY || 0
+    }}));
+  }
+  document.addEventListener("dragstart", function (e) {
+    var a = anchor(e.target);
+    if (!a || !a.href || a.href.indexOf("javascript:") === 0) return;
+    edgeLink = a.href;
+    if (e.dataTransfer) { e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("text/uri-list", edgeLink); }
+    edgeSignal("start", e);
+  }, true);
+  document.addEventListener("dragover", function (e) {
+    if (!edgeLink) return;
+    edgeSignal("move", e);
+    if (e.clientX < 92 || e.clientX > innerWidth - 92 || e.clientY < 72) e.preventDefault();
+  }, true);
+  document.addEventListener("drop", function (e) {
+    if (!edgeLink) return;
+    edgeSignal("drop", e); e.preventDefault(); edgeLink = "";
+  }, true);
+  document.addEventListener("dragend", function (e) {
+    if (edgeLink) edgeSignal("end", e);
+    edgeLink = "";
+  }, true);
   window.open = function (u) {
     if (u) window.__ok({ t: "open", u: String(u) });
     return null;
@@ -85,6 +113,7 @@ const barJS = `
   var I_SET  = SV('<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>');
 
   var host = document.createElement('div');
+  if (window.__okSecondary) host.style.display = 'none';
   var root = host.attachShadow({ mode: 'closed' });
 
   var css = [
@@ -278,7 +307,21 @@ const barJS = `
     "@media (prefers-color-scheme:dark){.fb{color:#e8eaed}}",
     ".fb:hover{background:rgba(120,128,138,.16)}",
     ".fb svg{width:13px;height:13px}",
-    "@media print{.strip,.wcap,.edge,.find{display:none !important}}"
+    ".edgeact{position:fixed;z-index:2147483643;pointer-events:none;opacity:0;display:flex;",
+    "align-items:center;justify-content:center;font:600 13px -apple-system,'Segoe UI',sans-serif;",
+    "color:#fff;background:rgba(18,20,26,.42);backdrop-filter:blur(34px) saturate(1.8);",
+    "-webkit-backdrop-filter:blur(34px) saturate(1.8);border:1px solid rgba(255,255,255,.2);",
+    "box-shadow:0 24px 70px rgba(0,0,0,.28),inset 0 1px rgba(255,255,255,.22);",
+    "transition:opacity .22s ease,transform .48s cubic-bezier(.16,1,.3,1),background .2s}",
+    ".edgeact.show{opacity:1}.edgeact.hot{background:rgba(10,132,255,.68)}",
+    ".edge-left{left:12px;top:12%;bottom:12%;width:min(42vw,520px);border-radius:28px;transform:translateX(-105%) scale(.94)}",
+    ".edge-left.show{transform:translateX(-84%) scale(.97)}.edge-left.hot{transform:translateX(0) scale(1)}",
+    ".edge-right{right:12px;top:26%;width:180px;height:48%;border-radius:26px;transform:translateX(115%) scale(.9)}",
+    ".edge-right.show{transform:translateX(74%) scale(.96)}.edge-right.hot{transform:translateX(0) scale(1)}",
+    ".edge-top{left:32%;right:32%;top:8px;height:64px;border-radius:32px;transform:translateY(-125%) scale(.9)}",
+    ".edge-top.show{transform:translateY(-72%) scale(.96)}.edge-top.hot{transform:translateY(0) scale(1)}",
+    ".edgeact span{padding:10px 16px;border-radius:20px;background:rgba(0,0,0,.2);text-align:center}",
+    "@media print{.strip,.wcap,.edge,.find,.edgeact{display:none !important}}"
   ].join("");
 
   var sheet = new CSSStyleSheet();
@@ -327,6 +370,9 @@ const barJS = `
       '<div class="mrow" id="c-others">Close other tabs</div>' +
     '</div>' +
     '<div class="sug" id="sug"></div>' +
+    '<div class="edgeact edge-left" id="edge-left"><span>Drop for Split View</span></div>' +
+    '<div class="edgeact edge-right" id="edge-right"><span>Drop to Read Later</span></div>' +
+    '<div class="edgeact edge-top" id="edge-top"><span>Drop to Open Tab</span></div>' +
     '<div class="find" id="find">' +
       '<input id="fq" placeholder="Find in page" spellcheck="false">' +
       '<div class="fc" id="fc">0/0</div>' +
@@ -433,6 +479,35 @@ const barJS = `
     if (hideTimer) clearTimeout(hideTimer);
     hideTimer = setTimeout(hideIfIdle, 350);
   });
+
+  // Link-edge gesture surface. The large left preview follows the same soft
+  // spring curve as iOS sheets; committing it asks the native host for a real
+  // second WebView, so sites that block iframes still work in Split View.
+  var edgeLeft = root.getElementById('edge-left');
+  var edgeRight = root.getElementById('edge-right');
+  var edgeTop = root.getElementById('edge-top');
+  var edgeZone = '';
+  function clearEdgeGesture() {
+    [edgeLeft, edgeRight, edgeTop].forEach(function (el) { el.classList.remove('show', 'hot'); });
+    edgeZone = '';
+  }
+  document.addEventListener('ok-link-edge', function (e) {
+    var d = e.detail || {};
+    if (d.phase === 'end') { clearEdgeGesture(); return; }
+    var zone = d.x < 92 ? 'split' : (d.x > innerWidth - 92 ? 'later' : (d.y < 72 ? 'tab' : ''));
+    [edgeLeft, edgeRight, edgeTop].forEach(function (el) { el.classList.toggle('show', d.phase !== 'drop'); });
+    edgeLeft.classList.toggle('hot', zone === 'split');
+    edgeRight.classList.toggle('hot', zone === 'later');
+    edgeTop.classList.toggle('hot', zone === 'tab');
+    edgeZone = zone;
+    if (d.url) {
+      try { edgeLeft.firstElementChild.textContent = 'Split View  ·  ' + new URL(d.url).hostname; } catch (_) {}
+    }
+    if (d.phase === 'drop') {
+      if (zone && d.url) post({ t: 'edge-link', a: zone, u: d.url });
+      clearEdgeGesture();
+    }
+  }, true);
 
   // Tabs render by keyed diff: existing pills are updated in place and only
   // genuinely new pills animate in - no rebuild, no flicker, no re-animation
@@ -1111,6 +1186,21 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			// and the target tab may still be mid cross-fade - wait for it.
 			a.stClickTab, a.stClickX, a.stClickY, a.stClickTicks = t, m.X, m.Y, 0
 			win.SetTimer(a.hwnd, 3, 50, 0)
+		}
+
+	case "edge-link": // a dragged link committed at a window edge
+		if m.U != "" {
+			url, action := m.U, m.A
+			a.postTask(func() {
+				switch action {
+				case "split":
+					a.openSplit(url)
+				case "later":
+					a.newTab(url, false) // queued as a background tab
+				case "tab":
+					a.newTab(url, true)
+				}
+			})
 		}
 
 	case "open": // link explicitly asking for a new window
