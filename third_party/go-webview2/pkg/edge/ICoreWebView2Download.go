@@ -29,9 +29,25 @@ func (a *ICoreWebView2DownloadStartingEventArgs) GetResultFilePath() string { va
 
 type iDownloadOperationVtbl struct {
 	_IUnknownVtbl
-	AddBytesReceivedChanged, RemoveBytesReceivedChanged, AddEstimatedEndTimeChanged, RemoveEstimatedEndTimeChanged ComProc
-	GetUri, GetContentDisposition, GetMimeType, GetTotalBytesToReceive, GetBytesReceived, GetEstimatedEndTime, GetResultFilePath, GetState, GetInterruptReason ComProc
-	Cancel, Pause, Resume, GetCanResume ComProc
+	AddBytesReceivedChanged ComProc
+	RemoveBytesReceivedChanged ComProc
+	AddEstimatedEndTimeChanged ComProc
+	RemoveEstimatedEndTimeChanged ComProc
+	// Keep this exact COM/IDL order. Calling a method through the wrong slot
+	// invokes an unrelated function pointer and crashes the host process.
+	GetCanResume ComProc
+	GetContentDisposition ComProc
+	GetEstimatedEndTime ComProc
+	GetInterruptReason ComProc
+	GetMimeType ComProc
+	GetResultFilePath ComProc
+	GetState ComProc
+	GetTotalBytesToReceive ComProc
+	GetUri ComProc
+	GetBytesReceived ComProc
+	Cancel ComProc
+	Pause ComProc
+	Resume ComProc
 }
 type ICoreWebView2DownloadOperation struct { vtbl *iDownloadOperationVtbl }
 func (o *ICoreWebView2DownloadOperation) AddRef() { o.vtbl.AddRef.Call(uintptr(unsafe.Pointer(o))) }

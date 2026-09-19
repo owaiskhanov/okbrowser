@@ -774,6 +774,12 @@ func (a *app) execActive(js string) {
 // onCommand handles hotkeys and mouse-button navigation.
 func (a *app) onCommand(id int) {
 	t := a.commandTab()
+	// Ctrl+1..8 are consecutive command IDs. A Go switch case matches one
+	// value, not the whole numeric range, so dispatch the range explicitly.
+	if id >= cmdSelectTab && id < cmdSelectTab+8 {
+		if n := id - cmdSelectTab; n < len(a.tabs) { a.switchToTab(n) }
+		return
+	}
 	switch id {
 	case cmdBack:
 		if t != nil && t.chromium != nil && t.chromium.CanGoBack() {
@@ -832,10 +838,6 @@ func (a *app) onCommand(id int) {
 		a.toggleFullscreen()
 
 	// Chrome-compatible additions.
-	case cmdSelectTab: // +0..7 = Ctrl+1..8
-		if n := id - cmdSelectTab; n >= 0 && n < len(a.tabs) {
-			a.switchToTab(n)
-		}
 	case cmdLastTab:
 		if len(a.tabs) > 0 {
 			a.switchToTab(len(a.tabs) - 1)

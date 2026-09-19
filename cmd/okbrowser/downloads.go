@@ -44,6 +44,7 @@ func (a *app) pollDownloads() {
 		if secs > 0 { d.speed = int64(float64(d.received-d.lastBytes)/secs) }
 		d.lastBytes, d.lastPoll = d.received, now
 		if d.state == 0 { active = true }
+		if d.state == 2 { d.op.Release(); d.op = nil }
 	}
 	if !active { win.KillTimer(a.hwnd, 5) }
 	if t := a.active(); t != nil && t.url == "okbrowser://downloads" { a.showInternal(t, "downloads") }
