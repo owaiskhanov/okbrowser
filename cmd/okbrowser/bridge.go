@@ -1450,6 +1450,7 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		}
 		if m.F != "" && m.U != "" && m.U != "about:blank" {
 			t.favicon = m.F
+			a.store.SetFavicon(m.U, m.F)
 		}
 		if m.U == "" || m.U == "about:blank" {
 			t.isStart = true

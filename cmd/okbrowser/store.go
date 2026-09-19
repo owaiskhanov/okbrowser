@@ -26,6 +26,7 @@ type store struct {
 	bookmarks []bmEntry
 	settings  Settings
 	permissions map[string]map[string]string // origin -> permission -> default/allow/deny
+	favicons    map[string]string // origin -> last reported icon URL
 
 	dirty      map[string]bool
 	flushTimer *time.Timer
@@ -104,12 +105,15 @@ func newStore() *store {
 			SleepMinutes:   5,
 		},
 		permissions: make(map[string]map[string]string),
+		favicons: make(map[string]string),
 		dirty: map[string]bool{},
 	}
 	s.load("history.json", &s.history)
 	s.load("bookmarks.json", &s.bookmarks)
 	s.load("settings.json", &s.settings)
 	s.load("permissions.json", &s.permissions)
+	s.load("favicons.json", &s.favicons)
+	if s.favicons == nil { s.favicons = make(map[string]string) }
 	if s.permissions == nil { s.permissions = make(map[string]map[string]string) }
 	if !validEngine(s.settings.Engine) { s.settings.Engine = "Google" }
 	if s.settings.SleepMinutes < 0 || s.settings.SleepMinutes > 120 { s.settings.SleepMinutes = 5 }
@@ -174,6 +178,8 @@ func (s *store) flushLocked() {
 			v = s.settings
 		case "permissions.json":
 			v = s.permissions
+		case "favicons.json":
+			v = s.favicons
 		default:
 			continue
 		}
@@ -316,12 +322,20 @@ func (s *store) ClearBookmarks() {
 	s.markDirty("bookmarks.json")
 }
 
+func (s *store) SetFavicon(pageURL, icon string) {
+	origin := permissionOrigin(pageURL)
+	if origin == "" || icon == "" { return }
+	s.mu.Lock(); defer s.mu.Unlock()
+	if s.favicons[origin] != icon { s.favicons[origin] = icon; s.markDirty("favicons.json") }
+}
+
 // ---- start-page tiles + suggestions -----------------------------------------
 
 // Tile is one most-visited start-page tile.
 type Tile struct {
-	URL   string
-	Title string
+	URL     string
+	Title   string
+	Favicon string
 }
 
 // MostVisited aggregates history into the top n most-visited sites.
@@ -380,7 +394,7 @@ func (s *store) MostVisited(n int) []Tile {
 		if t == "" {
 			t = urls[i]
 		}
-		out = append(out, Tile{URL: urls[i], Title: t})
+		out = append(out, Tile{URL: urls[i], Title: t, Favicon: s.favicons[permissionOrigin(urls[i])]})
 	}
 	return out
 }

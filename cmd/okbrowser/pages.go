@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -121,6 +122,13 @@ func avHTML(u string) string {
 	return `<div class="av">` + htmlEsc(ch) + `</div>`
 }
 
+func tileFavicon(t Tile) string {
+	if t.Favicon != "" { return t.Favicon }
+	u, err := url.Parse(t.URL)
+	if err == nil && u.Scheme != "" && u.Host != "" { return u.Scheme + "://" + u.Host + "/favicon.ico" }
+	return ""
+}
+
 // StartPageHTML renders the start page: big search field plus the
 // most-visited speed dial.
 func StartPageHTML(tiles []Tile, engine string) string {
@@ -140,11 +148,13 @@ func StartPageHTML(tiles []Tile, engine string) string {
 		if title == "" {
 			title = t.URL
 		}
+		icon := tileFavicon(t)
 		b.WriteString(`<div class="tile" data-u="` + htmlEsc(t.URL) + `" title="` + htmlEsc(title) + `" style="padding:14px 4px;border-radius:16px;cursor:pointer;background:rgba(255,255,255,.5);backdrop-filter:blur(20px) saturate(1.7);-webkit-backdrop-filter:blur(20px) saturate(1.7);box-shadow:0 6px 20px rgba(0,0,0,.08),inset 0 1px 0 rgba(255,255,255,.6),inset 0 0 0 .5px rgba(255,255,255,.3);transition:transform .16s,background .16s">` +
-			`<div style="margin:0 auto;width:44px;height:44px;border-radius:50%;display:grid;place-items:center;font-size:19px;font-weight:600;color:#3c4043;background:rgba(120,128,138,.14)">` + htmlEsc(avChar(t.URL)) + `</div></div>`)
+			`<div class="tileicon" style="margin:0 auto;width:44px;height:44px;border-radius:14px;display:grid;place-items:center;font-size:19px;font-weight:600;color:#3c4043;background:rgba(120,128,138,.14);overflow:hidden">` +
+			`<span>` + htmlEsc(avChar(t.URL)) + `</span>` + func() string { if icon == "" { return "" }; return `<img src="`+htmlEsc(icon)+`" alt="" style="width:28px;height:28px;object-fit:contain" onerror="this.remove()">` }() + `</div></div>`)
 	}
 	b.WriteString(`</div>`)
-	b.WriteString(`<style>@media (prefers-color-scheme:dark){.tile{background:rgba(38,38,42,.5) !important;box-shadow:0 6px 20px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.07),inset 0 0 0 .5px rgba(255,255,255,.06) !important}}</style>`)
+	b.WriteString(`<style>.tileicon>*{grid-area:1/1}.tileicon img{position:relative;z-index:1;background:inherit}@media (prefers-color-scheme:dark){.tile{background:rgba(38,38,42,.5) !important;box-shadow:0 6px 20px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.07),inset 0 0 0 .5px rgba(255,255,255,.06) !important}}</style>`)
 	b.WriteString(`<script>
 (function(){
   var post=function(o){try{window.__ok(o)}catch(e){}};

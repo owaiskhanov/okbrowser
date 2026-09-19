@@ -33,6 +33,8 @@ type iDownloadOperationVtbl struct {
 	RemoveBytesReceivedChanged ComProc
 	AddEstimatedEndTimeChanged ComProc
 	RemoveEstimatedEndTimeChanged ComProc
+	AddStateChanged ComProc
+	RemoveStateChanged ComProc
 	// Keep this exact COM/IDL order. Calling a method through the wrong slot
 	// invokes an unrelated function pointer and crashes the host process.
 	GetCanResume ComProc
