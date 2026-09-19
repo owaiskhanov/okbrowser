@@ -76,12 +76,17 @@ just content:
   compact controls to resize, swap, promote, or close panes, a clear active-pane
   highlight with pane-aware keyboard commands, tab-to-pane actions, and full
   Split View session restore. Drag an existing tab to the left or right edge to
-  place it directly into that side of a new two-pane layout
+  place it directly into that side of a new two-pane layout; drag a pane's tab
+  back to the top merge target to return both pages to normal tabs. Divider
+  resizing uses native mouse capture, so it remains fluid across pane boundaries
 - **Site identity and permissions**: the lock control reports whether the
   current connection uses HTTPS and offers per-site Ask / Allow / Block choices
   for camera, microphone, location, notifications, clipboard and sensors;
   choices persist by origin, with one-click permission reset and per-site
   cookie/storage clearing
+- **Web notifications**: a stable Windows application identity lets WebView2
+  register notifications from WhatsApp Web and other permitted sites with the
+  native Windows notification platform; permissions remain controllable per site
 - **Windows-protected autofill**: password saving, passkeys, addresses and
   payment autofill are delegated directly to the WebView2 profile; OK Browser
   never reads or stores credential values itself

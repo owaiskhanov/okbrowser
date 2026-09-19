@@ -180,3 +180,12 @@ func systemMemoryLoad() uint32 {
 	if r == 0 { return 0 }
 	return m.MemoryLoad
 }
+
+var procSetCurrentProcessExplicitAppUserModelID = syscall.NewLazyDLL("shell32.dll").NewProc("SetCurrentProcessExplicitAppUserModelID")
+
+// setAppIdentity gives WebView2 notifications and Windows shell surfaces a
+// stable app identity instead of an anonymous executable path.
+func setAppIdentity() {
+	id, _ := syscall.UTF16PtrFromString("OKBrowser.Desktop")
+	if id != nil { _, _, _ = procSetCurrentProcessExplicitAppUserModelID.Call(uintptr(unsafe.Pointer(id))) }
+}

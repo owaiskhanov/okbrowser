@@ -594,20 +594,24 @@ const barJS = `
   // The side of the drop determines which pane receives the dragged tab.
   var tabEdgeZone = '';
   document.addEventListener('dragover', function(e) {
-    if (dragFrom < 0 || S.v) return;
-    tabEdgeZone = e.clientX < 92 ? 'left' : (e.clientX > innerWidth - 92 ? 'right' : '');
+    if (dragFrom < 0) return;
+    if (S.v) tabEdgeZone = e.clientY < 110 ? 'merge' : '';
+    else tabEdgeZone = e.clientX < 92 ? 'left' : (e.clientX > innerWidth - 92 ? 'right' : '');
     edgeLeft.classList.toggle('show', !!tabEdgeZone);
     edgeRight.classList.toggle('show', !!tabEdgeZone);
     edgeLeft.classList.toggle('hot', tabEdgeZone === 'left');
     edgeRight.classList.toggle('hot', tabEdgeZone === 'right');
+    edgeTop.classList.toggle('show', tabEdgeZone === 'merge'); edgeTop.classList.toggle('hot', tabEdgeZone === 'merge');
     edgeLeft.firstElementChild.textContent = 'Drop tab on Left';
     edgeRight.firstElementChild.textContent = 'Drop tab on Right';
+    edgeTop.firstElementChild.textContent = 'Drop to Return to Tabs';
     if (tabEdgeZone) e.preventDefault();
   }, true);
   document.addEventListener('drop', function(e) {
-    if (dragFrom < 0 || !tabEdgeZone || S.v) return;
+    if (dragFrom < 0 || !tabEdgeZone) return;
     e.preventDefault(); e.stopPropagation();
-    post({t:'ui', a:'tab-split-' + tabEdgeZone, i:dragFrom});
+    if (tabEdgeZone === 'merge') post({t:'ui', a:'promote-split'});
+    else post({t:'ui', a:'tab-split-' + tabEdgeZone, i:dragFrom});
     dragFrom=-1; tabEdgeZone=''; clearEdgeGesture();
   }, true);
 
@@ -1022,8 +1026,7 @@ const barJS = `
   root.getElementById('split-swap').addEventListener('click', function () { post({ t: 'ui', a: 'swap-split' }); });
   root.getElementById('split-tab').addEventListener('click', function () { post({ t: 'ui', a: 'promote-split' }); });
   var splitDivider = root.getElementById('splitdivider');
-  splitDivider.addEventListener('pointerdown', function (e) { splitDivider.setPointerCapture(e.pointerId); });
-  splitDivider.addEventListener('pointermove', function (e) { if (splitDivider.hasPointerCapture(e.pointerId) && e.movementX) post({ t: 'ui', a: 'resize-split', x: e.movementX }); });
+  splitDivider.addEventListener('pointerdown', function (e) { e.preventDefault(); post({ t: 'ui', a: 'resize-split-start' }); });
 
   // Empty strip area: drag to move the window, double-click to maximize.
   var drag = root.getElementById('drag');
@@ -1665,9 +1668,8 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		case "promote-split":
 			a.postTask(func() { a.promoteSplit() })
 			return
-		case "resize-split":
-			delta := m.X
-			a.postTask(func() { a.resizeSplit(delta) })
+		case "resize-split-start":
+			a.postTask(func() { if a.splitTab != nil { a.splitResizing = true; win.SetCapture(a.hwnd) } })
 			return
 		case "wclose":
 			// In Split View the familiar close control dismisses the second

@@ -74,6 +74,7 @@ type app struct {
 	splitTab   *tab // optional right-hand WebView opened by a link-edge drop
 	focusedTab *tab // pane receiving keyboard commands while split
 	splitRatio float64 // width of the left pane, 0.28..0.72
+	splitResizing bool   // native mouse capture keeps divider drag continuous
 
 	scale float64 // DPI scale factor (1.0 = 96 DPI)
 
@@ -149,6 +150,21 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		mmi := (*win.MINMAXINFO)(lp)
 		mmi.PtMinTrackSize = win.POINT{X: a.scaled(480), Y: a.scaled(320)}
 		return 0
+
+	case win.WM_MOUSEMOVE:
+		if a.splitResizing && a.splitTab != nil {
+			var rc win.RECT
+			if win.GetClientRect(a.hwnd, &rc) && rc.Right > 0 {
+				x := win.GET_X_LPARAM(uintptr(lp))
+				a.splitRatio = float64(x) / float64(rc.Right)
+				if a.splitRatio < .28 { a.splitRatio = .28 }
+				if a.splitRatio > .72 { a.splitRatio = .72 }
+				a.layout()
+			}
+			return 0
+		}
+	case win.WM_LBUTTONUP:
+		if a.splitResizing { a.splitResizing = false; win.ReleaseCapture(); a.saveSession(); return 0 }
 
 	case win.WM_COMMAND:
 		// Hotkeys arrive here (all buttons live in the glass bar).
