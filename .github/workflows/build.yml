@@ -114,7 +114,7 @@ jobs:
   # Every successful source push publishes its Windows-verified executable.
   # The workflow run number provides a monotonic fourth version component.
   release:
-    if: needs.windows.result == 'success' && (github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[ci skip]'))
+    if: needs.windows.result == 'success' && (github.event_name == 'workflow_dispatch' || (!contains(github.event.head_commit.message, '[ci skip]') && !contains(github.event.head_commit.message, '[android]')))
     needs: windows
     runs-on: ubuntu-latest
     steps:
@@ -150,7 +150,6 @@ jobs:
   # the Windows executable; include [android] in a commit to run this job.
   mobile_once:
     if: github.event_name == 'push' && contains(github.event.head_commit.message, '[android]')
-    needs: [windows, release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -173,6 +172,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="${VERSION_BASE}.${GITHUB_RUN_NUMBER}"
+          TAG="$(gh release view --json tagName --jq .tagName)"
           cp mobile/build/outputs/apk/debug/mobile-debug.apk OKBrowser-Android.apk
-          gh release upload "v${VERSION}" OKBrowser-Android.apk --clobber
+          gh release upload "$TAG" OKBrowser-Android.apk --clobber
+          echo "Uploaded APK to $TAG"
