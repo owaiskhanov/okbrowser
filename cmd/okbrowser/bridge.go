@@ -1131,24 +1131,34 @@ func (a *app) pushBarState() {
 		}
 		tabs[i] = barTab{T: title, U: tb.url, F: tb.favicon, P: tb.pinned, S: tb.sleeping}
 	}
-	st := barState{
-		Tabs: tabs,
-		A:    a.activeIdx,
-		U:    t.url,
-		B:    t.chromium.CanGoBack(),
-		F:    t.chromium.CanGoForward(),
-		M:    a.maximized,
-		K:    t.url != "" && !t.isStart && a.store.IsBookmarked(t.url),
-		E:    a.store.Settings().Engine,
-		V:    a.splitTab != nil,
+	push := func(view *tab, idx int) {
+		if view == nil || view.chromium == nil {
+			return
+		}
+		st := barState{
+			Tabs: tabs,
+			A:    idx,
+			U:    view.url,
+			B:    view.chromium.CanGoBack(),
+			F:    view.chromium.CanGoForward(),
+			M:    a.maximized,
+			K:    view.url != "" && !view.isStart && a.store.IsBookmarked(view.url),
+			E:    a.store.Settings().Engine,
+			V:    a.splitTab != nil,
+		}
+		b, err := json.Marshal(st)
+		if err == nil {
+			view.chromium.Eval("window.__okBar&&window.__okBar(" + string(b) + ")")
+		}
 	}
-	b, err := json.Marshal(st)
-	if err != nil {
-		return
-	}
-	a.execActive("window.__okBar&&window.__okBar(" + string(b) + ")")
-	if a.splitTab != nil && a.splitTab.chromium != nil {
-		a.splitTab.chromium.Eval("window.__okBar&&window.__okBar(" + string(b) + ")")
+	push(t, a.activeIdx)
+	if a.splitTab != nil {
+		for i, candidate := range a.tabs {
+			if candidate == a.splitTab {
+				push(candidate, i)
+				break
+			}
+		}
 	}
 }
 

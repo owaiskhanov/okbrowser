@@ -11,6 +11,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 env:
   VERSION_BASE: "1.12.2"
@@ -125,6 +127,14 @@ jobs:
           name: OKBrowser-windows-amd64-win2022
           path: dist
 
+      - name: Create SHA-256 checksum
+        run: sha256sum dist/OKBrowser.exe > dist/OKBrowser.exe.sha256
+
+      - name: Attest Windows build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/OKBrowser.exe
+
       - name: Publish automatic version
         env:
           GH_TOKEN: ${{ github.token }}
@@ -137,10 +147,11 @@ jobs:
           - Single ~4 MB portable OKBrowser.exe
           - Built and smoke-tested on Windows 2022 and Windows latest
           - Includes the latest browser UX and stability changes
+          - Includes a SHA-256 checksum and GitHub build-provenance attestation for verification
 
           **Requirements:** Windows 10 (1607+) or Windows 11, 64-bit, with Microsoft Edge WebView2 Runtime.
           EOF
-          gh release create "$TAG" dist/OKBrowser.exe \
+          gh release create "$TAG" dist/OKBrowser.exe dist/OKBrowser.exe.sha256 \
             --title "OK Browser ${VERSION}" \
             --notes-file notes.md \
             --target "$GITHUB_SHA" \
