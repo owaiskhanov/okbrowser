@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -36,6 +37,8 @@ type tab struct {
 	sleeping     bool
 	audioPlaying bool
 	permissions  map[string]map[edge.CoreWebView2PermissionKind]edge.CoreWebView2PermissionState
+	crashCount   int
+	lastCrash    time.Time
 }
 
 func permissionOrigin(raw string) string {
@@ -108,6 +111,9 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 		if a.allowSpawn() {
 			a.postTask(func() { a.newTab(uri, true) })
 		}
+	}
+	c.ProcessFailedCallback = func(kind edge.CoreWebView2ProcessFailedKind) {
+		a.postTask(func() { a.recoverFailedTab(t, kind) })
 	}
 	c.NavigationStartingCallback = func(_ *edge.ICoreWebView2, args *edge.ICoreWebView2NavigationStartingEventArgs) {
 		a.onNavStarting(t, args)
@@ -359,6 +365,28 @@ func (a *app) showInternal(t *tab, page string) {
 		a.pushBarState()
 	}
 	t.chromium.NavigateToString(html)
+}
+
+// recoverFailedTab reloads an isolated renderer/GPU failure without taking
+// down the browser. Repeated failures stop auto-reloading and show a stable
+// recovery page so a bad site cannot create an endless crash loop.
+func (a *app) recoverFailedTab(t *tab, kind edge.CoreWebView2ProcessFailedKind) {
+	if t == nil || t.chromium == nil { return }
+	now := time.Now()
+	if now.Sub(t.lastCrash) > time.Minute { t.crashCount = 0 }
+	t.lastCrash, t.crashCount = now, t.crashCount+1
+	_ = os.MkdirAll(dataDir(), 0o755)
+	f, _ := os.OpenFile(filepath.Join(dataDir(), "crash.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if f != nil { fmt.Fprintf(f, "%s kind=%d url=%s\n", now.Format(time.RFC3339), kind, t.url); _ = f.Close() }
+	if t.crashCount <= 2 {
+		t.chromium.Reload()
+		return
+	}
+	t.errPage = true
+	t.title = "Page crashed"
+	html := `<!doctype html><meta name="viewport" content="width=device-width"><style>body{background:#151519;color:#f2f2f7;font:15px system-ui;display:grid;place-items:center;height:100vh;margin:0}.c{text-align:center;max-width:460px}button{border:0;border-radius:18px;padding:11px 18px;background:#0a84ff;color:white}</style><div class=c><h1>This page keeps crashing</h1><p>OK Browser stopped the reload loop. Your other tabs are safe.</p><button onclick="location.reload()">Try again</button></div>`
+	t.chromium.NavigateToString(html)
+	a.pushBarState()
 }
 
 // sleepInactiveTabs freezes background pages after five idle minutes. Pinned

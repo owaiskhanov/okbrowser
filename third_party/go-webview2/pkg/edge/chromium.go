@@ -30,6 +30,7 @@ type Chromium struct {
 	navigationCompleted   *ICoreWebView2NavigationCompletedEventHandler
 	navigationStarting    *ICoreWebView2NavigationStartingEventHandler // OK Browser addition
 	newWindowRequested    *ICoreWebView2NewWindowRequestedEventHandler // OK Browser addition
+	processFailed         *iCoreWebView2ProcessFailedEventHandler       // OK Browser addition
 
 	// OK Browser addition: keeps per-call DevTools handlers referenced so
 	// the GC cannot collect them while native code still holds a pointer.
@@ -51,6 +52,7 @@ type Chromium struct {
 	NavigationStartingCallback   func(sender *ICoreWebView2, args *ICoreWebView2NavigationStartingEventArgs) // OK Browser addition
 	NewWindowRequestedCallback   func(args *ICoreWebView2NewWindowRequestedEventArgs)                        // OK Browser addition
 	PermissionRequestedCallback  func(uri string, kind CoreWebView2PermissionKind) CoreWebView2PermissionState // OK Browser addition
+	ProcessFailedCallback         func(kind CoreWebView2ProcessFailedKind)                              // OK Browser addition
 	AcceleratorKeyCallback       func(uint) bool
 }
 
@@ -76,6 +78,7 @@ func NewChromium() *Chromium {
 	e.navigationCompleted = newICoreWebView2NavigationCompletedEventHandler(e)
 	e.navigationStarting = newICoreWebView2NavigationStartingEventHandler(e) // OK Browser addition
 	e.newWindowRequested = newICoreWebView2NewWindowRequestedEventHandler(e) // OK Browser addition
+	e.processFailed = newICoreWebView2ProcessFailedEventHandler(e)           // OK Browser addition
 	e.permissions = make(map[CoreWebView2PermissionKind]CoreWebView2PermissionState)
 
 	return e
@@ -249,6 +252,11 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 		uintptr(unsafe.Pointer(e.newWindowRequested)),
 		uintptr(unsafe.Pointer(&token)),
 	)
+	_, _, _ = e.webview.vtbl.AddProcessFailed.Call( // OK Browser addition
+		uintptr(unsafe.Pointer(e.webview)),
+		uintptr(unsafe.Pointer(e.processFailed)),
+		uintptr(unsafe.Pointer(&token)),
+	)
 
 	_ = e.controller.AddAcceleratorKeyPressed(e.acceleratorKeyPressed, &token)
 
@@ -396,6 +404,12 @@ func (e *Chromium) NewWindowRequested(sender *ICoreWebView2, args *ICoreWebView2
 	if e.NewWindowRequestedCallback != nil {
 		e.NewWindowRequestedCallback(args)
 	}
+	return 0
+}
+
+// ProcessFailed reports renderer/browser/GPU failures to the host.
+func (e *Chromium) ProcessFailed(_ *ICoreWebView2, args *ICoreWebView2ProcessFailedEventArgs) uintptr {
+	if e.ProcessFailedCallback != nil { e.ProcessFailedCallback(args.GetProcessFailedKind()) }
 	return 0
 }
 

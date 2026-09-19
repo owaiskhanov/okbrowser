@@ -81,6 +81,9 @@ just content:
 - **Sleeping tabs**: inactive background pages freeze after a configurable
   delay, wake instantly when selected, and visibly dim while asleep; pinned
   tabs, audio-playing tabs and both Split View panes always stay live
+- **Crash isolation and recovery**: renderer, GPU and browser-process failures
+  are detected per tab, logged locally and automatically reloaded; repeated
+  crashes stop safely on a recovery page instead of entering a reload loop
 - **Liquid loading line**: a thin blue hairline runs along the top edge
   while a page loads and sweeps away when it's done
 - **Incognito** (`Ctrl+Shift+N`): a private window with a throwaway
