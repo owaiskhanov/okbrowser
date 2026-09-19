@@ -135,7 +135,9 @@ assert.ok(wmax._html.includes('<path'), 'restore icon adds the second window out
 // --- the address bubble ---
 const okb = shadow.getElementById('okb');
 const input = shadow.getElementById('q');
-assert.ok(!okb.className.includes('open'), 'bubble starts collapsed');
+assert.ok(okb.className.includes('open'), 'bubble stays open on the home screen');
+// Simulate navigation before testing the normal collapsed/hover behavior.
+okb.className = 'okb';
 
 okb.dispatch('mouseenter', EV);
 assert.ok(okb.className.includes('open'), 'hover opens the bubble');
@@ -389,6 +391,8 @@ expect({ t: 'menu', m: 'downloads' });
 }
 
 // --- immersive auto-hide bar ---
+// Auto-hide applies to normal pages; New Tab intentionally remains visible.
+win.__okBar({ tabs: [{ t: 'Example' }], a: 0, u: 'https://example.com', b: false, f: false, m: false, v: false });
 const strip = shadow.getElementById('strip');
 assert.ok(strip, 'strip element exists');
 assert.ok(shadow.getElementById('edge'), 'top-edge tripwire exists');
@@ -404,7 +408,7 @@ setTimeout(() => {
   assert.ok(strip.classList.contains('open'), 'mouse at the top edge reveals the bar');
   assert.ok(!shadow.getElementById('wcap').classList.contains('hid'), 'the capsule returns with the bar');
   strip.dispatch('mouseenter', {});
-  win.__okBar({ tabs: [{ t: 'A' }, { t: 'B' }, { t: 'C' }, { t: 'D' }], a: 3, u: '', b: false, f: false, m: false });
+  win.__okBar({ tabs: [{ t: 'A' }, { t: 'B' }, { t: 'C' }, { t: 'D' }], a: 3, u: 'https://example.com/d', b: false, f: false, m: false });
   assert.ok(strip.classList.contains('open'), 'tab switch keeps the bar visible');
   assert.ok(tz.children[3].classList.contains('in'), 'the new tab pill animates in');
 

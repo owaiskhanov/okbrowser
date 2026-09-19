@@ -25,6 +25,8 @@ type store struct {
 	history   []histEntry
 	bookmarks []bmEntry
 	settings  Settings
+	permissions map[string]map[string]string // origin -> permission -> default/allow/deny
+	favicons    map[string]string // origin -> last reported icon URL
 
 	dirty      map[string]bool
 	flushTimer *time.Timer
@@ -46,8 +48,12 @@ type bmEntry struct {
 
 // Settings are the user's choices (settings page / menu).
 type Settings struct {
-	Engine         string `json:"engine"`  // Google | Bing | DuckDuckGo
-	RestoreSession bool   `json:"restore"` // reopen tabs on startup
+	Engine         string `json:"engine"`   // Google | Bing | DuckDuckGo
+	RestoreSession bool   `json:"restore"`  // reopen tabs on startup
+	Autofill       bool   `json:"autofill"` // WebView2 password/address autofill
+	SleepMinutes   int    `json:"sleepMin"` // 0 disables sleeping tabs
+	NeverSleep     map[string]bool `json:"neverSleep,omitempty"`
+	LargeControls  bool `json:"largeControls"`
 }
 
 // sessionTab is one tab of a saved session.
@@ -63,6 +69,8 @@ type sessionData struct {
 	Active    int          `json:"a"`
 	Maximized bool         `json:"max"`
 	Rect      [4]int32     `json:"rect"` // normal position (workspace coords)
+	Split     int          `json:"split"`
+	SplitRatio float64     `json:"splitRatio"`
 }
 
 // suggestion is one address-bar suggestion row.
@@ -93,15 +101,23 @@ func newStore() *store {
 		settings: Settings{
 			Engine:         "Google",
 			RestoreSession: true,
+			Autofill:       true,
+			SleepMinutes:   5,
 		},
+		permissions: make(map[string]map[string]string),
+		favicons: make(map[string]string),
 		dirty: map[string]bool{},
 	}
 	s.load("history.json", &s.history)
 	s.load("bookmarks.json", &s.bookmarks)
 	s.load("settings.json", &s.settings)
-	if !validEngine(s.settings.Engine) {
-		s.settings.Engine = "Google"
-	}
+	s.load("permissions.json", &s.permissions)
+	s.load("favicons.json", &s.favicons)
+	if s.favicons == nil { s.favicons = make(map[string]string) }
+	if s.permissions == nil { s.permissions = make(map[string]map[string]string) }
+	if !validEngine(s.settings.Engine) { s.settings.Engine = "Google" }
+	if s.settings.SleepMinutes < 0 || s.settings.SleepMinutes > 120 { s.settings.SleepMinutes = 5 }
+	if s.settings.NeverSleep == nil { s.settings.NeverSleep = make(map[string]bool) }
 	return s
 }
 
@@ -119,11 +135,11 @@ func dataDir() string {
 }
 
 func (s *store) load(name string, v interface{}) {
-	b, err := os.ReadFile(filepath.Join(s.dir, name))
-	if err != nil {
-		return
-	}
-	_ = json.Unmarshal(b, v)
+	p := filepath.Join(s.dir, name)
+	b, err := os.ReadFile(p)
+	if err == nil && json.Unmarshal(b, v) == nil { return }
+	// A truncated/corrupt primary never destroys the user's last good data.
+	if backup, e := os.ReadFile(p + ".bak"); e == nil { _ = json.Unmarshal(backup, v) }
 }
 
 // markDirty schedules a debounced flush (2s after the first change).
@@ -160,6 +176,10 @@ func (s *store) flushLocked() {
 			v = s.bookmarks
 		case "settings.json":
 			v = s.settings
+		case "permissions.json":
+			v = s.permissions
+		case "favicons.json":
+			v = s.favicons
 		default:
 			continue
 		}
@@ -178,9 +198,8 @@ func (s *store) write(name string, v interface{}) {
 	}
 	p := filepath.Join(s.dir, name)
 	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return
-	}
+	if err := os.WriteFile(tmp, b, 0o644); err != nil { return }
+	if old, err := os.ReadFile(p); err == nil { _ = os.WriteFile(p+".bak", old, 0o644) }
 	_ = os.Rename(tmp, p)
 }
 
@@ -303,12 +322,20 @@ func (s *store) ClearBookmarks() {
 	s.markDirty("bookmarks.json")
 }
 
+func (s *store) SetFavicon(pageURL, icon string) {
+	origin := permissionOrigin(pageURL)
+	if origin == "" || icon == "" { return }
+	s.mu.Lock(); defer s.mu.Unlock()
+	if s.favicons[origin] != icon { s.favicons[origin] = icon; s.markDirty("favicons.json") }
+}
+
 // ---- start-page tiles + suggestions -----------------------------------------
 
 // Tile is one most-visited start-page tile.
 type Tile struct {
-	URL   string
-	Title string
+	URL     string
+	Title   string
+	Favicon string
 }
 
 // MostVisited aggregates history into the top n most-visited sites.
@@ -367,7 +394,7 @@ func (s *store) MostVisited(n int) []Tile {
 		if t == "" {
 			t = urls[i]
 		}
-		out = append(out, Tile{URL: urls[i], Title: t})
+		out = append(out, Tile{URL: urls[i], Title: t, Favicon: s.favicons[permissionOrigin(urls[i])]})
 	}
 	return out
 }
@@ -444,13 +471,34 @@ func (s *store) Suggest(q string, n int) []suggestion {
 	return out
 }
 
+// ---- site permissions ------------------------------------------------------
+func (s *store) Permission(origin, kind string) string {
+	s.mu.Lock(); defer s.mu.Unlock()
+	if byKind := s.permissions[origin]; byKind != nil { return byKind[kind] }
+	return ""
+}
+func (s *store) SetPermission(origin, kind, state string) {
+	if origin == "" { return }
+	s.mu.Lock(); defer s.mu.Unlock()
+	if s.permissions[origin] == nil { s.permissions[origin] = make(map[string]string) }
+	if state == "default" || state == "" { delete(s.permissions[origin], kind) } else { s.permissions[origin][kind] = state }
+	if len(s.permissions[origin]) == 0 { delete(s.permissions, origin) }
+	s.markDirty("permissions.json")
+}
+func (s *store) ClearPermissions(origin string) {
+	s.mu.Lock(); defer s.mu.Unlock(); delete(s.permissions, origin); s.markDirty("permissions.json")
+}
+
 // ---- settings + session -----------------------------------------------------
 
 // Settings returns a copy of the current settings.
 func (s *store) Settings() Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.settings
+	out := s.settings
+	out.NeverSleep = make(map[string]bool, len(s.settings.NeverSleep))
+	for origin, value := range s.settings.NeverSleep { out.NeverSleep[origin] = value }
+	return out
 }
 
 // SetSettings saves the settings.

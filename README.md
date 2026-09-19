@@ -13,7 +13,10 @@ A **very light and very fast** web browser for **Windows 10 and later**.
 
 Download `OKBrowser.exe` from the [Releases](../../releases) page, or build it
 yourself in one command (see below). Every release is built **and smoke-tested
-on a real Windows machine** by CI before it is published.
+on a real Windows machine** by CI before it is published. Releases include a
+SHA-256 checksum and GitHub provenance; when the repository's Authenticode
+secrets are configured, CI also signs, timestamps and verifies the EXE before
+smoke testing and publication (see [`docs/AUTHENTICODE.md`](docs/AUTHENTICODE.md)).
 
 ## Requirements
 
@@ -31,8 +34,11 @@ just content:
   sits on top of your content while you browse. The glass bar (tabs, `+`,
   address bubble) **with the min / max / close capsule** hides away and
   glides back together the instant your mouse touches the top edge, and
-  reveals itself on `Ctrl+T`, `Ctrl+L` and tab switches; it slides away
-  again when you leave it. Drag the bar's empty middle to move the window,
+  reveals itself on `Ctrl+T`, `Ctrl+L` and tab switches. It also responds
+  continuously to cursor proximity: tabs and window controls begin gliding
+  into view within 160 px of the top (or 210 px during a fast upward gesture),
+  becoming fully interactive before the pointer arrives; it slides away again
+  when you leave it. Drag the bar's empty middle to move the window,
   double-click it to maximize; the top edge resizes the window while the
   bar is hidden. No native title bar in any
   state (borderless `WS_POPUP | WS_THICKFRAME | WS_CAPTION` style +
@@ -62,19 +68,51 @@ just content:
   reorder**; **right-click** for duplicate / pin (favicon-only) / close
   others. Every tab is its own web engine instance sharing one engine
   process, so tabs stay isolated and cheap
+- **Liquid link-edge gestures**: drag any link toward an edge and a springy,
+  blurred drop surface flows in to meet the cursor. Drop on the **left** to queue
+  it as a background tab for later, or on the **right** for a Peek preview that
+  opens into a real side-by-side Split View. Split View uses a second WebView—not
+  an iframe—keeps browser controls available across both panes, and includes a
+  compact controls to resize, swap, promote, or close panes, a clear active-pane
+  highlight with pane-aware keyboard commands, tab-to-pane actions, and full
+  Split View session restore. Drag an existing tab to the left or right edge to
+  place it directly into that side of a new two-pane layout; drag a pane's tab
+  back to the top merge target to return both pages to normal tabs. Divider
+  resizing uses native mouse capture, so it remains fluid across pane boundaries
+- **Site identity and permissions**: the lock control reports whether the
+  current connection uses HTTPS and offers per-site Ask / Allow / Block choices
+  for camera, microphone, location, notifications, clipboard and sensors;
+  choices persist by origin, with one-click permission reset and per-site
+  cookie/storage clearing
+- **Web notifications**: a stable Windows application identity lets WebView2
+  register notifications from WhatsApp Web and other permitted sites with the
+  native Windows notification platform; permissions remain controllable per site
+- **Windows-protected autofill**: password saving, passkeys, addresses and
+  payment autofill are delegated directly to the WebView2 profile; OK Browser
+  never reads or stores credential values itself
+- **Sleeping tabs**: inactive background pages freeze after a configurable
+  delay, wake instantly when selected, and visibly dim while asleep; pinned
+  tabs, audio-playing tabs, tabs with unsaved forms or active downloads, and
+  both Split View panes stay live. Right-click supports Sleep now and Never
+  sleep this site; severe Windows memory pressure triggers early sleeping
+- **Crash isolation and recovery**: renderer, GPU and browser-process failures
+  are detected per tab, logged locally and automatically reloaded; repeated
+  crashes stop safely on a recovery page instead of entering a reload loop
 - **Liquid loading line**: a thin blue hairline runs along the top edge
   while a page loads and sweeps away when it's done
 - **Incognito** (`Ctrl+Shift+N`): a private window with a throwaway
   profile — history, cookies and session data go to a temp folder, never
   to disk history
-- **Downloads** (`Ctrl+J`): your newest downloaded files in glass, with
-  open and show-in-folder actions
+- **Downloads** (`Ctrl+J`): native WebView2 transfer tracking with exact progress,
+  speed, source domain, pause/resume/cancel, interruption recovery, open/show/
+  remove actions, executable safety warnings and automatic live refresh
 - Address bar with smart parsing: `example.com` → `https://example.com`, plain words → search (engine selectable in Settings: **Google** / Bing / DuckDuckGo), `localhost:3000` / `192.168.x.x` → `http://`
 - **Suggestions while you type**: your history and bookmarks appear in a glass dropdown under the address bubble (↑/↓ to pick, Enter to go)
 - **Bookmarks**: tap the ★ in the address bubble (or `Ctrl+D`); manage them on the bookmarks page (`Ctrl+Shift+O` or the ☰ menu)
 - **History**: every visit is logged locally (`Ctrl+H`) with per-entry delete, search and clear-all
-- **New Tab speed dial**: your most-visited sites as icon-only glass tiles (hover
-  for the title), plus a big search field
+- **New Tab speed dial**: your most-visited sites as icon-only glass tiles with
+  their real persisted favicons (letter fallback when unavailable; hover for the
+  title), plus a big search field
 - **Session restore**: your tabs and window position come back on the next start (toggle in Settings)
 - **☰ menu** beside the minimize button: new tab, incognito, bookmarks,
   history, downloads and settings — all in glass. Settings actions confirm
@@ -85,8 +123,15 @@ just content:
 - Zoom (`Ctrl+ +` / `Ctrl+-` / `Ctrl+0`), print (`Ctrl+P`), fullscreen (`F11`), mouse buttons 4/5 for back/forward
 - Right-click context menus, F12 DevTools, hover link preview, downloads (the engine's download UI)
 - **Find in page** (`Ctrl+F`) with a match counter, next / previous and highlight
+- **Accessible glass UI**: semantic tabs, buttons, menus and dialogs; complete
+  keyboard tab/menu navigation, screen-reader loading announcements, visible
+  focus, reduced-motion and forced-colors support, plus optional larger controls
 - High-DPI aware (crisp on any monitor, follows the window between screens); the bar reflows correctly at **any window size**
 - Persistent profile: logins and cookies are kept in `%LOCALAPPDATA%\OKBrowser`
+- **Verified in-app updates**: Settings checks GitHub for a newer release,
+  asks before downloading, verifies the published SHA-256 checksum and PE
+  header, asks again before restart, then safely replaces the portable EXE;
+  failures leave the current executable untouched
 - Proper Windows app icon, version info and GUI subsystem (no console flash)
 
 ### Keyboard shortcuts

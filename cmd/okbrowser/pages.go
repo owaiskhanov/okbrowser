@@ -4,11 +4,13 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // pages.go renders OK Browser's built-in pages: the start page (speed
@@ -29,6 +31,9 @@ background:linear-gradient(160deg,#f6f7fa 0%,#eceef4 55%,#e7e9f2 100%);
 color:#1d1d1f;-webkit-tap-highlight-color:transparent}
 @media (prefers-color-scheme:dark){body{
 background:linear-gradient(160deg,#151519 0%,#101014 55%,#0c0c10 100%);color:#f2f2f7}}
+*:focus-visible{outline:2px solid #0a84ff;outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media (forced-colors:active){body{background:Canvas;color:CanvasText}.card{border:1px solid CanvasText}}
 .wrap{width:min(720px,92vw);padding:48px 0 64px}
 h1{font-size:26px;font-weight:700;letter-spacing:-.02em;margin:0 0 20px}
 .card{background:rgba(255,255,255,.55);border-radius:18px;
@@ -117,6 +122,13 @@ func avHTML(u string) string {
 	return `<div class="av">` + htmlEsc(ch) + `</div>`
 }
 
+func tileFavicon(t Tile) string {
+	if t.Favicon != "" { return t.Favicon }
+	u, err := url.Parse(t.URL)
+	if err == nil && u.Scheme != "" && u.Host != "" { return u.Scheme + "://" + u.Host + "/favicon.ico" }
+	return ""
+}
+
 // StartPageHTML renders the start page: big search field plus the
 // most-visited speed dial.
 func StartPageHTML(tiles []Tile, engine string) string {
@@ -136,11 +148,13 @@ func StartPageHTML(tiles []Tile, engine string) string {
 		if title == "" {
 			title = t.URL
 		}
+		icon := tileFavicon(t)
 		b.WriteString(`<div class="tile" data-u="` + htmlEsc(t.URL) + `" title="` + htmlEsc(title) + `" style="padding:14px 4px;border-radius:16px;cursor:pointer;background:rgba(255,255,255,.5);backdrop-filter:blur(20px) saturate(1.7);-webkit-backdrop-filter:blur(20px) saturate(1.7);box-shadow:0 6px 20px rgba(0,0,0,.08),inset 0 1px 0 rgba(255,255,255,.6),inset 0 0 0 .5px rgba(255,255,255,.3);transition:transform .16s,background .16s">` +
-			`<div style="margin:0 auto;width:44px;height:44px;border-radius:50%;display:grid;place-items:center;font-size:19px;font-weight:600;color:#3c4043;background:rgba(120,128,138,.14)">` + htmlEsc(avChar(t.URL)) + `</div></div>`)
+			`<div class="tileicon" style="margin:0 auto;width:44px;height:44px;border-radius:14px;display:grid;place-items:center;font-size:19px;font-weight:600;color:#3c4043;background:rgba(120,128,138,.14);overflow:hidden">` +
+			`<span>` + htmlEsc(avChar(t.URL)) + `</span>` + func() string { if icon == "" { return "" }; return `<img src="`+htmlEsc(icon)+`" alt="" style="width:28px;height:28px;object-fit:contain" onerror="this.remove()">` }() + `</div></div>`)
 	}
 	b.WriteString(`</div>`)
-	b.WriteString(`<style>@media (prefers-color-scheme:dark){.tile{background:rgba(38,38,42,.5) !important;box-shadow:0 6px 20px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.07),inset 0 0 0 .5px rgba(255,255,255,.06) !important}}</style>`)
+	b.WriteString(`<style>.tileicon>*{grid-area:1/1}.tileicon img{position:relative;z-index:1;background:inherit}@media (prefers-color-scheme:dark){.tile{background:rgba(38,38,42,.5) !important;box-shadow:0 6px 20px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.07),inset 0 0 0 .5px rgba(255,255,255,.06) !important}}</style>`)
 	b.WriteString(`<script>
 (function(){
   var post=function(o){try{window.__ok(o)}catch(e){}};
@@ -286,6 +300,27 @@ func SettingsHTML(s Settings, version string) string {
 			return `left:2px`
 		}() + `"></div></div></div></div>`)
 
+	// Performance and autofill
+	b.WriteString(`<div style="font-size:12px;font-weight:650;opacity:.5;margin:22px 4px 8px;text-transform:uppercase;letter-spacing:.06em">Performance & autofill</div><div class="card">`)
+	checked := ""
+	if s.Autofill { checked = " checked" }
+	b.WriteString(`<div class="row"><div class="meta"><div class="tt">Password and address autofill</div><div class="uu">Protected by WebView2; OK Browser cannot read saved values</div></div><input id="autofill" type="checkbox"` + checked + `></div>`)
+	b.WriteString(`<div class="row"><div class="meta"><div class="tt">Sleep background tabs</div><div class="uu">Pinned and Split View tabs stay active</div></div><select id="sleep">`)
+	for _, n := range []int{0, 5, 15, 30, 60} {
+		label, selected := fmt.Sprintf("%d min", n), ""
+		if n == 0 { label = "Never" }
+		if s.SleepMinutes == n { selected = " selected" }
+		b.WriteString(`<option value="` + strconv.Itoa(n) + `"` + selected + `>` + label + `</option>`)
+	}
+	b.WriteString(`</select></div></div>`)
+
+	// Accessibility
+	b.WriteString(`<div style="font-size:12px;font-weight:650;opacity:.5;margin:22px 4px 8px;text-transform:uppercase;letter-spacing:.06em">Accessibility</div><div class="card">`)
+	large := ""
+	if s.LargeControls { large = " checked" }
+	b.WriteString(`<div class="row"><div class="meta"><div class="tt">Larger browser controls</div><div class="uu">Increases tabs, window buttons and the address field</div></div><input id="large" type="checkbox"` + large + `></div>`)
+	b.WriteString(`<div class="row"><div class="meta"><div class="tt">System accessibility</div><div class="uu">Reduced motion, high contrast and keyboard focus are followed automatically</div></div></div></div>`)
+
 	// Privacy
 	b.WriteString(`<div style="font-size:12px;font-weight:650;opacity:.5;margin:22px 4px 8px;text-transform:uppercase;letter-spacing:.06em">Privacy</div>`)
 	b.WriteString(`<div class="card">`)
@@ -296,7 +331,8 @@ func SettingsHTML(s Settings, version string) string {
 
 	// About
 	b.WriteString(`<div style="font-size:12px;font-weight:650;opacity:.5;margin:22px 4px 8px;text-transform:uppercase;letter-spacing:.06em">About</div>`)
-	b.WriteString(`<div class="card"><div class="row" style="padding:14px 16px"><div class="av">OK</div><div class="meta"><div class="tt">OK Browser ` + version + `</div><div class="uu">Light and fast · WebView2 edition</div></div></div></div>`)
+	b.WriteString(`<div class="card"><div class="row" style="padding:14px 16px"><div class="av">OK</div><div class="meta"><div class="tt">OK Browser ` + version + `</div><div class="uu">Light and fast · WebView2 edition</div></div></div>`)
+	b.WriteString(`<div class="row" id="updates"><div class="meta"><div class="tt">Check for updates</div><div class="uu">Open the verified latest release and checksum</div></div><div class="xx">Open ›</div></div></div>`)
 	b.WriteString(`</div>`)
 
 	b.WriteString("<script>" + settingsPageJS + "</script>")
@@ -309,7 +345,17 @@ type dlFile struct {
 	Name string
 	Path string
 	Size int64
-	Mod  int64 // unix millis
+	Mod      int64 // unix millis
+	Partial  bool
+	Risky    bool
+	Source   string
+	Mime     string
+	Speed    int64
+	Total    int64
+	NativeState uint32 // 0 active, 1 interrupted, 2 complete
+	Interrupt uint32
+	CanResume bool
+	Paused bool
 }
 
 // listDownloads returns the newest files in the user's Downloads folder.
@@ -329,11 +375,16 @@ func listDownloads() []dlFile {
 		if err != nil || info.IsDir() {
 			continue
 		}
+		name := e.Name()
+		lower := strings.ToLower(name)
+		ext := strings.ToLower(filepath.Ext(strings.TrimSuffix(lower, ".crdownload")))
 		out = append(out, dlFile{
-			Name: e.Name(),
-			Path: filepath.Join(dir, e.Name()),
+			Name: name,
+			Path: filepath.Join(dir, name),
 			Size: info.Size(),
-			Mod:  info.ModTime().UnixMilli(),
+			Mod: info.ModTime().UnixMilli(),
+			Partial: strings.HasSuffix(lower, ".crdownload") || strings.HasSuffix(lower, ".tmp"),
+			Risky: ext == ".exe" || ext == ".msi" || ext == ".bat" || ext == ".cmd" || ext == ".ps1" || ext == ".scr",
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Mod > out[j].Mod })
@@ -363,17 +414,34 @@ func DownloadsHTML(files []dlFile) string {
 	var b strings.Builder
 	b.WriteString(pageBase)
 	b.WriteString(toastMount)
-	b.WriteString(`<div class="wrap fade"><h1>Downloads</h1>`)
+	b.WriteString(`<style>.acts{display:flex;gap:5px}.db{padding:7px 10px;border-radius:12px;background:rgba(120,128,138,.12);font-size:11px;font-weight:650}.db:hover{background:rgba(10,132,255,.17)}.del:hover{background:rgba(232,17,35,.18);color:#d70015}.warn{color:#d97706}.live{color:#0a84ff}.dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;margin-right:5px;animation:pulse 1.2s infinite}@keyframes pulse{50%{opacity:.25}}</style>`)
+	b.WriteString(`<div class="wrap fade"><h1>Downloads</h1><div style="font-size:12px;opacity:.55;margin:-12px 2px 16px">Live files from your Downloads folder</div>`)
 	if len(files) == 0 {
 		b.WriteString(`<div class="card"><div class="row"><div class="meta"><div class="tt">No downloads yet</div><div class="uu">Files you download appear here</div></div></div></div>`)
 	}
 	b.WriteString(`<div class="card" id="list">`)
 	for _, f := range files {
-		b.WriteString(`<div class="row" data-p="` + htmlEsc(f.Path) + `">` +
+		status := humanSize(f.Size) + ` · ` + time.UnixMilli(f.Mod).Format("2 Jan, 3:04 PM")
+		class := ""
+		if f.Partial {
+			pct := ""
+			if f.Total > 0 { pct = fmt.Sprintf(" · %.0f%%", 100*float64(f.Size)/float64(f.Total)) }
+			status = `<span class="live"><i class="dot"></i>Downloading</span>` + pct + ` · ` + humanSize(f.Size)
+			if f.Speed > 0 { status += ` · ` + humanSize(f.Speed) + `/s` }
+			class = " partial"
+		} else if f.NativeState == 1 { status = `<span class="warn">Interrupted</span>`; if f.CanResume { status += ` · can resume` } }
+		if host := sourceHost(f.Source); host != "" { status += ` · ` + htmlEsc(host) }
+		if f.Risky && !f.Partial { status += ` · <span class="warn">Executable — verify before opening</span>` }
+		openLabel := "Open"
+		if f.Partial { openLabel = "Cancel" }
+		extra := ""
+		if f.Partial && !f.Paused { extra = `<div class="db pause">Pause</div>` }
+		if f.Partial && f.Paused { extra = `<div class="db resume">Resume</div>`; status = `<span class="warn">Paused</span> · ` + humanSize(f.Size) }
+		if f.NativeState == 1 && f.CanResume { extra = `<div class="db resume">Resume</div>` }
+		b.WriteString(`<div class="row` + class + `" data-p="` + htmlEsc(f.Path) + `" data-partial="` + strconv.FormatBool(f.Partial) + `">` +
 			`<div class="av">` + htmlEsc(avChar("http://"+f.Name)) + `</div>` +
-			`<div class="meta"><div class="tt">` + htmlEsc(f.Name) + `</div>` +
-			`<div class="uu">` + humanSize(f.Size) + `</div></div>` +
-			`<div class="xx" title="Show in folder">↗</div></div>`)
+			`<div class="meta"><div class="tt">` + htmlEsc(f.Name) + `</div><div class="uu">` + status + `</div></div>` +
+			`<div class="acts"><div class="db primary">` + openLabel + `</div>` + extra + `<div class="db show">Show</div><div class="db del">Remove</div></div></div>`)
 	}
 	b.WriteString(`</div></div>`)
 	b.WriteString(`<script>
@@ -382,11 +450,20 @@ func DownloadsHTML(files []dlFile) string {
   var rows=document.querySelectorAll('.row[data-p]');
   for(var i=0;i<rows.length;i++){
     (function(r){
-      var p=r.getAttribute('data-p');
-      r.addEventListener('click',function(e){ if(e.target.className==='xx')return; post({t:'dl-open',u:p}); });
-      r.querySelector('.xx').addEventListener('click',function(e){ e.stopPropagation(); post({t:'dl-show',u:p}); });
+      var p=r.getAttribute('data-p'), partial=r.getAttribute('data-partial')==='true';
+      r.querySelector('.primary').addEventListener('click',function(){
+        if(partial){ if(confirm('Cancel this download?')) post({t:'dl-control',a:'cancel',u:p}); }
+        else post({t:'dl-open',u:p});
+      });
+      var pause=r.querySelector('.pause');if(pause)pause.addEventListener('click',function(){post({t:'dl-control',a:'pause',u:p});});
+      var resume=r.querySelector('.resume');if(resume)resume.addEventListener('click',function(){post({t:'dl-control',a:'resume',u:p});});
+      r.querySelector('.show').addEventListener('click',function(){post({t:'dl-show',u:p});});
+      r.querySelector('.del').addEventListener('click',function(){
+        if(confirm(partial?'Cancel and remove this partial download?':'Permanently delete this downloaded file?')) post({t:'dl-remove',u:p});
+      });
     })(rows[i]);
   }
+  if(document.querySelector('.partial')) setTimeout(function(){post({t:'dl-refresh'})},1500);
 })();
 </script>`)
 	b.WriteString(pageClose)
@@ -423,6 +500,11 @@ const settingsPageJS = `(function(){
       toast(on?'Tabs will reopen on startup':'Tabs start fresh');
     });
   }
+  var lg=document.getElementById('large');if(lg)lg.addEventListener('change',function(){post({t:'set',m:'large',u:this.checked?'1':'0'});toast('Browser controls updated');});
+  var af=document.getElementById('autofill');
+  if(af) af.addEventListener('change',function(){post({t:'set',m:'autofill',u:this.checked?'1':'0'});toast(this.checked?'Autofill enabled':'Autofill disabled');});
+  var sl=document.getElementById('sleep');
+  if(sl) sl.addEventListener('change',function(){post({t:'set',m:'sleep',u:this.value});toast(this.value==='0'?'Sleeping tabs disabled':'Tabs sleep after '+this.value+' minutes');});
   function act(id,m,msg){
     var el=document.getElementById(id);
     if(el) el.addEventListener('click',function(){
@@ -433,4 +515,5 @@ const settingsPageJS = `(function(){
   act('ch','history','Browsing history cleared');
   act('cb','bookmarks','Bookmarks cleared');
   act('cs','session','Saved session forgotten');
+  var up=document.getElementById('updates');if(up)up.addEventListener('click',function(){post({t:'ui',a:'updates'});});
 })();`

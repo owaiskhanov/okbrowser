@@ -4,9 +4,13 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jchv/go-webview2/pkg/edge"
 	"github.com/lxn/win"
 )
 
@@ -21,8 +25,23 @@ window.__ok = function (o) {
   try { window.chrome.webview.postMessage(JSON.stringify(o)); } catch (e) {}
 };
 (function () {
-  if (window.top !== window) return;
+  if (window.top !== window) {
+    document.addEventListener("mousemove", function (e) {
+      if (e.clientY < 180) window.__ok({ t: "proximity" });
+    }, true);
+    return;
+  }
   function anchor(el) { return el && el.closest ? el.closest("a") : null; }
+  function reportAudio() {
+    var media = document.querySelectorAll('audio,video'), playing = false;
+    for (var i=0;i<media.length;i++) if (!media[i].paused && !media[i].ended) { playing=true; break; }
+    window.__ok({t:'audio', a:playing?'1':'0'});
+  }
+  document.addEventListener('play', reportAudio, true);
+  document.addEventListener('pause', reportAudio, true);
+  document.addEventListener('ended', reportAudio, true);
+  var formDirty=false;
+  document.addEventListener('input',function(e){if(!formDirty && e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)){formDirty=true;window.__ok({t:'form-dirty',a:'1'});}},true);
   document.addEventListener("click", function (e) {
     var a = anchor(e.target);
     if (a && a.target && a.target !== "_self" && !a.hasAttribute("data-ok-engine")) {
@@ -36,6 +55,35 @@ window.__ok = function (o) {
       e.preventDefault();
       window.__ok({ t: "open", u: a.href });
     }
+  }, true);
+  // Link edge gestures. Drag any ordinary link toward an edge: left previews
+  // a split view, right queues it as a background tab, top opens a tab.
+  var edgeLink = "";
+  function edgeSignal(phase, e) {
+    document.dispatchEvent(new CustomEvent("ok-link-edge", { detail: {
+      phase: phase, url: edgeLink, x: e.clientX || 0, y: e.clientY || 0
+    }}));
+  }
+  document.addEventListener("dragstart", function (e) {
+    if (window.__okSplitActive) return; // two panes is the hard maximum
+    var a = anchor(e.target);
+    if (!a || !a.href || a.href.indexOf("javascript:") === 0) return;
+    edgeLink = a.href;
+    if (e.dataTransfer) { e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("text/uri-list", edgeLink); }
+    edgeSignal("start", e);
+  }, true);
+  document.addEventListener("dragover", function (e) {
+    if (!edgeLink) return;
+    edgeSignal("move", e);
+    if (e.clientX < 92 || e.clientX > innerWidth - 92 || e.clientY < 72) e.preventDefault();
+  }, true);
+  document.addEventListener("drop", function (e) {
+    if (!edgeLink) return;
+    edgeSignal("drop", e); e.preventDefault(); edgeLink = "";
+  }, true);
+  document.addEventListener("dragend", function (e) {
+    if (edgeLink) edgeSignal("end", e);
+    edgeLink = "";
   }, true);
   window.open = function (u) {
     if (u) window.__ok({ t: "open", u: String(u) });
@@ -70,6 +118,7 @@ const barJS = `
   var I_PLUS = SV('<path d="M12 5v14M5 12h14"/>');
   var I_X    = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>';
   var I_LENS = SV('<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/>');
+  var I_LOCK = SV('<rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>');
   var I_GO   = SV('<path d="M5 12h13"/><path d="M13 6l6 6-6 6"/>');
   var I_MIN  = SV('<path d="M5 12h14"/>');
   var I_MAX  = SV('<rect x="5.5" y="5.5" width="13" height="13" rx="2"/>');
@@ -99,8 +148,11 @@ const barJS = `
     "background:rgba(250,250,252,.52);",
     "backdrop-filter:blur(26px) saturate(1.7);-webkit-backdrop-filter:blur(26px) saturate(1.7);",
     "box-shadow:0 1px 12px rgba(0,0,0,.08),inset 0 -.5px 0 rgba(0,0,0,.07);",
-    "transform:translateY(-100%);transition:transform .24s cubic-bezier(.32,.72,.24,1)}",
-    ".strip.open{transform:translateY(0)}",
+    "transform:translateY(calc(-100% + (100% * var(--ok-proximity,0))));",
+    "opacity:calc(.18 + (.82 * var(--ok-proximity,0)));",
+    "transition:transform .10s ease-out,opacity .10s ease-out}",
+    ".strip.open{transform:translateY(0);opacity:1}",
+    ".strip.paneactive{box-shadow:inset 0 -2px 0 #0a84ff,0 1px 12px rgba(0,0,0,.12)}",
     "@media (prefers-color-scheme:dark){.strip{background:rgba(24,24,28,.55);",
     "box-shadow:0 1px 12px rgba(0,0,0,.32),inset 0 -.5px 0 rgba(255,255,255,.06)}}",
     ".tz{display:flex;gap:4px;align-items:center;min-width:0;height:100%;",
@@ -113,6 +165,7 @@ const barJS = `
     "inset 0 0 0 .5px rgba(255,255,255,.20);",
     "transition:background .16s ease,transform .16s ease,flex-basis .22s ease,width .22s ease}",
     ".tab.in{animation:okin .24s cubic-bezier(.2,.8,.3,1)}",
+    ".tab.sleep{opacity:.62}.tab.sleep .ic{filter:saturate(.35)}",
     ".ic{flex:0 0 auto;width:16px;height:16px;border-radius:5px;display:grid;place-items:center;",
     "font-size:10px;font-weight:700;color:#5f6368;overflow:hidden}",
     "@media (prefers-color-scheme:dark){.ic{color:#9aa0a6}}",
@@ -161,7 +214,7 @@ const barJS = `
     ".drag{flex:1 1 auto;height:100%;pointer-events:auto}",
     ".wcap{position:fixed;top:5px;right:6px;height:26px;display:flex;align-items:center;",
     "padding:0 3px;border-radius:14px;z-index:2147483647;pointer-events:auto;",
-    "transform:translateY(0);transition:transform .24s cubic-bezier(.32,.72,.24,1),opacity .2s}",
+    "transform:translateY(0);transition:transform .10s ease-out,opacity .10s ease-out}",
     "background:rgba(250,250,252,.5);",
     "backdrop-filter:blur(24px) saturate(1.7);-webkit-backdrop-filter:blur(24px) saturate(1.7);",
     "box-shadow:0 2px 12px rgba(0,0,0,.14),inset 0 1px 0 rgba(255,255,255,.5),",
@@ -169,9 +222,19 @@ const barJS = `
     "@media (prefers-color-scheme:dark){.wcap{background:rgba(28,28,32,.55);",
     "box-shadow:0 2px 12px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.09),",
     "inset 0 0 0 .5px rgba(255,255,255,.08)}}",
-    ".wcap.hid{transform:translateY(-160%);opacity:0;pointer-events:none}",
+    ".wcap.hid{transform:translateY(calc(-160% + (160% * var(--ok-proximity,0))));",
+    "opacity:var(--ok-proximity,0);pointer-events:none}",
+    ".wcap.hid.near{pointer-events:auto}",
     ".wbtn{width:40px;height:22px;border-radius:11px;display:grid;place-items:center;color:#3c4043;",
     "cursor:default;transition:background .12s,opacity .12s}",
+    ".sitepanel{position:fixed;top:40px;left:8px;width:290px;padding:12px;border-radius:18px;z-index:2147483647;",
+    "display:none;pointer-events:auto;font:12px -apple-system,'Segoe UI',sans-serif;color:#202124;",
+    "background:rgba(250,250,252,.88);backdrop-filter:blur(32px) saturate(1.8);box-shadow:0 16px 50px rgba(0,0,0,.28)}",
+    ".sitepanel.open{display:block;animation:okin .16s ease}.sitehead{font-size:14px;font-weight:700;margin:2px 4px 3px}",
+    ".siteorigin{font-size:11px;opacity:.58;margin:0 4px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+    ".permrow{display:flex;align-items:center;justify-content:space-between;padding:7px 4px;border-top:1px solid rgba(120,128,138,.14)}",
+    ".permrow select{border:0;border-radius:9px;padding:4px 6px;background:rgba(120,128,138,.13);color:inherit}",
+    "@media(prefers-color-scheme:dark){.sitepanel{background:rgba(28,28,32,.9);color:#f2f2f7}}",
     ".menu,.ctx{position:fixed;top:34px;right:6px;width:224px;padding:6px;border-radius:16px;",
     "z-index:2147483647;pointer-events:auto;display:none;",
     "font-family:-apple-system,'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;",
@@ -274,7 +337,38 @@ const barJS = `
     "@media (prefers-color-scheme:dark){.fb{color:#e8eaed}}",
     ".fb:hover{background:rgba(120,128,138,.16)}",
     ".fb svg{width:13px;height:13px}",
-    "@media print{.strip,.wcap,.edge,.find{display:none !important}}"
+    ".edgeact{position:fixed;z-index:2147483643;pointer-events:none;opacity:0;display:flex;",
+    "align-items:center;justify-content:center;font:600 13px -apple-system,'Segoe UI',sans-serif;",
+    "color:#fff;background:rgba(18,20,26,.42);backdrop-filter:blur(34px) saturate(1.8);",
+    "-webkit-backdrop-filter:blur(34px) saturate(1.8);border:1px solid rgba(255,255,255,.2);",
+    "box-shadow:0 24px 70px rgba(0,0,0,.28),inset 0 1px rgba(255,255,255,.22);",
+    "transition:opacity .22s ease,transform .48s cubic-bezier(.16,1,.3,1),background .2s}",
+    ".edgeact.show{opacity:1}.edgeact.hot{background:rgba(10,132,255,.68)}",
+    ".edge-left{left:12px;top:12%;bottom:12%;width:min(42vw,520px);border-radius:28px;transform:translateX(-105%) scale(.94)}",
+    ".edge-left.show{transform:translateX(-84%) scale(.97)}.edge-left.hot{transform:translateX(0) scale(1)}",
+    ".edge-right{right:12px;top:26%;width:180px;height:48%;border-radius:26px;transform:translateX(115%) scale(.9)}",
+    ".edge-right.show{transform:translateX(74%) scale(.96)}.edge-right.hot{transform:translateX(0) scale(1)}",
+    ".edge-top{left:32%;right:32%;top:8px;height:64px;border-radius:32px;transform:translateY(-125%) scale(.9)}",
+    ".edge-top.show{transform:translateY(-72%) scale(.96)}.edge-top.hot{transform:translateY(0) scale(1)}",
+    ".edgeact span{padding:10px 16px;border-radius:20px;background:rgba(0,0,0,.2);text-align:center}",
+    ".splitclose{position:fixed;top:42px;left:50%;transform:translateX(-50%);z-index:2147483647;",
+    "display:none;gap:2px;padding:4px;border-radius:18px;pointer-events:auto;cursor:default;",
+    "font:600 11px -apple-system,'Segoe UI',sans-serif;color:#fff;background:rgba(35,35,40,.68);",
+    "backdrop-filter:blur(24px);box-shadow:0 8px 30px rgba(0,0,0,.25)}",
+    ".splitclose.show{display:flex}.splitclose .splitact{padding:6px 9px;border-radius:13px;font-weight:600}",
+    ".splitclose .splitact:hover{background:rgba(255,255,255,.16)}.splitclose .danger:hover{background:#e81123}",
+    ".splitdivider{position:fixed;right:0;top:80px;bottom:0;width:8px;z-index:2147483647;",
+    "display:none;cursor:col-resize;pointer-events:auto}.splitdivider.show{display:block}",
+    ".splitdivider:after{content:'';position:absolute;left:3px;top:35%;width:2px;height:30%;",
+    "border-radius:2px;background:rgba(120,128,138,.45)}",
+    "*:focus-visible{outline:2px solid #0a84ff !important;outline-offset:2px}",
+    ".sr{position:fixed;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}",
+    ":host(.large) .strip{height:46px}:host(.large) .tab{height:32px;border-radius:16px}",
+    ":host(.large) .wcap{height:34px}:host(.large) .wbtn{height:30px;width:46px}",
+    ":host(.large) .okb{height:34px;border-radius:18px}",
+    "@media (prefers-reduced-motion:reduce){*{animation:none !important;transition-duration:.01ms !important}}",
+    "@media (forced-colors:active){.strip,.wcap,.okb,.menu,.ctx,.sug,.find{background:Canvas;border:1px solid CanvasText;backdrop-filter:none}.tab.on{outline:2px solid Highlight}}",
+    "@media print{.strip,.wcap,.edge,.find,.edgeact{display:none !important}}"
   ].join("");
 
   var sheet = new CSSStyleSheet();
@@ -282,6 +376,7 @@ const barJS = `
   root.adoptedStyleSheets = [sheet];
 
   root.innerHTML =
+    '<div class="sr" id="live" role="status" aria-live="polite"></div>' +
     '<div class="prog" id="prog"></div>' +
     '<div class="edge" id="edge"></div>' +
     '<div class="strip" id="strip">' +
@@ -290,6 +385,7 @@ const barJS = `
       '<div class="okb" id="okb">' +
         '<div class="lens" id="lens">' + I_LENS + '</div>' +
         '<div class="inner">' +
+          '<div class="bb" id="bsite" title="Site information">' + I_LOCK + '</div>' +
           '<div class="bb" id="bback" title="Back">' + I_BACK + '</div>' +
           '<div class="bb" id="bfwd" title="Forward">' + I_FWD + '</div>' +
           '<div class="bb" id="brl" title="Reload">' + I_RL + '</div>' +
@@ -306,6 +402,14 @@ const barJS = `
       '<div class="wbtn" id="wmax" title="Maximize">' + I_MAX + '</div>' +
       '<div class="wbtn close" id="wclose" title="Close">' + I_X + '</div>' +
     '</div>' +
+    '<div class="sitepanel" id="sitepanel"><div class="sitehead" id="sitehead">Site information</div><div class="siteorigin" id="siteorigin"></div>' +
+      '<div class="permrow">Camera<select data-perm="camera"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div>' +
+      '<div class="permrow">Microphone<select data-perm="microphone"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div>' +
+      '<div class="permrow">Location<select data-perm="location"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div>' +
+      '<div class="permrow">Notifications<select data-perm="notifications"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div>' +
+      '<div class="permrow">Clipboard<select data-perm="clipboard"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div>' +
+      '<div class="permrow">Sensors<select data-perm="sensors"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div>' +
+      '<div class="permrow"><div class="mrow" id="clear-perms">Reset permissions</div><div class="mrow" id="clear-site">Clear site data</div></div></div>' +
     '<div class="menu" id="menu">' +
       '<div class="mrow" id="m-newtab" data-m="newtab">' + I_PLUS + 'New tab</div>' +
       '<div class="mrow" id="m-incognito" data-m="incognito">' + I_INC + 'New incognito window</div>' +
@@ -319,10 +423,18 @@ const barJS = `
       '<div class="mrow" id="c-newtab">New tab</div>' +
       '<div class="mrow" id="c-dup">Duplicate</div>' +
       '<div class="mrow" id="c-pin">Pin tab</div>' +
+      '<div class="mrow" id="c-split">Open in Split View</div>' +
+      '<div class="mrow" id="c-sleep">Sleep tab</div>' +
+      '<div class="mrow" id="c-never">Never sleep this site</div>' +
       '<div class="mrow" id="c-close">Close tab</div>' +
       '<div class="mrow" id="c-others">Close other tabs</div>' +
     '</div>' +
     '<div class="sug" id="sug"></div>' +
+    '<div class="edgeact edge-left" id="edge-left"><span>Drop to Queue for Later</span></div>' +
+    '<div class="edgeact edge-right" id="edge-right"><span>Drop for Peek & Split</span></div>' +
+    '<div class="edgeact edge-top" id="edge-top"><span></span></div>' +
+    '<div class="splitclose" id="splitclose"><div class="splitact" id="split-swap">⇄ Swap</div><div class="splitact" id="split-tab">↗ Tabs</div><div class="splitact danger" id="split-close">× Close</div></div>' +
+    '<div class="splitdivider" id="splitdivider"></div>' +
     '<div class="find" id="find">' +
       '<input id="fq" placeholder="Find in page" spellcheck="false">' +
       '<div class="fc" id="fc">0/0</div>' +
@@ -331,7 +443,23 @@ const barJS = `
       '<div class="fb" id="fclose" title="Close (Esc)">' + I_X + '</div>' +
     '</div>';
 
+  var live = root.getElementById('live');
+  function announce(text) { live.textContent = ''; setTimeout(function(){ live.textContent = text; }, 20); }
+  var buttonIDs = ['plus','lens','bsite','bback','bfwd','brl','bstar','go','wmenu','wmin','wmax','wclose','fprev','fnext','fclose','split-swap','split-tab','split-close'];
+  for (var ai=0;ai<buttonIDs.length;ai++) {
+    var control=root.getElementById(buttonIDs[ai]); if(!control)continue;
+    control.setAttribute('role','button'); control.setAttribute('tabindex','0');
+    if(control.title) control.setAttribute('aria-label',control.title);
+    control.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();this.click();}});
+  }
+  input = root.getElementById('q'); input.setAttribute('aria-label','Address and search');
+  root.getElementById('tz').setAttribute('role','tablist');
+  root.getElementById('menu').setAttribute('role','menu');
+  root.getElementById('sitepanel').setAttribute('role','dialog');
+  root.getElementById('sitepanel').setAttribute('aria-label','Site information and permissions');
+
   var post = function (o) { window.__ok(o); };
+  document.addEventListener('pointerdown', function () { post({t:'pane-focus'}); }, true);
   var tz = root.getElementById('tz');
   var okb = root.getElementById('okb');
   var input = root.getElementById('q');
@@ -353,16 +481,21 @@ const barJS = `
     if (wc) wc.classList.add('hid'); // the capsule hides with the bar
     closeMenu();
     closeCtx();
+    strip.style['--ok-proximity'] = '0';
+    var cap = root.getElementById('wcap');
+    if (cap) { cap.style['--ok-proximity'] = '0'; cap.classList.remove('near'); }
   }
   function uiOpen(id) {
     var el = root.getElementById(id);
     return !!el && el.classList.contains('open');
   }
   function hideIfIdle() {
-    if (barPinned || document.activeElement === input) return;
+    // New Tab is a persistent command surface: its tabs and URL field never
+    // retreat, even when the pointer leaves the top of the window.
+    if (!S.u || barPinned || document.activeElement === input) return;
     // Popovers anchored to the bar (menu, tab menu, suggestions, find)
     // are part of it: the bar must never retire while one is open.
-    if (uiOpen('menu') || uiOpen('ctx') || uiOpen('sug') || uiOpen('find')) return;
+    if (uiOpen('menu') || uiOpen('ctx') || uiOpen('sug') || uiOpen('find') || uiOpen('sitepanel')) return;
     hideBar();
   }
   function revealBar(brief) {
@@ -375,11 +508,39 @@ const barJS = `
       briefTimer = setTimeout(function () { briefTimer = 0; hideIfIdle(); }, 2000);
     }
   }
-  // Tripwires at the top edge. The .edge element is hit-tested above page
-  // content AND iframes; the document mousemove is the fast path.
+  // Proximity reveal: the chrome begins following the pointer before it
+  // reaches the edge, then becomes fully interactive near the top.  A pointer
+  // moving upward quickly gets a wider magnetic range so the controls meet it.
+  var lastPointerY = window.innerHeight || 10000;
+  var clockNow = function () { return window.performance ? window.performance.now() : Date.now(); };
+  var nextFrame = window.requestAnimationFrame || function (fn) { fn(); return 0; };
+  var dropFrame = window.cancelAnimationFrame || function () {};
+  var lastPointerAt = clockNow();
+  var proximityFrame = 0;
+  function paintProximity(y, upwardSpeed) {
+    if (barPinned || strip.classList.contains('open')) return;
+    var range = upwardSpeed > 0.65 ? 210 : 160;
+    var fullAt = 32;
+    var amount = Math.max(0, Math.min(1, (range - y) / (range - fullAt)));
+    // Ease the first hint in, while retaining a direct, cursor-linked finish.
+    amount = amount * amount * (3 - 2 * amount);
+    strip.style['--ok-proximity'] = amount.toFixed(3);
+    wcap.style['--ok-proximity'] = amount.toFixed(3);
+    wcap.classList.toggle('near', amount > 0.82);
+    if (y <= fullAt) revealBar(false);
+  }
   root.getElementById('edge').addEventListener('mouseenter', function () { revealBar(false); });
   document.addEventListener('mousemove', function (e) {
-    if (e.clientY <= 4) revealBar(false);
+    var now = clockNow();
+    var dt = Math.max(1, now - lastPointerAt);
+    var upwardSpeed = Math.max(0, (lastPointerY - e.clientY) / dt);
+    lastPointerY = e.clientY;
+    lastPointerAt = now;
+    if (proximityFrame) dropFrame(proximityFrame);
+    proximityFrame = nextFrame(function () {
+      proximityFrame = 0;
+      paintProximity(e.clientY, upwardSpeed);
+    });
   }, true);
   strip.addEventListener('mouseenter', function () { barPinned = true; });
   strip.addEventListener('mouseleave', function () {
@@ -398,6 +559,61 @@ const barJS = `
     if (hideTimer) clearTimeout(hideTimer);
     hideTimer = setTimeout(hideIfIdle, 350);
   });
+
+  // Link-edge gesture surface. The large left preview follows the same soft
+  // spring curve as iOS sheets; committing it asks the native host for a real
+  // second WebView, so sites that block iframes still work in Split View.
+  var edgeLeft = root.getElementById('edge-left');
+  var edgeRight = root.getElementById('edge-right');
+  var edgeTop = root.getElementById('edge-top');
+  var edgeZone = '';
+  function clearEdgeGesture() {
+    [edgeLeft, edgeRight, edgeTop].forEach(function (el) { el.classList.remove('show', 'hot'); });
+    edgeZone = '';
+  }
+  document.addEventListener('ok-link-edge', function (e) {
+    var d = e.detail || {};
+    if (S.v) { clearEdgeGesture(); return; }
+    if (d.phase === 'end') { clearEdgeGesture(); return; }
+    var zone = d.x < 92 ? 'later' : (d.x > innerWidth - 92 ? 'split' : '');
+    [edgeLeft, edgeRight, edgeTop].forEach(function (el) { el.classList.toggle('show', d.phase !== 'drop'); });
+    edgeLeft.classList.toggle('hot', zone === 'later');
+    edgeRight.classList.toggle('hot', zone === 'split');
+    edgeTop.classList.remove('show', 'hot');
+    edgeZone = zone;
+    if (d.url) {
+      try { edgeRight.firstElementChild.textContent = 'Peek & Split  ·  ' + new URL(d.url).hostname; } catch (_) {}
+    }
+    if (d.phase === 'drop') {
+      if (zone && d.url) post({ t: 'edge-link', a: zone, u: d.url });
+      clearEdgeGesture();
+    }
+  }, true);
+
+  // Existing tabs can be dragged to either window edge to form Split View.
+  // The side of the drop determines which pane receives the dragged tab.
+  var tabEdgeZone = '';
+  document.addEventListener('dragover', function(e) {
+    if (dragFrom < 0) return;
+    if (S.v) tabEdgeZone = e.clientY < 110 ? 'merge' : '';
+    else tabEdgeZone = e.clientX < 92 ? 'left' : (e.clientX > innerWidth - 92 ? 'right' : '');
+    edgeLeft.classList.toggle('show', !!tabEdgeZone);
+    edgeRight.classList.toggle('show', !!tabEdgeZone);
+    edgeLeft.classList.toggle('hot', tabEdgeZone === 'left');
+    edgeRight.classList.toggle('hot', tabEdgeZone === 'right');
+    edgeTop.classList.toggle('show', tabEdgeZone === 'merge'); edgeTop.classList.toggle('hot', tabEdgeZone === 'merge');
+    edgeLeft.firstElementChild.textContent = 'Drop tab on Left';
+    edgeRight.firstElementChild.textContent = 'Drop tab on Right';
+    edgeTop.firstElementChild.textContent = 'Drop to Return to Tabs';
+    if (tabEdgeZone) e.preventDefault();
+  }, true);
+  document.addEventListener('drop', function(e) {
+    if (dragFrom < 0 || !tabEdgeZone) return;
+    e.preventDefault(); e.stopPropagation();
+    if (tabEdgeZone === 'merge') post({t:'ui', a:'promote-split'});
+    else post({t:'ui', a:'tab-split-' + tabEdgeZone, i:dragFrom});
+    dragFrom=-1; tabEdgeZone=''; clearEdgeGesture();
+  }, true);
 
   // Tabs render by keyed diff: existing pills are updated in place and only
   // genuinely new pills animate in - no rebuild, no flicker, no re-animation
@@ -424,6 +640,7 @@ const barJS = `
     var el = document.createElement('div');
     el.className = 'tab';
     el.draggable = true;
+    el.setAttribute('role','tab'); el.setAttribute('tabindex','0');
     var ic = document.createElement('div');
     ic.className = 'ic';
     el.appendChild(ic);
@@ -432,7 +649,7 @@ const barJS = `
     el.appendChild(sp);
     var x = document.createElement('div');
     x.className = 'tx';
-    x.innerHTML = I_X;
+    x.innerHTML = I_X; x.setAttribute('role','button'); x.setAttribute('aria-label','Close tab'); x.setAttribute('tabindex','-1');
     x.addEventListener('click', function (ev) {
       ev.stopPropagation();
       post({ t: 'ui', a: 'close', i: el.__idx });
@@ -440,6 +657,11 @@ const barJS = `
     el.appendChild(x);
     el.addEventListener('click', function () {
       if (el.__idx !== S.a) post({ t: 'ui', a: 'switch', i: el.__idx });
+    });
+    el.addEventListener('keydown', function(ev) {
+      if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();post({t:'ui',a:'switch',i:el.__idx});}
+      else if(ev.key==='Delete'){ev.preventDefault();post({t:'ui',a:'close',i:el.__idx});}
+      else if(ev.key==='ArrowRight'||ev.key==='ArrowLeft'){ev.preventDefault();var n=(el.__idx+(ev.key==='ArrowRight'?1:-1)+tabEls.length)%tabEls.length;if(tabEls[n])tabEls[n].focus();}
     });
     el.addEventListener('auxclick', function (ev) {
       if (ev.button === 1) { ev.preventDefault(); post({ t: 'ui', a: 'close', i: el.__idx }); }
@@ -450,6 +672,7 @@ const barJS = `
       dragFrom = el.__idx;
       try { e.dataTransfer.setData('text/plain', 'ok'); } catch (err) {}
     });
+    el.addEventListener('dragend', function () { dragFrom=-1; tabEdgeZone=''; clearEdgeGesture(); });
     el.addEventListener('dragover', function (e) { e.preventDefault(); });
     el.addEventListener('drop', function (e) {
       e.preventDefault();
@@ -494,11 +717,13 @@ const barJS = `
     var pinRow = root.getElementById('c-pin');
     var tab = (S.tabs || [])[idx];
     if (pinRow) pinRow.textContent = (tab && tab.p) ? 'Unpin tab' : 'Pin tab';
+    var sleepRow=root.getElementById('c-sleep');if(sleepRow)sleepRow.textContent=(tab&&tab.s)?'Wake tab':'Sleep tab';
+    var neverRow=root.getElementById('c-never');if(neverRow)neverRow.textContent=(tab&&tab.n)?'Allow this site to sleep':'Never sleep this site';
     ctx.classList.add('open');
     try {
       var iw = window.innerWidth || 900, ih = window.innerHeight || 700;
       ctx.style.left = Math.max(6, Math.min(x, iw - 240)) + 'px';
-      ctx.style.top = Math.max(6, Math.min(y, ih - 230)) + 'px';
+      ctx.style.top = Math.max(6, Math.min(y, ih - 310)) + 'px';
     } catch (e) {}
   }
   function ctxAction(id, act) {
@@ -515,6 +740,9 @@ const barJS = `
   });
   ctxAction('c-dup', 'dup');
   ctxAction('c-pin', 'pin');
+  ctxAction('c-split', 'tab-split');
+  ctxAction('c-sleep', 'sleep');
+  ctxAction('c-never', 'never-sleep');
   ctxAction('c-close', 'close');
   ctxAction('c-others', 'close-others');
   document.addEventListener('mousedown', function (e) {
@@ -544,7 +772,11 @@ const barJS = `
       }
       el.__idx = i;
       el.classList.toggle('on', i === S.a);
+      el.setAttribute('aria-selected', i === S.a ? 'true' : 'false');
       el.classList.toggle('pin', !!(tabs[i] && tabs[i].p));
+      el.classList.toggle('sleep', !!(tabs[i] && tabs[i].s));
+      if (tabs[i] && tabs[i].s) el.title = (tabs[i].t || 'Tab') + ' — sleeping';
+      if (tabs[i] && tabs[i].a) el.title = (tabs[i].t || 'Tab') + ' — playing audio';
       el.__set(tabs[i].t || 'New Tab', (tabs[i] && tabs[i].u) || '', (tabs[i] && tabs[i].f) || '');
     }
     root.getElementById('bback').toggleAttribute('disabled', !S.b);
@@ -554,6 +786,24 @@ const barJS = `
     if (stateLive && prevA !== S.a) revealBar(true); // tab switched
     prevA = S.a;
   }
+
+  // --- site identity and per-site permissions -------------------------------
+  var sitepanel = root.getElementById('sitepanel');
+  root.getElementById('bsite').addEventListener('click', function (e) {
+    e.stopPropagation();
+    var secure = /^https:\/\//i.test(S.u || '');
+    root.getElementById('sitehead').textContent = secure ? 'Connection is secure' : 'Connection is not secure';
+    root.getElementById('siteorigin').textContent = S.u || 'New Tab';
+    var selects = sitepanel.querySelectorAll ? sitepanel.querySelectorAll('select[data-perm]') : [];
+    for (var i=0;i<selects.length;i++) selects[i].value = (S.pms && S.pms[selects[i].getAttribute('data-perm')]) || 'default';
+    sitepanel.classList.toggle('open');
+  });
+  var permissionSelects = sitepanel.querySelectorAll ? sitepanel.querySelectorAll('select[data-perm]') : [];
+  for (var pi=0;pi<permissionSelects.length;pi++) permissionSelects[pi].addEventListener('change', function () {
+    post({t:'ui',a:'permission',m:this.getAttribute('data-perm'),u:this.value});
+  });
+  root.getElementById('clear-perms').addEventListener('click', function(){post({t:'ui',a:'clear-permissions'});sitepanel.classList.remove('open');});
+  root.getElementById('clear-site').addEventListener('click', function(){if(confirm('Clear cookies and storage for this site?'))post({t:'ui',a:'clear-site-data'});sitepanel.classList.remove('open');});
 
   // --- the address bubble (in the top bar, beside the +) --------------------
   function setOpen(v) { okb.className = v ? 'okb open' : 'okb'; }
@@ -706,6 +956,7 @@ const barJS = `
   wmenu.addEventListener('click', function (e) {
     e.stopPropagation();
     menu.classList.toggle('open');
+    if(menu.classList.contains('open')){var first=root.getElementById('m-newtab');if(first)first.focus();}
   });
   // Hovering a popover anchored to the bar pins it (the capsule's
   // mouseleave must not retire the bar while the user is INSIDE the menu).
@@ -728,11 +979,13 @@ const barJS = `
   }
   pinFromPopover(menu, closeMenu);
   pinFromPopover(ctx, closeCtx);
+  pinFromPopover(sitepanel, function(){ sitepanel.classList.remove('open'); });
 
   var mids = ['m-newtab', 'm-incognito', 'm-bookmarks', 'm-history', 'm-downloads', 'm-settings'];
   for (var mi = 0; mi < mids.length; mi++) {
     var mrow = root.getElementById(mids[mi]);
     if (!mrow) continue;
+    mrow.setAttribute('role','menuitem'); mrow.setAttribute('tabindex','-1');
     (function (r, act) {
       r.addEventListener('click', function () {
         post({ t: 'menu', m: act });
@@ -740,6 +993,15 @@ const barJS = `
       });
     })(mrow, mids[mi].slice(2));
   }
+  menu.addEventListener('keydown', function(e){
+    if(e.key==='Escape'){closeMenu();wmenu.focus();return;}
+    if(e.key!=='ArrowDown'&&e.key!=='ArrowUp'&&e.key!=='Enter'&&e.key!==' ')return;
+    var rows=[];for(var i=0;i<mids.length;i++){var r=root.getElementById(mids[i]);if(r)rows.push(r);}
+    var at=rows.indexOf(document.activeElement);
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();at=(at+(e.key==='ArrowDown'?1:-1)+rows.length)%rows.length;rows[at].focus();}
+    else if(at>=0){e.preventDefault();rows[at].click();}
+  });
+
   // Events crossing out of a CLOSED shadow root are retargeted: at
   // document level every click's target is the shadow host - even for the
   // menu's own rows - and composedPath() hides closed-root internals too.
@@ -760,6 +1022,11 @@ const barJS = `
   root.getElementById('wmin').addEventListener('click', function () { post({ t: 'ui', a: 'wmin' }); });
   root.getElementById('wmax').addEventListener('click', function () { post({ t: 'ui', a: 'wmaxtoggle' }); });
   root.getElementById('wclose').addEventListener('click', function () { post({ t: 'ui', a: 'wclose' }); });
+  root.getElementById('split-close').addEventListener('click', function () { post({ t: 'ui', a: 'close-split' }); });
+  root.getElementById('split-swap').addEventListener('click', function () { post({ t: 'ui', a: 'swap-split' }); });
+  root.getElementById('split-tab').addEventListener('click', function () { post({ t: 'ui', a: 'promote-split' }); });
+  var splitDivider = root.getElementById('splitdivider');
+  splitDivider.addEventListener('pointerdown', function (e) { e.preventDefault(); post({ t: 'ui', a: 'resize-split-start' }); });
 
   // Empty strip area: drag to move the window, double-click to maximize.
   var drag = root.getElementById('drag');
@@ -895,15 +1162,22 @@ const barJS = `
     host.style.display = document.fullscreenElement ? 'none' : '';
   });
 
-  window.__okBar = function (s) { S = s; render(); sync(); stateLive = true; };
+  window.__okBar = function (s) {
+    S = s; window.__okSplitActive = !!S.v; render(); sync(); stateLive = true;
+    root.getElementById('wclose').title = S.v ? 'Close Split View' : 'Close';
+    if (!S.u) { revealBar(false); setOpen(true); if (!stateLive) { input.focus(); input.select(); } }
+  };
+  window.__okProximityReveal = function () { revealBar(true); };
 
   // Liquid loading hairline at the top edge while a page loads.
   var prog = root.getElementById('prog');
   window.__okLoad = function (on) {
     if (on) {
+      announce('Page loading');
       prog.classList.remove('done');
       prog.classList.add('on');
     } else {
+      announce('Page loaded');
       prog.classList.remove('on');
       prog.classList.add('done');
       setTimeout(function () { prog.classList.remove('done'); }, 450);
@@ -954,6 +1228,9 @@ type barTab struct {
 	U string `json:"u"` // for the letter avatar fallback
 	F string `json:"f"` // favicon URL ('' = letter)
 	P bool   `json:"p"` // pinned (favicon-only pill)
+	S bool   `json:"s"` // sleeping to save memory
+	A bool   `json:"a"` // currently playing audio
+	N bool   `json:"n"` // site excluded from sleeping
 }
 
 // barState is the full state pushed to the active tab's shell UI.
@@ -966,6 +1243,19 @@ type barState struct {
 	M    bool     `json:"m"` // window maximized
 	K    bool     `json:"k"` // current page bookmarked
 	E    string   `json:"e"` // search engine name
+	V    bool              `json:"v"` // split view is active
+	Pms  map[string]string `json:"pms,omitempty"`
+	Q    bool              `json:"q"` // this is the focused split pane
+	L    bool              `json:"l"` // this is the left/original pane
+	G    bool              `json:"g"` // larger browser controls
+}
+
+func (a *app) permissionStateFor(t *tab) map[string]string {
+	out := map[string]string{"camera":"default", "microphone":"default", "location":"default", "notifications":"default", "clipboard":"default", "sensors":"default"}
+	if t == nil { return out }
+	origin := permissionOrigin(t.url)
+	for name := range out { if state := a.store.Permission(origin, name); state != "" { out[name] = state } }
+	return out
 }
 
 // pushBarState sends tab list, address and window state to the shell of the
@@ -981,23 +1271,41 @@ func (a *app) pushBarState() {
 		if title == "" {
 			title = "New Tab"
 		}
-		tabs[i] = barTab{T: title, U: tb.url, F: tb.favicon, P: tb.pinned}
+		tabs[i] = barTab{T: title, U: tb.url, F: tb.favicon, P: tb.pinned, S: tb.sleeping, A: tb.audioPlaying, N: a.store.Settings().NeverSleep[permissionOrigin(tb.url)]}
 	}
-	st := barState{
-		Tabs: tabs,
-		A:    a.activeIdx,
-		U:    t.url,
-		B:    t.chromium.CanGoBack(),
-		F:    t.chromium.CanGoForward(),
-		M:    a.maximized,
-		K:    t.url != "" && !t.isStart && a.store.IsBookmarked(t.url),
-		E:    a.store.Settings().Engine,
+	push := func(view *tab, idx int) {
+		if view == nil || view.chromium == nil {
+			return
+		}
+		st := barState{
+			Tabs: tabs,
+			A:    idx,
+			U:    view.url,
+			B:    view.chromium.CanGoBack(),
+			F:    view.chromium.CanGoForward(),
+			M:    a.maximized,
+			K:    view.url != "" && !view.isStart && a.store.IsBookmarked(view.url),
+			E:    a.store.Settings().Engine,
+			V:    a.splitTab != nil,
+			Pms:  a.permissionStateFor(view),
+			Q:    a.commandTab() == view,
+			L:    view == a.active(),
+			G:    a.store.Settings().LargeControls,
+		}
+		b, err := json.Marshal(st)
+		if err == nil {
+			view.chromium.Eval("window.__okBar&&window.__okBar(" + string(b) + ")")
+		}
 	}
-	b, err := json.Marshal(st)
-	if err != nil {
-		return
+	push(t, a.activeIdx)
+	if a.splitTab != nil {
+		for i, candidate := range a.tabs {
+			if candidate == a.splitTab {
+				push(candidate, i)
+				break
+			}
+		}
 	}
-	a.execActive("window.__okBar&&window.__okBar(" + string(b) + ")")
 }
 
 // scheduleBarPush re-pushes bar state shortly after a load, covering the
@@ -1049,6 +1357,19 @@ func (a *app) allowSpawn() bool {
 	return true
 }
 
+// isDownloadPath confines file actions requested by web messages to the
+// user's Downloads directory. Every web page has the bridge, so never trust a
+// path merely because it arrived through the built-in downloads UI.
+func isDownloadPath(path string) bool {
+	home := os.Getenv("USERPROFILE")
+	if home == "" || path == "" { return false }
+	dir, err1 := filepath.Abs(filepath.Join(home, "Downloads"))
+	p, err2 := filepath.Abs(path)
+	if err1 != nil || err2 != nil { return false }
+	rel, err := filepath.Rel(dir, p)
+	return err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && rel != ".."
+}
+
 // onWebMessage receives JSON messages posted by tab t via window.__ok.
 func (a *app) onWebMessage(t *tab, msg string) {
 	var m struct {
@@ -1078,6 +1399,34 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			win.SetTimer(a.hwnd, 3, 50, 0)
 		}
 
+	case "form-dirty":
+		t.dirtyForm = m.A == "1"
+
+	case "pane-focus":
+		if t == a.active() || t == a.splitTab { a.focusedTab = t; a.pushBarState() }
+
+	case "audio":
+		t.audioPlaying = m.A == "1"
+		a.pushBarState()
+
+	case "proximity":
+		if t == a.active() { a.execActive("window.__okProximityReveal&&window.__okProximityReveal()") }
+
+	case "edge-link": // a dragged link committed at a window edge
+		if m.U != "" {
+			url, action := m.U, m.A
+			a.postTask(func() {
+				switch action {
+				case "split":
+					a.openSplit(url)
+				case "later":
+					a.newTab(url, false) // queued as a background tab
+				case "tab":
+					a.newTab(url, true)
+				}
+			})
+		}
+
 	case "open": // link explicitly asking for a new window
 		if a.inSelfTest {
 			a.stlog("[selftest] bridge open request: %s", m.U)
@@ -1101,6 +1450,7 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		}
 		if m.F != "" && m.U != "" && m.U != "about:blank" {
 			t.favicon = m.F
+			a.store.SetFavicon(m.U, m.F)
 		}
 		if m.U == "" || m.U == "about:blank" {
 			t.isStart = true
@@ -1148,8 +1498,23 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			st.Engine = m.U
 		case "restore":
 			st.RestoreSession = m.U == "1"
+		case "autofill":
+			st.Autofill = m.U == "1"
+		case "large":
+			st.LargeControls = m.U == "1"
+		case "sleep":
+			if n, err := strconv.Atoi(m.U); err == nil && n >= 0 && n <= 120 { st.SleepMinutes = n }
 		}
 		a.store.SetSettings(st)
+		if m.M == "autofill" {
+			for _, tab := range a.tabs {
+				if settings, err := tab.chromium.GetSettings(); err == nil {
+					on := st.Autofill && !incognitoMode
+					_ = settings.PutIsPasswordAutosaveEnabled(on)
+					_ = settings.PutIsGeneralAutofillEnabled(on)
+				}
+			}
+		}
 		a.pushBarState() // the address suggestions label follows the engine
 
 	case "suggest": // address bubble typing: reply with suggestions
@@ -1232,6 +1597,33 @@ func (a *app) onWebMessage(t *tab, msg string) {
 				}
 			})
 			return
+		case "sleep":
+			i := m.I
+			a.postTask(func() { if i >= 0 && i < len(a.tabs) { a.setTabSleeping(i, !a.tabs[i].sleeping) } })
+			return
+		case "never-sleep":
+			i := m.I
+			a.postTask(func() {
+				if i >= 0 && i < len(a.tabs) {
+					st := a.store.Settings(); origin := permissionOrigin(a.tabs[i].url)
+					if st.NeverSleep == nil { st.NeverSleep = make(map[string]bool) }
+					st.NeverSleep[origin] = !st.NeverSleep[origin]; if !st.NeverSleep[origin] { delete(st.NeverSleep, origin) }
+					a.store.SetSettings(st); a.pushBarState()
+				}
+			})
+			return
+		case "tab-split-left", "tab-split-right":
+			i, side := m.I, m.A
+			a.postTask(func() { a.splitExistingTab(i, side == "tab-split-left") })
+			return
+		case "tab-split":
+			i := m.I
+			a.postTask(func() {
+				if a.splitTab == nil && i >= 0 && i < len(a.tabs) && i != a.activeIdx {
+					a.splitTab = a.tabs[i]; a.focusedTab = a.splitTab; a.splitRatio = .5; a.layout(); a.pushBarState()
+				}
+			})
+			return
 		case "close-others": // tab context menu
 			i := m.I
 			a.postTask(func() { a.closeOthers(i) })
@@ -1240,13 +1632,78 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			from, to := m.I, m.To
 			a.postTask(func() { a.reorderTab(from, to) })
 			return
-		case "dl-open": // downloads page: open a file
-			openPath(m.U)
+		case "permission":
+			kinds := map[string]edge.CoreWebView2PermissionKind{"camera":edge.CoreWebView2PermissionKindCamera,"microphone":edge.CoreWebView2PermissionKindMicrophone,"location":edge.CoreWebView2PermissionKindGeolocation,"notifications":edge.CoreWebView2PermissionKindNotifications,"clipboard":edge.CoreWebView2PermissionKindClipboardRead,"sensors":edge.CoreWebView2PermissionKindOtherSensors}
+			kind, ok := kinds[m.M]
+			if ok {
+				state := edge.CoreWebView2PermissionStateDefault
+				if m.U == "allow" { state = edge.CoreWebView2PermissionStateAllow }
+				if m.U == "deny" { state = edge.CoreWebView2PermissionStateDeny }
+				origin := permissionOrigin(t.url)
+				a.store.SetPermission(origin, m.M, m.U)
+				t.chromium.SetPermission(kind, state)
+				a.pushBarState()
+			}
 			return
-		case "dl-show": // downloads page: reveal in Explorer
-			showInFolder(m.U)
+		case "clear-permissions":
+			origin := permissionOrigin(t.url)
+			a.store.ClearPermissions(origin)
+			for _, kind := range []edge.CoreWebView2PermissionKind{edge.CoreWebView2PermissionKindCamera,edge.CoreWebView2PermissionKindMicrophone,edge.CoreWebView2PermissionKindGeolocation,edge.CoreWebView2PermissionKindNotifications,edge.CoreWebView2PermissionKindClipboardRead,edge.CoreWebView2PermissionKindOtherSensors} { t.chromium.SetPermission(kind, edge.CoreWebView2PermissionStateDefault) }
+			a.pushBarState()
 			return
-		case "wdrag", "wtopresize", "wmaxtoggle", "wmin", "wclose":
+		case "clear-site-data":
+			origin := permissionOrigin(t.url)
+			if origin != "" {
+				params, _ := json.Marshal(map[string]string{"origin":origin,"storageTypes":"all"})
+				t.chromium.CallDevToolsProtocol("Storage.clearDataForOrigin", string(params))
+				a.store.ClearPermissions(origin)
+				t.chromium.Reload()
+			}
+			return
+		case "close-split":
+			a.postTask(func() { a.closeSplit() })
+			return
+		case "swap-split":
+			a.postTask(func() { a.swapSplit() })
+			return
+		case "promote-split":
+			a.postTask(func() { a.promoteSplit() })
+			return
+		case "resize-split-start":
+			a.postTask(func() { if a.splitTab != nil { a.splitResizing = true; win.SetCapture(a.hwnd) } })
+			return
+		case "wclose":
+			// In Split View the familiar close control dismisses the second
+			// pane, never the whole browser window.
+			if a.splitTab != nil {
+				a.postTask(func() { a.closeSplit() })
+			} else {
+				a.postTask(func() { a.windowAction("wclose") })
+			}
+			return
+			case "updates":
+			a.checkForUpdates()
+			return
+		case "dl-open": // downloads page: open a validated file
+			if isDownloadPath(m.U) { openPath(m.U) }
+			return
+		case "dl-show": // downloads page: reveal a validated file in Explorer
+			if isDownloadPath(m.U) { showInFolder(m.U) }
+			return
+		case "dl-control":
+			if isDownloadPath(m.U) { a.downloadAction(m.U, m.A) }
+			return
+		case "dl-refresh":
+			a.postTask(func() { if t == a.active() { a.showInternal(t, "downloads") } })
+			return
+		case "dl-remove": // cancel a partial or delete one downloaded file
+			path := m.U
+			if isDownloadPath(path) {
+				_ = os.Remove(path)
+				a.postTask(func() { a.showInternal(t, "downloads") })
+			}
+			return
+		case "wdrag", "wtopresize", "wmaxtoggle", "wmin":
 			act := m.A
 			a.postTask(func() { a.windowAction(act) })
 			return

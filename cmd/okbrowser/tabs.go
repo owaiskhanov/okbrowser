@@ -5,10 +5,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/jchv/go-webview2/pkg/edge"
 	"github.com/lxn/win"
@@ -29,7 +32,31 @@ type tab struct {
 	isStart bool
 	errPage bool // the currently shown page is our error page
 	pinned  bool // pinned tabs render as favicon-only pills
-	zoom    float64
+	zoom         float64
+	inactiveSince time.Time
+	sleeping     bool
+	audioPlaying bool
+	dirtyForm    bool
+	crashCount   int
+	lastCrash    time.Time
+}
+
+func permissionName(kind edge.CoreWebView2PermissionKind) string {
+	switch kind {
+	case edge.CoreWebView2PermissionKindCamera: return "camera"
+	case edge.CoreWebView2PermissionKindMicrophone: return "microphone"
+	case edge.CoreWebView2PermissionKindGeolocation: return "location"
+	case edge.CoreWebView2PermissionKindNotifications: return "notifications"
+	case edge.CoreWebView2PermissionKindClipboardRead: return "clipboard"
+	case edge.CoreWebView2PermissionKindOtherSensors: return "sensors"
+	}
+	return "unknown"
+}
+
+func permissionOrigin(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" { return "" }
+	return strings.ToLower(u.Scheme + "://" + u.Host)
 }
 
 // active returns the currently displayed tab, or nil.
@@ -40,12 +67,22 @@ func (a *app) active() *tab {
 	return a.tabs[a.activeIdx]
 }
 
+// commandTab is the pane that most recently received pointer/keyboard focus.
+func (a *app) commandTab() *tab {
+	if a.focusedTab != nil && (a.focusedTab == a.active() || a.focusedTab == a.splitTab) { return a.focusedTab }
+	return a.active()
+}
+
 // isActive reports whether t is the displayed tab.
 func (a *app) isActive(t *tab) bool { return a.active() == t }
 
 // newTab creates a tab, embeds a web engine in it and navigates to the
 // start page or the given URL. Returns nil when the engine fails to start.
 func (a *app) newTab(url string, activate bool) *tab {
+	return a.newTabMode(url, activate, false)
+}
+
+func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 	tn, _ := syscall.UTF16PtrFromString(tabHostClassName)
 	a.hostSeq++
 	h := win.CreateWindowEx(0, tn, nil, win.WS_CHILD,
@@ -62,7 +99,14 @@ func (a *app) newTab(url string, activate bool) *tab {
 	c := edge.NewChromium()
 	c.DataPath = dataPath()
 	c.MessageCallback = func(msg string) { a.onWebMessage(t, msg) }
-	c.AcceleratorKeyCallback = a.onAccelerator
+	c.AcceleratorKeyCallback = func(vk uint) bool { a.focusedTab = t; return a.onAccelerator(vk) }
+	c.PermissionRequestedCallback = func(raw string, kind edge.CoreWebView2PermissionKind) edge.CoreWebView2PermissionState {
+		name := permissionName(kind)
+		saved := a.store.Permission(permissionOrigin(raw), name)
+		if saved == "allow" { return edge.CoreWebView2PermissionStateAllow }
+		if saved == "deny" { return edge.CoreWebView2PermissionStateDeny }
+		return edge.CoreWebView2PermissionStateDefault
+	}
 	// The engine-level safety net for new windows (target=_blank,
 	// window.open) - covers cases the page-side bridge cannot see (e.g.
 	// links inside closed shadow DOMs).
@@ -86,7 +130,12 @@ func (a *app) newTab(url string, activate bool) *tab {
 			a.postTask(func() { a.newTab(uri, true) })
 		}
 	}
+	c.DownloadStartingCallback = func(args *edge.ICoreWebView2DownloadStartingEventArgs) { a.onDownloadStarting(t, args) }
+	c.ProcessFailedCallback = func(kind edge.CoreWebView2ProcessFailedKind) {
+		a.postTask(func() { a.recoverFailedTab(t, kind) })
+	}
 	c.NavigationStartingCallback = func(_ *edge.ICoreWebView2, args *edge.ICoreWebView2NavigationStartingEventArgs) {
+		t.dirtyForm = false
 		a.onNavStarting(t, args)
 	}
 	c.NavigationCompletedCallback = func(_ *edge.ICoreWebView2, args *edge.ICoreWebView2NavigationCompletedEventArgs) {
@@ -115,11 +164,17 @@ func (a *app) newTab(url string, activate bool) *tab {
 		_ = st.PutAreDevToolsEnabled(true)
 		_ = st.PutIsStatusBarEnabled(true)
 		_ = st.PutIsZoomControlEnabled(true)
+		// Passwords, passkeys and profile autofill stay inside WebView2's
+		// Windows-protected profile; the browser host never sees the values.
+		_ = st.PutIsPasswordAutosaveEnabled(a.store.Settings().Autofill && !incognitoMode)
+		_ = st.PutIsGeneralAutofillEnabled(a.store.Settings().Autofill && !incognitoMode)
 	}
 	c.Init(bridgeJS)
+	if secondary { c.Init("window.__okSecondary=true;") }
 	c.Init(barJS)
 
 	a.tabs = append(a.tabs, t)
+	win.SetTimer(a.hwnd, 4, 30000, 0) // periodic inactive-tab memory trim
 	if activate || len(a.tabs) == 1 {
 		// The fade state MUST be armed BEFORE the tab is shown: layout()
 		// keeps a pending fade host hidden until its first paint. Setting
@@ -156,16 +211,107 @@ func (a *app) postNewTab(url string) {
 	})
 }
 
+// openSplit creates a real second WebView and places it beside the active page.
+// The link remains a normal tab, so switching tabs naturally promotes it later.
+func (a *app) openSplit(url string) {
+	// Two panes is the maximum. Ignore additional edge drops while split.
+	if a.splitTab != nil { return }
+	t := a.newTabMode(url, false, true)
+	if t == nil { return }
+	a.splitTab = t
+	a.focusedTab = t
+	a.splitRatio = .5
+	a.layout()
+	a.execActive("window.__okSplitToast&&window.__okSplitToast()")
+}
+
+// splitExistingTab turns a tab-strip edge drop into a two-pane layout.
+// Dropping left promotes the dragged tab to the primary pane; dropping right
+// keeps it secondary. If the active tab itself is dragged, its nearest sibling
+// becomes the companion pane.
+func (a *app) splitExistingTab(i int, left bool) {
+	if a.splitTab != nil || i < 0 || i >= len(a.tabs) || len(a.tabs) < 2 { return }
+	dragged, current := a.tabs[i], a.active()
+	if dragged == current {
+		companion := 0
+		if i == 0 { companion = 1 }
+		if left {
+			a.splitTab = a.tabs[companion]
+		} else {
+			a.activeIdx = companion
+			a.splitTab = dragged
+		}
+	} else if left {
+		a.splitTab = current
+		a.activeIdx = i
+	} else {
+		a.splitTab = dragged
+	}
+	a.focusedTab = dragged
+	a.splitRatio = .5
+	a.layout(); a.syncTitle(); a.pushBarState()
+}
+
+// closeSplit closes the secondary pane and restores the active page to full width.
+func (a *app) closeSplit() {
+	t := a.splitTab
+	if t == nil { return }
+	idx := -1
+	for i, candidate := range a.tabs { if candidate == t { idx = i; break } }
+	a.splitTab = nil
+	a.focusedTab = a.active()
+	if idx >= 0 { a.closeTab(idx) }
+	a.layout()
+	a.pushBarState()
+}
+
+func (a *app) resizeSplit(delta float64) {
+	if a.splitTab == nil { return }
+	var rc win.RECT
+	if !win.GetClientRect(a.hwnd, &rc) || rc.Right <= 0 { return }
+	a.splitRatio += delta / float64(rc.Right)
+	if a.splitRatio < .28 { a.splitRatio = .28 }
+	if a.splitRatio > .72 { a.splitRatio = .72 }
+	a.layout()
+}
+
+func (a *app) swapSplit() {
+	if a.splitTab == nil { return }
+	old := a.active()
+	idx := -1
+	for i, t := range a.tabs { if t == a.splitTab { idx = i; break } }
+	if old == nil || idx < 0 { return }
+	a.activeIdx, a.splitTab = idx, old
+	a.focusedTab = a.tabs[idx]
+	a.splitRatio = 1 - a.splitRatio
+	a.layout(); a.syncTitle(); a.pushBarState()
+}
+
+func (a *app) promoteSplit() {
+	if a.splitTab == nil { return }
+	a.splitTab = nil
+	a.layout(); a.pushBarState()
+}
+
 func (a *app) switchToTab(i int) {
 	if i < 0 || i >= len(a.tabs) {
 		return
 	}
+	// Selecting either pane promotes it to a normal full-width tab.
+	a.splitTab = nil
 	if cur := a.active(); cur != nil {
+		cur.inactiveSince = time.Now()
 		win.ShowWindow(cur.host, win.SW_HIDE)
 		cur.chromium.Hide()
 	}
 	a.activeIdx = i
 	t := a.tabs[i]
+	a.focusedTab = t
+	if t.sleeping {
+		t.chromium.CallDevToolsProtocol("Page.setWebLifecycleState", `{"state":"active"}`)
+		t.sleeping = false
+	}
+	t.inactiveSince = time.Time{}
 	a.layout() // sizes and shows the host, resizes the engine
 
 	a.syncTitle()
@@ -186,6 +332,7 @@ func (a *app) closeTab(i int) {
 		return
 	}
 	t := a.tabs[i]
+	if a.splitTab == t { a.splitTab = nil }
 	if t.url != "" && !t.isStart {
 		// Remember it for Ctrl+Shift+T (reopen closed tab).
 		a.closedTabs = append(a.closedTabs, t.url)
@@ -251,7 +398,7 @@ func (a *app) showInternal(t *tab, page string) {
 	case "settings":
 		html, title = SettingsHTML(a.store.Settings(), appVersion), "Settings"
 	case "downloads":
-		html, title = DownloadsHTML(listDownloads()), "Downloads"
+		html, title = DownloadsHTML(a.downloadFiles()), "Downloads"
 	default: // start
 		html, title = StartPageHTML(a.store.MostVisited(12), a.store.Settings().Engine), "New Tab"
 		page, isStart = "start", true
@@ -269,6 +416,57 @@ func (a *app) showInternal(t *tab, page string) {
 		a.pushBarState()
 	}
 	t.chromium.NavigateToString(html)
+}
+
+// recoverFailedTab reloads an isolated renderer/GPU failure without taking
+// down the browser. Repeated failures stop auto-reloading and show a stable
+// recovery page so a bad site cannot create an endless crash loop.
+func (a *app) recoverFailedTab(t *tab, kind edge.CoreWebView2ProcessFailedKind) {
+	if t == nil || t.chromium == nil { return }
+	now := time.Now()
+	if now.Sub(t.lastCrash) > time.Minute { t.crashCount = 0 }
+	t.lastCrash, t.crashCount = now, t.crashCount+1
+	_ = os.MkdirAll(dataDir(), 0o755)
+	f, _ := os.OpenFile(filepath.Join(dataDir(), "crash.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if f != nil { fmt.Fprintf(f, "%s kind=%d url=%s\n", now.Format(time.RFC3339), kind, t.url); _ = f.Close() }
+	if t.crashCount <= 2 {
+		t.chromium.Reload()
+		return
+	}
+	t.errPage = true
+	t.title = "Page crashed"
+	html := `<!doctype html><meta name="viewport" content="width=device-width"><style>body{background:#151519;color:#f2f2f7;font:15px system-ui;display:grid;place-items:center;height:100vh;margin:0}.c{text-align:center;max-width:460px}button{border:0;border-radius:18px;padding:11px 18px;background:#0a84ff;color:white}</style><div class=c><h1>This page keeps crashing</h1><p>OK Browser stopped the reload loop. Your other tabs are safe.</p><button onclick="location.reload()">Try again</button></div>`
+	t.chromium.NavigateToString(html)
+	a.pushBarState()
+}
+
+func (a *app) setTabSleeping(i int, sleep bool) {
+	if i < 0 || i >= len(a.tabs) { return }
+	t := a.tabs[i]
+	if sleep {
+		if t == a.active() || t == a.splitTab || t.audioPlaying || t.dirtyForm || a.hasActiveDownload(t) { return }
+		t.chromium.CallDevToolsProtocol("Page.setWebLifecycleState", `{"state":"frozen"}`)
+	} else { t.chromium.CallDevToolsProtocol("Page.setWebLifecycleState", `{"state":"active"}`) }
+	t.sleeping = sleep; a.pushBarState()
+}
+
+// sleepInactiveTabs freezes background pages after five idle minutes. Pinned
+// tabs and either Split View pane stay live. WebView2 keeps page state in memory
+// and resumes it instantly when selected.
+func (a *app) sleepInactiveTabs() {
+	settings := a.store.Settings()
+	minutes := settings.SleepMinutes
+	pressure := systemMemoryLoad() >= 88
+	if minutes <= 0 && !pressure { return }
+	now := time.Now()
+	for _, t := range a.tabs {
+		if t == a.active() || t == a.splitTab || t.pinned || t.audioPlaying || t.dirtyForm || a.hasActiveDownload(t) || t.sleeping || t.inactiveSince.IsZero() { continue }
+		if settings.NeverSleep[permissionOrigin(t.url)] { continue }
+		if !pressure && now.Sub(t.inactiveSince) < time.Duration(minutes)*time.Minute { continue }
+		t.chromium.CallDevToolsProtocol("Page.setWebLifecycleState", `{"state":"frozen"}`)
+		t.sleeping = true
+	}
+	a.pushBarState()
 }
 
 // beginTabFade starts the liquid cross-fade for a newly opened tab.

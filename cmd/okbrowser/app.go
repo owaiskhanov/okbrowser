@@ -56,8 +56,9 @@ const (
 	cmdIncognito   = 242
 )
 
-// appVersion is shown in the settings page.
-const appVersion = "1.12.1"
+// appVersion is shown in the settings page. Release CI overrides it with
+// -ldflags so every verified executable carries its automatic build version.
+var appVersion = "1.12.2-dev"
 
 // app is the browser window. The entire UI - the Liquid Glass bar with tabs,
 // address field and buttons - is rendered inside the web engine as a frosted
@@ -70,6 +71,10 @@ type app struct {
 
 	tabs      []*tab
 	activeIdx int
+	splitTab   *tab // optional right-hand WebView opened by a link-edge drop
+	focusedTab *tab // pane receiving keyboard commands while split
+	splitRatio float64 // width of the left pane, 0.28..0.72
+	splitResizing bool   // native mouse capture keeps divider drag continuous
 
 	scale float64 // DPI scale factor (1.0 = 96 DPI)
 
@@ -83,6 +88,7 @@ type app struct {
 
 	// closedTabs remembers recently closed tab URLs for Ctrl+Shift+T.
 	closedTabs []string
+	downloads []*managedDownload // native WebView2 download operations
 
 	// store is the local data vault: history, bookmarks, settings, session.
 	store *store
@@ -144,6 +150,21 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		mmi := (*win.MINMAXINFO)(lp)
 		mmi.PtMinTrackSize = win.POINT{X: a.scaled(480), Y: a.scaled(320)}
 		return 0
+
+	case win.WM_MOUSEMOVE:
+		if a.splitResizing && a.splitTab != nil {
+			var rc win.RECT
+			if win.GetClientRect(a.hwnd, &rc) && rc.Right > 0 {
+				x := win.GET_X_LPARAM(uintptr(lp))
+				a.splitRatio = float64(x) / float64(rc.Right)
+				if a.splitRatio < .28 { a.splitRatio = .28 }
+				if a.splitRatio > .72 { a.splitRatio = .72 }
+				a.layout()
+			}
+			return 0
+		}
+	case win.WM_LBUTTONUP:
+		if a.splitResizing { a.splitResizing = false; win.ReleaseCapture(); a.saveSession(); return 0 }
 
 	case win.WM_COMMAND:
 		// Hotkeys arrive here (all buttons live in the glass bar).
@@ -262,6 +283,8 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		if wp == 3 {
 			a.selftestClickTick()
 		}
+		if wp == 4 { a.sleepInactiveTabs() }
+		if wp == 5 { a.pollDownloads() }
 		return 0
 
 	case win.WM_DPICHANGED:
@@ -405,6 +428,12 @@ func NewApp(startURL string) (*app, bool) {
 			}
 		}
 		a.switchToTab(active)
+		if sess.SplitRatio > 0 && sess.Split >= 0 && sess.Split < len(a.tabs) && sess.Split != active {
+			a.splitTab = a.tabs[sess.Split]
+			a.splitRatio = sess.SplitRatio
+			if a.splitRatio < .28 || a.splitRatio > .72 { a.splitRatio = .5 }
+			a.layout()
+		}
 		a.scheduleBarPush(false)
 		return a, true
 	}
@@ -419,7 +448,8 @@ func (a *app) saveSession() {
 	if a.store == nil {
 		return
 	}
-	sd := &sessionData{Active: a.activeIdx, Maximized: a.maximized}
+	sd := &sessionData{Active: a.activeIdx, Maximized: a.maximized, Split: -1, SplitRatio: a.splitRatio}
+	for i, t := range a.tabs { if t == a.splitTab { sd.Split = i; break } }
 	for _, t := range a.tabs {
 		u := t.url
 		if strings.HasPrefix(u, "okbrowser://") {
@@ -562,12 +592,22 @@ func (a *app) layout() {
 		return
 	}
 	for i, t := range a.tabs {
-		if i == a.activeIdx {
+		isSplit := a.splitTab != nil && t == a.splitTab
+		if i == a.activeIdx || isSplit {
+			x, width := int32(0), w
+			if a.splitTab != nil {
+				gap := a.scaled(5)
+				ratio := a.splitRatio
+				if ratio < .28 || ratio > .72 { ratio = .5 }
+				left := int32(float64(w-gap) * ratio)
+				if isSplit { x, width = left + gap, w - left - gap } else { width = left }
+			}
+
 			if a.fading && t.host == a.fadeHost && !a.fadeRamping {
 				// Pending reveal: the new tab stays hidden until its first
 				// content has painted - the previous tab shows meanwhile.
 			} else {
-				win.MoveWindow(t.host, 0, 0, w, h, false)
+				win.MoveWindow(t.host, x, 0, width, h, false)
 				win.ShowWindow(t.host, win.SW_SHOW)
 				if t.chromium != nil {
 					t.chromium.Show()
@@ -742,14 +782,20 @@ func (a *app) onAccelerator(vk uint) bool {
 
 // execActive runs JavaScript in the active tab.
 func (a *app) execActive(js string) {
-	if t := a.active(); t != nil && t.chromium != nil {
+	if t := a.commandTab(); t != nil && t.chromium != nil {
 		t.chromium.Eval(js)
 	}
 }
 
 // onCommand handles hotkeys and mouse-button navigation.
 func (a *app) onCommand(id int) {
-	t := a.active()
+	t := a.commandTab()
+	// Ctrl+1..8 are consecutive command IDs. A Go switch case matches one
+	// value, not the whole numeric range, so dispatch the range explicitly.
+	if id >= cmdSelectTab && id < cmdSelectTab+8 {
+		if n := id - cmdSelectTab; n < len(a.tabs) { a.switchToTab(n) }
+		return
+	}
 	switch id {
 	case cmdBack:
 		if t != nil && t.chromium != nil && t.chromium.CanGoBack() {
@@ -808,10 +854,6 @@ func (a *app) onCommand(id int) {
 		a.toggleFullscreen()
 
 	// Chrome-compatible additions.
-	case cmdSelectTab: // +0..7 = Ctrl+1..8
-		if n := id - cmdSelectTab; n >= 0 && n < len(a.tabs) {
-			a.switchToTab(n)
-		}
 	case cmdLastTab:
 		if len(a.tabs) > 0 {
 			a.switchToTab(len(a.tabs) - 1)

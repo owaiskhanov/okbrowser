@@ -12,7 +12,7 @@ import (
 
 // TestStartPageIconOnly verifies the start page tiles carry no text labels.
 func TestStartPageIconOnly(t *testing.T) {
-	html := StartPageHTML([]Tile{{URL: "https://example.com/", Title: "Example"}}, "Google")
+	html := StartPageHTML([]Tile{{URL: "https://example.com/", Title: "Example", Favicon: "https://example.com/icon.png"}}, "Google")
 	if !strings.Contains(html, `class="tile"`) {
 		t.Fatal("tiles missing")
 	}
@@ -27,6 +27,9 @@ func TestStartPageIconOnly(t *testing.T) {
 	}
 	if !strings.Contains(html, `data-u="https://example.com/"`) {
 		t.Fatal("tile target URL missing")
+	}
+	if !strings.Contains(html, `src="https://example.com/icon.png"`) {
+		t.Fatal("tile favicon missing")
 	}
 }
 

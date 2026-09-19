@@ -394,3 +394,36 @@ func (i *ICoreWebViewSettings) PutIsSwipeNavigationEnabled(enabled bool) error {
 	}
 	return nil
 }
+
+// PutIsPasswordAutosaveEnabled delegates credential storage to the WebView2
+// profile and Windows credential protections. OK Browser never reads passwords.
+func (i *ICoreWebViewSettings) PutIsPasswordAutosaveEnabled(enabled bool) error {
+	_, _, err := i.vtbl.PutIsPasswordAutosaveEnabled.Call(
+		uintptr(unsafe.Pointer(i)), uintptr(boolToInt(enabled)))
+	if err != windows.ERROR_SUCCESS { return err }
+	return nil
+}
+
+func (i *ICoreWebViewSettings) GetIsPasswordAutosaveEnabled() (bool, error) {
+	var enabled bool
+	_, _, err := i.vtbl.GetIsPasswordAutosaveEnabled.Call(
+		uintptr(unsafe.Pointer(i)), uintptr(unsafe.Pointer(&enabled)))
+	if err != windows.ERROR_SUCCESS { return false, err }
+	return enabled, nil
+}
+
+// PutIsGeneralAutofillEnabled enables Edge's native address/payment autofill.
+func (i *ICoreWebViewSettings) PutIsGeneralAutofillEnabled(enabled bool) error {
+	_, _, err := i.vtbl.PutIsGeneralAutofillEnabled.Call(
+		uintptr(unsafe.Pointer(i)), uintptr(boolToInt(enabled)))
+	if err != windows.ERROR_SUCCESS { return err }
+	return nil
+}
+
+func (i *ICoreWebViewSettings) GetIsGeneralAutofillEnabled() (bool, error) {
+	var enabled bool
+	_, _, err := i.vtbl.GetIsGeneralAutofillEnabled.Call(
+		uintptr(unsafe.Pointer(i)), uintptr(unsafe.Pointer(&enabled)))
+	if err != windows.ERROR_SUCCESS { return false, err }
+	return enabled, nil
+}
