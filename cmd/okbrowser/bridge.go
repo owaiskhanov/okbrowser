@@ -590,6 +590,27 @@ const barJS = `
     }
   }, true);
 
+  // Existing tabs can be dragged to either window edge to form Split View.
+  // The side of the drop determines which pane receives the dragged tab.
+  var tabEdgeZone = '';
+  document.addEventListener('dragover', function(e) {
+    if (dragFrom < 0 || S.v) return;
+    tabEdgeZone = e.clientX < 92 ? 'left' : (e.clientX > innerWidth - 92 ? 'right' : '');
+    edgeLeft.classList.toggle('show', !!tabEdgeZone);
+    edgeRight.classList.toggle('show', !!tabEdgeZone);
+    edgeLeft.classList.toggle('hot', tabEdgeZone === 'left');
+    edgeRight.classList.toggle('hot', tabEdgeZone === 'right');
+    edgeLeft.firstElementChild.textContent = 'Drop tab on Left';
+    edgeRight.firstElementChild.textContent = 'Drop tab on Right';
+    if (tabEdgeZone) e.preventDefault();
+  }, true);
+  document.addEventListener('drop', function(e) {
+    if (dragFrom < 0 || !tabEdgeZone || S.v) return;
+    e.preventDefault(); e.stopPropagation();
+    post({t:'ui', a:'tab-split-' + tabEdgeZone, i:dragFrom});
+    dragFrom=-1; tabEdgeZone=''; clearEdgeGesture();
+  }, true);
+
   // Tabs render by keyed diff: existing pills are updated in place and only
   // genuinely new pills animate in - no rebuild, no flicker, no re-animation
   // of already-open tabs.
@@ -647,6 +668,7 @@ const barJS = `
       dragFrom = el.__idx;
       try { e.dataTransfer.setData('text/plain', 'ok'); } catch (err) {}
     });
+    el.addEventListener('dragend', function () { dragFrom=-1; tabEdgeZone=''; clearEdgeGesture(); });
     el.addEventListener('dragover', function (e) { e.preventDefault(); });
     el.addEventListener('drop', function (e) {
       e.preventDefault();
@@ -1585,6 +1607,10 @@ func (a *app) onWebMessage(t *tab, msg string) {
 					a.store.SetSettings(st); a.pushBarState()
 				}
 			})
+			return
+		case "tab-split-left", "tab-split-right":
+			i, side := m.I, m.A
+			a.postTask(func() { a.splitExistingTab(i, side == "tab-split-left") })
 			return
 		case "tab-split":
 			i := m.I

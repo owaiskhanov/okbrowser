@@ -75,7 +75,8 @@ just content:
   an iframe—keeps browser controls available across both panes, and includes a
   compact controls to resize, swap, promote, or close panes, a clear active-pane
   highlight with pane-aware keyboard commands, tab-to-pane actions, and full
-  Split View session restore
+  Split View session restore. Drag an existing tab to the left or right edge to
+  place it directly into that side of a new two-pane layout
 - **Site identity and permissions**: the lock control reports whether the
   current connection uses HTTPS and offers per-site Ask / Allow / Block choices
   for camera, microphone, location, notifications, clipboard and sensors;

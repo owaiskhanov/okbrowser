@@ -225,6 +225,33 @@ func (a *app) openSplit(url string) {
 	a.execActive("window.__okSplitToast&&window.__okSplitToast()")
 }
 
+// splitExistingTab turns a tab-strip edge drop into a two-pane layout.
+// Dropping left promotes the dragged tab to the primary pane; dropping right
+// keeps it secondary. If the active tab itself is dragged, its nearest sibling
+// becomes the companion pane.
+func (a *app) splitExistingTab(i int, left bool) {
+	if a.splitTab != nil || i < 0 || i >= len(a.tabs) || len(a.tabs) < 2 { return }
+	dragged, current := a.tabs[i], a.active()
+	if dragged == current {
+		companion := 0
+		if i == 0 { companion = 1 }
+		if left {
+			a.splitTab = a.tabs[companion]
+		} else {
+			a.activeIdx = companion
+			a.splitTab = dragged
+		}
+	} else if left {
+		a.splitTab = current
+		a.activeIdx = i
+	} else {
+		a.splitTab = dragged
+	}
+	a.focusedTab = dragged
+	a.splitRatio = .5
+	a.layout(); a.syncTitle(); a.pushBarState()
+}
+
 // closeSplit closes the secondary pane and restores the active page to full width.
 func (a *app) closeSplit() {
 	t := a.splitTab
