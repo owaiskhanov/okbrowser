@@ -149,6 +149,7 @@ const barJS = `
     "inset 0 0 0 .5px rgba(255,255,255,.20);",
     "transition:background .16s ease,transform .16s ease,flex-basis .22s ease,width .22s ease}",
     ".tab.in{animation:okin .24s cubic-bezier(.2,.8,.3,1)}",
+    ".tab.sleep{opacity:.62}.tab.sleep .ic{filter:saturate(.35)}",
     ".ic{flex:0 0 auto;width:16px;height:16px;border-radius:5px;display:grid;place-items:center;",
     "font-size:10px;font-weight:700;color:#5f6368;overflow:hidden}",
     "@media (prefers-color-scheme:dark){.ic{color:#9aa0a6}}",
@@ -327,10 +328,15 @@ const barJS = `
     ".edge-top.show{transform:translateY(-72%) scale(.96)}.edge-top.hot{transform:translateY(0) scale(1)}",
     ".edgeact span{padding:10px 16px;border-radius:20px;background:rgba(0,0,0,.2);text-align:center}",
     ".splitclose{position:fixed;top:42px;left:50%;transform:translateX(-50%);z-index:2147483647;",
-    "display:none;padding:7px 13px;border-radius:16px;pointer-events:auto;cursor:default;",
+    "display:none;gap:2px;padding:4px;border-radius:18px;pointer-events:auto;cursor:default;",
     "font:600 11px -apple-system,'Segoe UI',sans-serif;color:#fff;background:rgba(35,35,40,.68);",
     "backdrop-filter:blur(24px);box-shadow:0 8px 30px rgba(0,0,0,.25)}",
-    ".splitclose.show{display:block}.splitclose:hover{background:#e81123}",
+    ".splitclose.show{display:flex}.splitclose .splitact{padding:6px 9px;border-radius:13px;font-weight:600}",
+    ".splitclose .splitact:hover{background:rgba(255,255,255,.16)}.splitclose .danger:hover{background:#e81123}",
+    ".splitdivider{position:fixed;right:0;top:80px;bottom:0;width:8px;z-index:2147483647;",
+    "display:none;cursor:col-resize;pointer-events:auto}.splitdivider.show{display:block}",
+    ".splitdivider:after{content:'';position:absolute;left:3px;top:35%;width:2px;height:30%;",
+    "border-radius:2px;background:rgba(120,128,138,.45)}",
     "@media print{.strip,.wcap,.edge,.find,.edgeact{display:none !important}}"
   ].join("");
 
@@ -383,7 +389,8 @@ const barJS = `
     '<div class="edgeact edge-left" id="edge-left"><span>Drop to Queue for Later</span></div>' +
     '<div class="edgeact edge-right" id="edge-right"><span>Drop for Peek & Split</span></div>' +
     '<div class="edgeact edge-top" id="edge-top"><span></span></div>' +
-    '<div class="splitclose" id="splitclose">Close Split View</div>' +
+    '<div class="splitclose" id="splitclose"><div class="splitact" id="split-swap">⇄ Swap</div><div class="splitact" id="split-tab">↗ Tabs</div><div class="splitact danger" id="split-close">× Close</div></div>' +
+    '<div class="splitdivider" id="splitdivider"></div>' +
     '<div class="find" id="find">' +
       '<input id="fq" placeholder="Find in page" spellcheck="false">' +
       '<div class="fc" id="fc">0/0</div>' +
@@ -669,6 +676,8 @@ const barJS = `
       el.__idx = i;
       el.classList.toggle('on', i === S.a);
       el.classList.toggle('pin', !!(tabs[i] && tabs[i].p));
+      el.classList.toggle('sleep', !!(tabs[i] && tabs[i].s));
+      if (tabs[i] && tabs[i].s) el.title = (tabs[i].t || 'Tab') + ' — sleeping';
       el.__set(tabs[i].t || 'New Tab', (tabs[i] && tabs[i].u) || '', (tabs[i] && tabs[i].f) || '');
     }
     root.getElementById('bback').toggleAttribute('disabled', !S.b);
@@ -884,7 +893,12 @@ const barJS = `
   root.getElementById('wmin').addEventListener('click', function () { post({ t: 'ui', a: 'wmin' }); });
   root.getElementById('wmax').addEventListener('click', function () { post({ t: 'ui', a: 'wmaxtoggle' }); });
   root.getElementById('wclose').addEventListener('click', function () { post({ t: 'ui', a: 'wclose' }); });
-  root.getElementById('splitclose').addEventListener('click', function () { post({ t: 'ui', a: 'close-split' }); });
+  root.getElementById('split-close').addEventListener('click', function () { post({ t: 'ui', a: 'close-split' }); });
+  root.getElementById('split-swap').addEventListener('click', function () { post({ t: 'ui', a: 'swap-split' }); });
+  root.getElementById('split-tab').addEventListener('click', function () { post({ t: 'ui', a: 'promote-split' }); });
+  var splitDivider = root.getElementById('splitdivider');
+  splitDivider.addEventListener('pointerdown', function (e) { splitDivider.setPointerCapture(e.pointerId); });
+  splitDivider.addEventListener('pointermove', function (e) { if (splitDivider.hasPointerCapture(e.pointerId) && e.movementX) post({ t: 'ui', a: 'resize-split', x: e.movementX }); });
 
   // Empty strip area: drag to move the window, double-click to maximize.
   var drag = root.getElementById('drag');
@@ -1084,6 +1098,7 @@ type barTab struct {
 	U string `json:"u"` // for the letter avatar fallback
 	F string `json:"f"` // favicon URL ('' = letter)
 	P bool   `json:"p"` // pinned (favicon-only pill)
+	S bool   `json:"s"` // sleeping to save memory
 }
 
 // barState is the full state pushed to the active tab's shell UI.
@@ -1112,7 +1127,7 @@ func (a *app) pushBarState() {
 		if title == "" {
 			title = "New Tab"
 		}
-		tabs[i] = barTab{T: title, U: tb.url, F: tb.favicon, P: tb.pinned}
+		tabs[i] = barTab{T: title, U: tb.url, F: tb.favicon, P: tb.pinned, S: tb.sleeping}
 	}
 	st := barState{
 		Tabs: tabs,
@@ -1395,6 +1410,16 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			return
 		case "close-split":
 			a.postTask(func() { a.closeSplit() })
+			return
+		case "swap-split":
+			a.postTask(func() { a.swapSplit() })
+			return
+		case "promote-split":
+			a.postTask(func() { a.promoteSplit() })
+			return
+		case "resize-split":
+			delta := m.X
+			a.postTask(func() { a.resizeSplit(delta) })
 			return
 		case "wclose":
 			// In Split View the familiar close control dismisses the second

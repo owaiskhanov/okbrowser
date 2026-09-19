@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/jchv/go-webview2/pkg/edge"
 	"github.com/lxn/win"
@@ -29,7 +30,9 @@ type tab struct {
 	isStart bool
 	errPage bool // the currently shown page is our error page
 	pinned  bool // pinned tabs render as favicon-only pills
-	zoom    float64
+	zoom         float64
+	inactiveSince time.Time
+	sleeping     bool
 }
 
 // active returns the currently displayed tab, or nil.
@@ -119,12 +122,17 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 		_ = st.PutAreDevToolsEnabled(true)
 		_ = st.PutIsStatusBarEnabled(true)
 		_ = st.PutIsZoomControlEnabled(true)
+		// Passwords, passkeys and profile autofill stay inside WebView2's
+		// Windows-protected profile; the browser host never sees the values.
+		_ = st.PutIsPasswordAutosaveEnabled(true)
+		_ = st.PutIsGeneralAutofillEnabled(true)
 	}
 	c.Init(bridgeJS)
 	if secondary { c.Init("window.__okSecondary=true;") }
 	c.Init(barJS)
 
 	a.tabs = append(a.tabs, t)
+	win.SetTimer(a.hwnd, 4, 30000, 0) // periodic inactive-tab memory trim
 	if activate || len(a.tabs) == 1 {
 		// The fade state MUST be armed BEFORE the tab is shown: layout()
 		// keeps a pending fade host hidden until its first paint. Setting
@@ -169,6 +177,7 @@ func (a *app) openSplit(url string) {
 	t := a.newTabMode(url, false, true)
 	if t == nil { return }
 	a.splitTab = t
+	a.splitRatio = .5
 	a.layout()
 	a.execActive("window.__okSplitToast&&window.__okSplitToast()")
 }
@@ -185,6 +194,33 @@ func (a *app) closeSplit() {
 	a.pushBarState()
 }
 
+func (a *app) resizeSplit(delta float64) {
+	if a.splitTab == nil { return }
+	var rc win.RECT
+	if !win.GetClientRect(a.hwnd, &rc) || rc.Right <= 0 { return }
+	a.splitRatio += delta / float64(rc.Right)
+	if a.splitRatio < .28 { a.splitRatio = .28 }
+	if a.splitRatio > .72 { a.splitRatio = .72 }
+	a.layout()
+}
+
+func (a *app) swapSplit() {
+	if a.splitTab == nil { return }
+	old := a.active()
+	idx := -1
+	for i, t := range a.tabs { if t == a.splitTab { idx = i; break } }
+	if old == nil || idx < 0 { return }
+	a.activeIdx, a.splitTab = idx, old
+	a.splitRatio = 1 - a.splitRatio
+	a.layout(); a.syncTitle(); a.pushBarState()
+}
+
+func (a *app) promoteSplit() {
+	if a.splitTab == nil { return }
+	a.splitTab = nil
+	a.layout(); a.pushBarState()
+}
+
 func (a *app) switchToTab(i int) {
 	if i < 0 || i >= len(a.tabs) {
 		return
@@ -192,11 +228,17 @@ func (a *app) switchToTab(i int) {
 	// Selecting either pane promotes it to a normal full-width tab.
 	a.splitTab = nil
 	if cur := a.active(); cur != nil {
+		cur.inactiveSince = time.Now()
 		win.ShowWindow(cur.host, win.SW_HIDE)
 		cur.chromium.Hide()
 	}
 	a.activeIdx = i
 	t := a.tabs[i]
+	if t.sleeping {
+		t.chromium.CallDevToolsProtocol("Page.setWebLifecycleState", `{"state":"active"}`)
+		t.sleeping = false
+	}
+	t.inactiveSince = time.Time{}
 	a.layout() // sizes and shows the host, resizes the engine
 
 	a.syncTitle()
@@ -301,6 +343,20 @@ func (a *app) showInternal(t *tab, page string) {
 		a.pushBarState()
 	}
 	t.chromium.NavigateToString(html)
+}
+
+// sleepInactiveTabs freezes background pages after five idle minutes. Pinned
+// tabs and either Split View pane stay live. WebView2 keeps page state in memory
+// and resumes it instantly when selected.
+func (a *app) sleepInactiveTabs() {
+	now := time.Now()
+	for _, t := range a.tabs {
+		if t == a.active() || t == a.splitTab || t.pinned || t.sleeping || t.inactiveSince.IsZero() { continue }
+		if now.Sub(t.inactiveSince) < 5*time.Minute { continue }
+		t.chromium.CallDevToolsProtocol("Page.setWebLifecycleState", `{"state":"frozen"}`)
+		t.sleeping = true
+	}
+	a.pushBarState()
 }
 
 // beginTabFade starts the liquid cross-fade for a newly opened tab.

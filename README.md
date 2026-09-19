@@ -70,7 +70,14 @@ just content:
   it as a background tab for later, or on the **right** for a Peek preview that
   opens into a real side-by-side Split View. Split View uses a second WebView—not
   an iframe—keeps browser controls available across both panes, and includes a
-  one-click control to close the secondary pane and return to a single view
+  compact controls to resize, swap, promote, or close panes and return to a
+  single view
+- **Windows-protected autofill**: password saving, passkeys, addresses and
+  payment autofill are delegated directly to the WebView2 profile; OK Browser
+  never reads or stores credential values itself
+- **Sleeping tabs**: inactive background pages freeze after five minutes to
+  reduce CPU and memory pressure, wake instantly when selected, and visibly
+  dim while asleep; pinned tabs and both Split View panes always stay live
 - **Liquid loading line**: a thin blue hairline runs along the top edge
   while a page loads and sweeps away when it's done
 - **Incognito** (`Ctrl+Shift+N`): a private window with a throwaway

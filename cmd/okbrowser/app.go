@@ -71,7 +71,8 @@ type app struct {
 
 	tabs      []*tab
 	activeIdx int
-	splitTab  *tab // optional right-hand WebView opened by a link-edge drop
+	splitTab   *tab // optional right-hand WebView opened by a link-edge drop
+	splitRatio float64 // width of the left pane, 0.28..0.72
 
 	scale float64 // DPI scale factor (1.0 = 96 DPI)
 
@@ -263,6 +264,9 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		}
 		if wp == 3 {
 			a.selftestClickTick()
+		}
+		if wp == 4 {
+			a.sleepInactiveTabs()
 		}
 		return 0
 
@@ -568,8 +572,10 @@ func (a *app) layout() {
 		if i == a.activeIdx || isSplit {
 			x, width := int32(0), w
 			if a.splitTab != nil {
-				gap := a.scaled(3)
-				left := (w - gap) / 2
+				gap := a.scaled(5)
+				ratio := a.splitRatio
+				if ratio < .28 || ratio > .72 { ratio = .5 }
+				left := int32(float64(w-gap) * ratio)
 				if isSplit { x, width = left + gap, w - left - gap } else { width = left }
 			}
 
