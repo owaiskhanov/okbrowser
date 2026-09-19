@@ -47,6 +47,10 @@ jobs:
         shell: pwsh
         run: node scripts/test-bar.js
 
+      - name: Generate version resource
+        working-directory: res
+        run: go run github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest -o ../cmd/okbrowser/resource.syso versioninfo.json
+
       - name: Build
         run: |
           go build -trimpath -ldflags "-s -w -H windowsgui" -o dist/OKBrowser.exe ./cmd/okbrowser
@@ -108,19 +112,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > notes.md <<'EOF'
-          **OK Browser 1.12.1** — a very light and very fast web browser for Windows 10 and later.
+          **OK Browser 1.12.2** — a very light and very fast web browser for Windows 10 and later.
 
           - Single **~4 MB** `OKBrowser.exe`, no installer needed
           - Renders with the system's Microsoft Edge WebView2 (Chromium) engine
+          - Tabs and minimize/maximize/close controls now glide into view as the cursor approaches the top edge, with a wider magnetic range for fast upward movement
           - Verified by CI on real Windows Server 2022 (Windows 10 era) and Server 2025 (Windows 11 era): window, title, engine and stability checks pass
 
           **Requirements:** Windows 10 (1607+) or Windows 11, 64-bit. The WebView2 Runtime is pre-installed on Windows 11 and updated Windows 10; if missing, OK Browser offers to open Microsoft's official download page.
           EOF
-          if gh release view v1.12.1 >/dev/null 2>&1; then
-            gh release upload v1.12.1 dist/OKBrowser.exe --clobber
+          if gh release view v1.12.2 >/dev/null 2>&1; then
+            gh release upload v1.12.2 dist/OKBrowser.exe --clobber
           else
-            gh release create "v1.12.1" dist/OKBrowser.exe \
-              --title "OK Browser 1.12.1" \
+            gh release create "v1.12.2" dist/OKBrowser.exe \
+              --title "OK Browser 1.12.2" \
               --notes-file notes.md \
               --target "$GITHUB_SHA"
           fi
