@@ -65,6 +65,8 @@ type sessionData struct {
 	Active    int          `json:"a"`
 	Maximized bool         `json:"max"`
 	Rect      [4]int32     `json:"rect"` // normal position (workspace coords)
+	Split     int          `json:"split"`
+	SplitRatio float64     `json:"splitRatio"`
 }
 
 // suggestion is one address-bar suggestion row.

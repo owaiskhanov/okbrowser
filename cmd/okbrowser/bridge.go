@@ -150,6 +150,7 @@ const barJS = `
     "opacity:calc(.18 + (.82 * var(--ok-proximity,0)));",
     "transition:transform .10s ease-out,opacity .10s ease-out}",
     ".strip.open{transform:translateY(0);opacity:1}",
+    ".strip.paneactive{box-shadow:inset 0 -2px 0 #0a84ff,0 1px 12px rgba(0,0,0,.12)}",
     "@media (prefers-color-scheme:dark){.strip{background:rgba(24,24,28,.55);",
     "box-shadow:0 1px 12px rgba(0,0,0,.32),inset 0 -.5px 0 rgba(255,255,255,.06)}}",
     ".tz{display:flex;gap:4px;align-items:center;min-width:0;height:100%;",
@@ -412,6 +413,7 @@ const barJS = `
       '<div class="mrow" id="c-newtab">New tab</div>' +
       '<div class="mrow" id="c-dup">Duplicate</div>' +
       '<div class="mrow" id="c-pin">Pin tab</div>' +
+      '<div class="mrow" id="c-split">Open in Split View</div>' +
       '<div class="mrow" id="c-close">Close tab</div>' +
       '<div class="mrow" id="c-others">Close other tabs</div>' +
     '</div>' +
@@ -430,6 +432,7 @@ const barJS = `
     '</div>';
 
   var post = function (o) { window.__ok(o); };
+  document.addEventListener('pointerdown', function () { post({t:'pane-focus'}); }, true);
   var tz = root.getElementById('tz');
   var okb = root.getElementById('okb');
   var input = root.getElementById('q');
@@ -676,6 +679,7 @@ const barJS = `
   });
   ctxAction('c-dup', 'dup');
   ctxAction('c-pin', 'pin');
+  ctxAction('c-split', 'tab-split');
   ctxAction('c-close', 'close');
   ctxAction('c-others', 'close-others');
   document.addEventListener('mousedown', function (e) {
@@ -1161,6 +1165,8 @@ type barState struct {
 	E    string   `json:"e"` // search engine name
 	V    bool              `json:"v"` // split view is active
 	Pms  map[string]string `json:"pms,omitempty"`
+	Q    bool              `json:"q"` // this is the focused split pane
+	L    bool              `json:"l"` // this is the left/original pane
 }
 
 func permissionStateFor(t *tab) map[string]string {
@@ -1204,6 +1210,8 @@ func (a *app) pushBarState() {
 			E:    a.store.Settings().Engine,
 			V:    a.splitTab != nil,
 			Pms:  permissionStateFor(view),
+			Q:    a.commandTab() == view,
+			L:    view == a.active(),
 		}
 		b, err := json.Marshal(st)
 		if err == nil {
@@ -1311,6 +1319,9 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			a.stClickTab, a.stClickX, a.stClickY, a.stClickTicks = t, m.X, m.Y, 0
 			win.SetTimer(a.hwnd, 3, 50, 0)
 		}
+
+	case "pane-focus":
+		if t == a.active() || t == a.splitTab { a.focusedTab = t; a.pushBarState() }
 
 	case "audio":
 		t.audioPlaying = m.A == "1"
@@ -1498,6 +1509,14 @@ func (a *app) onWebMessage(t *tab, msg string) {
 				if i >= 0 && i < len(a.tabs) {
 					a.tabs[i].pinned = !a.tabs[i].pinned
 					a.pushBarState()
+				}
+			})
+			return
+		case "tab-split":
+			i := m.I
+			a.postTask(func() {
+				if a.splitTab == nil && i >= 0 && i < len(a.tabs) && i != a.activeIdx {
+					a.splitTab = a.tabs[i]; a.focusedTab = a.splitTab; a.splitRatio = .5; a.layout(); a.pushBarState()
 				}
 			})
 			return

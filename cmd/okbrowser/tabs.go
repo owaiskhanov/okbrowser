@@ -55,6 +55,12 @@ func (a *app) active() *tab {
 	return a.tabs[a.activeIdx]
 }
 
+// commandTab is the pane that most recently received pointer/keyboard focus.
+func (a *app) commandTab() *tab {
+	if a.focusedTab != nil && (a.focusedTab == a.active() || a.focusedTab == a.splitTab) { return a.focusedTab }
+	return a.active()
+}
+
 // isActive reports whether t is the displayed tab.
 func (a *app) isActive(t *tab) bool { return a.active() == t }
 
@@ -81,7 +87,7 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 	c := edge.NewChromium()
 	c.DataPath = dataPath()
 	c.MessageCallback = func(msg string) { a.onWebMessage(t, msg) }
-	c.AcceleratorKeyCallback = a.onAccelerator
+	c.AcceleratorKeyCallback = func(vk uint) bool { a.focusedTab = t; return a.onAccelerator(vk) }
 	c.PermissionRequestedCallback = func(raw string, kind edge.CoreWebView2PermissionKind) edge.CoreWebView2PermissionState {
 		origin := permissionOrigin(raw)
 		if byKind := t.permissions[origin]; byKind != nil {
@@ -200,6 +206,7 @@ func (a *app) openSplit(url string) {
 	t := a.newTabMode(url, false, true)
 	if t == nil { return }
 	a.splitTab = t
+	a.focusedTab = t
 	a.splitRatio = .5
 	a.layout()
 	a.execActive("window.__okSplitToast&&window.__okSplitToast()")
@@ -212,6 +219,7 @@ func (a *app) closeSplit() {
 	idx := -1
 	for i, candidate := range a.tabs { if candidate == t { idx = i; break } }
 	a.splitTab = nil
+	a.focusedTab = a.active()
 	if idx >= 0 { a.closeTab(idx) }
 	a.layout()
 	a.pushBarState()
@@ -234,6 +242,7 @@ func (a *app) swapSplit() {
 	for i, t := range a.tabs { if t == a.splitTab { idx = i; break } }
 	if old == nil || idx < 0 { return }
 	a.activeIdx, a.splitTab = idx, old
+	a.focusedTab = a.tabs[idx]
 	a.splitRatio = 1 - a.splitRatio
 	a.layout(); a.syncTitle(); a.pushBarState()
 }
@@ -257,6 +266,7 @@ func (a *app) switchToTab(i int) {
 	}
 	a.activeIdx = i
 	t := a.tabs[i]
+	a.focusedTab = t
 	if t.sleeping {
 		t.chromium.CallDevToolsProtocol("Page.setWebLifecycleState", `{"state":"active"}`)
 		t.sleeping = false

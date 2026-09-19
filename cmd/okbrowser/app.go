@@ -72,6 +72,7 @@ type app struct {
 	tabs      []*tab
 	activeIdx int
 	splitTab   *tab // optional right-hand WebView opened by a link-edge drop
+	focusedTab *tab // pane receiving keyboard commands while split
 	splitRatio float64 // width of the left pane, 0.28..0.72
 
 	scale float64 // DPI scale factor (1.0 = 96 DPI)
@@ -411,6 +412,12 @@ func NewApp(startURL string) (*app, bool) {
 			}
 		}
 		a.switchToTab(active)
+		if sess.SplitRatio > 0 && sess.Split >= 0 && sess.Split < len(a.tabs) && sess.Split != active {
+			a.splitTab = a.tabs[sess.Split]
+			a.splitRatio = sess.SplitRatio
+			if a.splitRatio < .28 || a.splitRatio > .72 { a.splitRatio = .5 }
+			a.layout()
+		}
 		a.scheduleBarPush(false)
 		return a, true
 	}
@@ -425,7 +432,8 @@ func (a *app) saveSession() {
 	if a.store == nil {
 		return
 	}
-	sd := &sessionData{Active: a.activeIdx, Maximized: a.maximized}
+	sd := &sessionData{Active: a.activeIdx, Maximized: a.maximized, Split: -1, SplitRatio: a.splitRatio}
+	for i, t := range a.tabs { if t == a.splitTab { sd.Split = i; break } }
 	for _, t := range a.tabs {
 		u := t.url
 		if strings.HasPrefix(u, "okbrowser://") {
@@ -758,14 +766,14 @@ func (a *app) onAccelerator(vk uint) bool {
 
 // execActive runs JavaScript in the active tab.
 func (a *app) execActive(js string) {
-	if t := a.active(); t != nil && t.chromium != nil {
+	if t := a.commandTab(); t != nil && t.chromium != nil {
 		t.chromium.Eval(js)
 	}
 }
 
 // onCommand handles hotkeys and mouse-button navigation.
 func (a *app) onCommand(id int) {
-	t := a.active()
+	t := a.commandTab()
 	switch id {
 	case cmdBack:
 		if t != nil && t.chromium != nil && t.chromium.CanGoBack() {

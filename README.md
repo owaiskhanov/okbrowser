@@ -70,8 +70,9 @@ just content:
   it as a background tab for later, or on the **right** for a Peek preview that
   opens into a real side-by-side Split View. Split View uses a second WebView—not
   an iframe—keeps browser controls available across both panes, and includes a
-  compact controls to resize, swap, promote, or close panes and return to a
-  single view
+  compact controls to resize, swap, promote, or close panes, a clear active-pane
+  highlight with pane-aware keyboard commands, tab-to-pane actions, and full
+  Split View session restore
 - **Site identity and permissions**: the lock control reports whether the
   current connection uses HTTPS and offers per-site Ask / Allow / Block choices
   for camera, microphone, location and notifications
