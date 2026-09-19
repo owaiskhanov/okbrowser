@@ -83,8 +83,9 @@ just content:
 - **Incognito** (`Ctrl+Shift+N`): a private window with a throwaway
   profile — history, cookies and session data go to a temp folder, never
   to disk history
-- **Downloads** (`Ctrl+J`): your newest downloaded files in glass, with
-  open and show-in-folder actions
+- **Downloads** (`Ctrl+J`): a live glass manager with in-progress status,
+  file size and timestamp, open/show actions, cancellation/removal, executable
+  safety warnings, and automatic refresh while transfers are active
 - Address bar with smart parsing: `example.com` → `https://example.com`, plain words → search (engine selectable in Settings: **Google** / Bing / DuckDuckGo), `localhost:3000` / `192.168.x.x` → `http://`
 - **Suggestions while you type**: your history and bookmarks appear in a glass dropdown under the address bubble (↑/↓ to pick, Enter to go)
 - **Bookmarks**: tap the ★ in the address bubble (or `Ctrl+D`); manage them on the bookmarks page (`Ctrl+Shift+O` or the ☰ menu)

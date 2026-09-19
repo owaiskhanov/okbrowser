@@ -4,6 +4,8 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -1199,6 +1201,19 @@ func (a *app) allowSpawn() bool {
 	return true
 }
 
+// isDownloadPath confines file actions requested by web messages to the
+// user's Downloads directory. Every web page has the bridge, so never trust a
+// path merely because it arrived through the built-in downloads UI.
+func isDownloadPath(path string) bool {
+	home := os.Getenv("USERPROFILE")
+	if home == "" || path == "" { return false }
+	dir, err1 := filepath.Abs(filepath.Join(home, "Downloads"))
+	p, err2 := filepath.Abs(path)
+	if err1 != nil || err2 != nil { return false }
+	rel, err := filepath.Rel(dir, p)
+	return err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && rel != ".."
+}
+
 // onWebMessage receives JSON messages posted by tab t via window.__ok.
 func (a *app) onWebMessage(t *tab, msg string) {
 	var m struct {
@@ -1430,11 +1445,21 @@ func (a *app) onWebMessage(t *tab, msg string) {
 				a.postTask(func() { a.windowAction("wclose") })
 			}
 			return
-		case "dl-open": // downloads page: open a file
-			openPath(m.U)
+			case "dl-open": // downloads page: open a validated file
+			if isDownloadPath(m.U) { openPath(m.U) }
 			return
-		case "dl-show": // downloads page: reveal in Explorer
-			showInFolder(m.U)
+		case "dl-show": // downloads page: reveal a validated file in Explorer
+			if isDownloadPath(m.U) { showInFolder(m.U) }
+			return
+		case "dl-refresh":
+			a.postTask(func() { if t == a.active() { a.showInternal(t, "downloads") } })
+			return
+		case "dl-remove": // cancel a partial or delete one downloaded file
+			path := m.U
+			if isDownloadPath(path) {
+				_ = os.Remove(path)
+				a.postTask(func() { a.showInternal(t, "downloads") })
+			}
 			return
 		case "wdrag", "wtopresize", "wmaxtoggle", "wmin":
 			act := m.A

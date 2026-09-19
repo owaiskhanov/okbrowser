@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // pages.go renders OK Browser's built-in pages: the start page (speed
@@ -309,7 +310,9 @@ type dlFile struct {
 	Name string
 	Path string
 	Size int64
-	Mod  int64 // unix millis
+	Mod      int64 // unix millis
+	Partial  bool
+	Risky    bool
 }
 
 // listDownloads returns the newest files in the user's Downloads folder.
@@ -329,11 +332,16 @@ func listDownloads() []dlFile {
 		if err != nil || info.IsDir() {
 			continue
 		}
+		name := e.Name()
+		lower := strings.ToLower(name)
+		ext := strings.ToLower(filepath.Ext(strings.TrimSuffix(lower, ".crdownload")))
 		out = append(out, dlFile{
-			Name: e.Name(),
-			Path: filepath.Join(dir, e.Name()),
+			Name: name,
+			Path: filepath.Join(dir, name),
 			Size: info.Size(),
-			Mod:  info.ModTime().UnixMilli(),
+			Mod: info.ModTime().UnixMilli(),
+			Partial: strings.HasSuffix(lower, ".crdownload") || strings.HasSuffix(lower, ".tmp"),
+			Risky: ext == ".exe" || ext == ".msi" || ext == ".bat" || ext == ".cmd" || ext == ".ps1" || ext == ".scr",
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Mod > out[j].Mod })
@@ -363,17 +371,23 @@ func DownloadsHTML(files []dlFile) string {
 	var b strings.Builder
 	b.WriteString(pageBase)
 	b.WriteString(toastMount)
-	b.WriteString(`<div class="wrap fade"><h1>Downloads</h1>`)
+	b.WriteString(`<style>.acts{display:flex;gap:5px}.db{padding:7px 10px;border-radius:12px;background:rgba(120,128,138,.12);font-size:11px;font-weight:650}.db:hover{background:rgba(10,132,255,.17)}.del:hover{background:rgba(232,17,35,.18);color:#d70015}.warn{color:#d97706}.live{color:#0a84ff}.dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;margin-right:5px;animation:pulse 1.2s infinite}@keyframes pulse{50%{opacity:.25}}</style>`)
+	b.WriteString(`<div class="wrap fade"><h1>Downloads</h1><div style="font-size:12px;opacity:.55;margin:-12px 2px 16px">Live files from your Downloads folder</div>`)
 	if len(files) == 0 {
 		b.WriteString(`<div class="card"><div class="row"><div class="meta"><div class="tt">No downloads yet</div><div class="uu">Files you download appear here</div></div></div></div>`)
 	}
 	b.WriteString(`<div class="card" id="list">`)
 	for _, f := range files {
-		b.WriteString(`<div class="row" data-p="` + htmlEsc(f.Path) + `">` +
+		status := humanSize(f.Size) + ` · ` + time.UnixMilli(f.Mod).Format("2 Jan, 3:04 PM")
+		class := ""
+		if f.Partial { status = `<span class="live"><i class="dot"></i>Downloading</span> · ` + humanSize(f.Size); class = " partial" }
+		if f.Risky && !f.Partial { status += ` · <span class="warn">Executable — verify before opening</span>` }
+		openLabel := "Open"
+		if f.Partial { openLabel = "Cancel" }
+		b.WriteString(`<div class="row` + class + `" data-p="` + htmlEsc(f.Path) + `" data-partial="` + strconv.FormatBool(f.Partial) + `">` +
 			`<div class="av">` + htmlEsc(avChar("http://"+f.Name)) + `</div>` +
-			`<div class="meta"><div class="tt">` + htmlEsc(f.Name) + `</div>` +
-			`<div class="uu">` + humanSize(f.Size) + `</div></div>` +
-			`<div class="xx" title="Show in folder">↗</div></div>`)
+			`<div class="meta"><div class="tt">` + htmlEsc(f.Name) + `</div><div class="uu">` + status + `</div></div>` +
+			`<div class="acts"><div class="db primary">` + openLabel + `</div><div class="db show">Show</div><div class="db del">Remove</div></div></div>`)
 	}
 	b.WriteString(`</div></div>`)
 	b.WriteString(`<script>
@@ -382,11 +396,18 @@ func DownloadsHTML(files []dlFile) string {
   var rows=document.querySelectorAll('.row[data-p]');
   for(var i=0;i<rows.length;i++){
     (function(r){
-      var p=r.getAttribute('data-p');
-      r.addEventListener('click',function(e){ if(e.target.className==='xx')return; post({t:'dl-open',u:p}); });
-      r.querySelector('.xx').addEventListener('click',function(e){ e.stopPropagation(); post({t:'dl-show',u:p}); });
+      var p=r.getAttribute('data-p'), partial=r.getAttribute('data-partial')==='true';
+      r.querySelector('.primary').addEventListener('click',function(){
+        if(partial){ if(confirm('Cancel this download?')) post({t:'dl-remove',u:p}); }
+        else post({t:'dl-open',u:p});
+      });
+      r.querySelector('.show').addEventListener('click',function(){post({t:'dl-show',u:p});});
+      r.querySelector('.del').addEventListener('click',function(){
+        if(confirm(partial?'Cancel and remove this partial download?':'Permanently delete this downloaded file?')) post({t:'dl-remove',u:p});
+      });
     })(rows[i]);
   }
+  if(document.querySelector('.partial')) setTimeout(function(){post({t:'dl-refresh'})},1500);
 })();
 </script>`)
 	b.WriteString(pageClose)
