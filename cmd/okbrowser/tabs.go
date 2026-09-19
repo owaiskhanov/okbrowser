@@ -135,6 +135,29 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 			a.postTask(func() { a.newTab(uri, true) })
 		}
 	}
+	// Ad / tracker blocking: answer known ad and tracker requests with an
+	// empty HTTP 204 so the page loads faster and cleaner. Gated on the
+	// user's setting, read live so toggling it applies to the next request.
+	c.WebResourceRequestedCallback = func(req *edge.ICoreWebView2WebResourceRequest, args *edge.ICoreWebView2WebResourceRequestedEventArgs) {
+		if !a.store.Settings().AdBlock {
+			return
+		}
+		uri, err := req.GetUri()
+		if err != nil || uri == "" || !shouldBlock(uri) {
+			return
+		}
+		env := c.Environment()
+		if env == nil {
+			return
+		}
+		resp, err := env.CreateWebResourceResponse(nil, 204, "No Content", "")
+		if err != nil || resp == nil {
+			return
+		}
+		if args.PutResponse(resp) == nil {
+			noteBlocked()
+		}
+	}
 	c.DownloadStartingCallback = func(args *edge.ICoreWebView2DownloadStartingEventArgs) { a.onDownloadStarting(t, args) }
 	c.ProcessFailedCallback = func(kind edge.CoreWebView2ProcessFailedKind) {
 		a.postTask(func() { a.recoverFailedTab(t, kind) })
@@ -163,6 +186,11 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 	// tab and every navigation in dark mode. Must run AFTER Embed: the
 	// controller only exists once the engine has been created.
 	c.SetDefaultBackgroundColor(edge.COREWEBVIEW2_COLOR{A: 255, R: 28, G: 28, B: 30})
+
+	// Ask the engine to raise WebResourceRequested for every request so the
+	// ad/tracker blocker (WebResourceRequestedCallback above) can inspect
+	// them. The callback itself no-ops instantly when blocking is disabled.
+	c.AddWebResourceRequestedFilter("*", edge.COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL)
 
 	if st, err := c.GetSettings(); err == nil {
 		_ = st.PutAreDefaultContextMenusEnabled(true)

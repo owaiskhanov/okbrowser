@@ -6,6 +6,7 @@ A **very light and very fast** web browser for **Windows 10 and later**.
 - Renders with **Microsoft's Edge WebView2 engine** (the Chromium engine built into Windows) — full modern web support with native speed
 - **Native Win32 chrome** — one toolbar, one address bar, instant startup
 - **No telemetry, no accounts, no background services**
+- **Built-in ad & tracker blocking**, **live search suggestions**, **one-click default-browser setup** and **bookmark import** from any major browser
 
 ![OK Browser](res/icon-src.png)
 
@@ -79,6 +80,25 @@ just content:
   place it directly into that side of a new two-pane layout; drag a pane's tab
   back to the top merge target to return both pages to normal tabs. Divider
   resizing uses native mouse capture, so it remains fluid across pane boundaries
+- **Ad and tracker blocking**: a built-in, fully offline blocklist stops
+  requests to well-known advertising, analytics and tracking domains (Google
+  Ads/Analytics, DoubleClick, Taboola, Criteo, Hotjar, and dozens more),
+  answering them with an empty response so pages load faster and cleaner. It's
+  on by default, toggleable in Settings, and shows how many requests it has
+  blocked this session. Never runs a rule engine or downloads external lists —
+  it's a curated suffix match with essentially zero per-request cost
+- **Live search suggestions**: as you type in the address bar, completions
+  from your chosen search engine (Google / Bing / DuckDuckGo) appear alongside
+  your own history and bookmarks. Local results show instantly; engine
+  suggestions merge in behind them, de-duplicated, and are never fetched in
+  incognito. Toggleable in Settings
+- **Set as default browser**: one click in Settings registers OK Browser with
+  Windows (per-user, no admin needed) and opens the Windows Default apps page
+  so links from other apps open in OK Browser. Settings shows a check when
+  it's already the default
+- **Import bookmarks**: bring your bookmarks from Chrome, Edge, Firefox, Brave,
+  Opera or Safari — export their bookmarks to HTML, then import the file from
+  Settings or the Bookmarks page. Duplicates are skipped automatically
 - **Site identity and permissions**: the lock control reports whether the
   current connection uses HTTPS and offers per-site Ask / Allow / Block choices
   for camera, microphone, location, notifications, clipboard and sensors;

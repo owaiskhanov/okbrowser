@@ -838,6 +838,7 @@ const barJS = `
   // --- suggestions (history + bookmarks) ------------------------------------
   var sug = root.getElementById('sug');
   var sugItems = [];
+  var localCount = 0; // how many leading rows are local (history/bookmark)
   var sugSel = -1; // -1 = the typed/search row, 0.. = items
   var sugTimer = 0;
 
@@ -881,7 +882,7 @@ const barJS = `
         r.className = 'srow';
         var ic = document.createElement('div');
         ic.className = 'sic';
-        ic.innerHTML = it.s === 'b' ? I_STARF : I_CLK;
+        ic.innerHTML = it.s === 'b' ? I_STARF : (it.s === 's' ? I_LENS : I_CLK);
         r.appendChild(ic);
         var meta = document.createElement('div');
         meta.className = 'smeta';
@@ -893,7 +894,8 @@ const barJS = `
         meta.appendChild(uu);
         r.appendChild(meta);
         tt.textContent = it.t || it.u;
-        uu.textContent = it.u;
+        // Search-suggestion rows (source 's') show only the query - no URL line.
+        uu.textContent = it.s === 's' ? '' : it.u;
         r.addEventListener('mousedown', function (e) { e.preventDefault(); submit(it.u); });
         r.addEventListener('mouseenter', function () { sugSel = idx; sugPaint(); });
         sug.appendChild(r);
@@ -904,9 +906,28 @@ const barJS = `
   }
   window.__okSuggest = function (list) {
     sugItems = list || [];
+    localCount = sugItems.length;
     if (document.activeElement === input && input.value.trim()) {
       sugBuild();
     }
+  };
+  // Search-engine autocomplete arrives asynchronously; merge it in behind the
+  // local (history/bookmark) rows, de-duplicated, and only if it still matches
+  // what the user has typed (stale replies for an old query are dropped).
+  window.__okSuggestRemote = function (payload) {
+    if (!payload || payload.q !== input.value.trim()) return;
+    if (document.activeElement !== input || !input.value.trim()) return;
+    var have = {};
+    for (var i = 0; i < sugItems.length; i++) have[(sugItems[i].u || '').toLowerCase()] = 1;
+    var merged = sugItems.slice(0, localCount);
+    var remote = payload.s || [];
+    for (var j = 0; j < remote.length; j++) {
+      var key = (remote[j].u || '').toLowerCase();
+      if (key && !have[key]) { have[key] = 1; merged.push(remote[j]); }
+      if (merged.length >= 8) break;
+    }
+    sugItems = merged;
+    sugBuild();
   };
   input.addEventListener('input', function () {
     if (sugTimer) clearTimeout(sugTimer);
@@ -1519,6 +1540,10 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			st.LargeControls = m.U == "1"
 		case "sleep":
 			if n, err := strconv.Atoi(m.U); err == nil && n >= 0 && n <= 120 { st.SleepMinutes = n }
+		case "adblock":
+			st.AdBlock = m.U == "1"
+		case "searchsuggest":
+			st.SearchSuggest = m.U == "1"
 		}
 		a.store.SetSettings(st)
 		if m.M == "autofill" {
@@ -1534,6 +1559,7 @@ func (a *app) onWebMessage(t *tab, msg string) {
 
 	case "suggest": // address bubble typing: reply with suggestions
 		q := m.U
+		// Local suggestions (history + bookmarks) are instant - send them first.
 		a.postTask(func() {
 			sug := a.store.Suggest(q, 6)
 			b, err := json.Marshal(sug)
@@ -1542,6 +1568,31 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			}
 			a.execActive("window.__okSuggest&&window.__okSuggest(" + string(b) + ")")
 		})
+		// Search-engine autocomplete is a network call - fetch it off the UI
+		// thread and merge the results in when they arrive. Guarded by the
+		// setting and never run in incognito.
+		if a.store.Settings().SearchSuggest && !incognitoMode {
+			engine := a.store.Settings().Engine
+			go func() {
+				remote := fetchSearchSuggestions(engine, q, 6)
+				if len(remote) == 0 {
+					return
+				}
+				a.postTask(func() {
+					// Skip stale replies: only merge if the user is still on
+					// (a prefix of) the same query is handled JS-side; here we
+					// just deliver the remote batch tagged for merging.
+					b, err := json.Marshal(struct {
+						Q string       `json:"q"`
+						S []suggestion `json:"s"`
+					}{Q: q, S: remote})
+					if err != nil {
+						return
+					}
+					a.execActive("window.__okSuggestRemote&&window.__okSuggestRemote(" + string(b) + ")")
+				})
+			}()
+		}
 
 	case "menu": // the menu button beside minimize
 		switch m.M {
@@ -1698,6 +1749,18 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			return
 			case "updates":
 			a.checkForUpdates()
+			return
+		case "make-default": // settings: become the default browser
+			a.postTask(func() {
+				if err := makeDefaultBrowser(); err != nil {
+					a.updateToast("Could not register OK Browser")
+				} else {
+					a.updateToast("Choose OK Browser in the window that opened")
+				}
+			})
+			return
+		case "import-bookmarks": // settings / bookmarks page: import from another browser
+			a.postTask(func() { a.importBookmarksFlow() })
 			return
 		case "dl-open": // downloads page: open a validated file
 			if isDownloadPath(m.U) { openPath(m.U) }
