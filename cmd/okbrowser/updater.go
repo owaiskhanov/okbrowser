@@ -21,7 +21,6 @@ import (
 
 const latestReleaseAPI = "https://api.github.com/repos/owaiskhanov/okbrowser/releases/latest"
 
-type releaseAsset struct { Name, BrowserDownloadURL string `json:"name"` }
 type releaseInfo struct {
 	TagName string `json:"tag_name"`
 	Body string `json:"body"`
