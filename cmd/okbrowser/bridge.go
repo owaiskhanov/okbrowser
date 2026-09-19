@@ -51,6 +51,7 @@ window.__ok = function (o) {
     }}));
   }
   document.addEventListener("dragstart", function (e) {
+    if (window.__okSplitActive) return; // two panes is the hard maximum
     var a = anchor(e.target);
     if (!a || !a.href || a.href.indexOf("javascript:") === 0) return;
     edgeLink = a.href;
@@ -422,7 +423,9 @@ const barJS = `
     return !!el && el.classList.contains('open');
   }
   function hideIfIdle() {
-    if (barPinned || document.activeElement === input) return;
+    // New Tab is a persistent command surface: its tabs and URL field never
+    // retreat, even when the pointer leaves the top of the window.
+    if (!S.u || barPinned || document.activeElement === input) return;
     // Popovers anchored to the bar (menu, tab menu, suggestions, find)
     // are part of it: the bar must never retire while one is open.
     if (uiOpen('menu') || uiOpen('ctx') || uiOpen('sug') || uiOpen('find')) return;
@@ -503,6 +506,7 @@ const barJS = `
   }
   document.addEventListener('ok-link-edge', function (e) {
     var d = e.detail || {};
+    if (S.v) { clearEdgeGesture(); return; }
     if (d.phase === 'end') { clearEdgeGesture(); return; }
     var zone = d.x < 92 ? 'later' : (d.x > innerWidth - 92 ? 'split' : '');
     [edgeLeft, edgeRight, edgeTop].forEach(function (el) { el.classList.toggle('show', d.phase !== 'drop'); });
@@ -1017,7 +1021,8 @@ const barJS = `
   });
 
   window.__okBar = function (s) {
-    S = s; render(); sync(); stateLive = true;
+    S = s; window.__okSplitActive = !!S.v; render(); sync(); stateLive = true;
+    root.getElementById('wclose').title = S.v ? 'Close Split View' : 'Close';
     if (!S.u) { revealBar(false); setOpen(true); if (!stateLive) { input.focus(); input.select(); } }
   };
   window.__okProximityReveal = function () { revealBar(true); };
@@ -1390,13 +1395,23 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			return
 		case "close-split":
 			a.postTask(func() { a.closeSplit() })
+			return
+		case "wclose":
+			// In Split View the familiar close control dismisses the second
+			// pane, never the whole browser window.
+			if a.splitTab != nil {
+				a.postTask(func() { a.closeSplit() })
+			} else {
+				a.postTask(func() { a.windowAction("wclose") })
+			}
+			return
 		case "dl-open": // downloads page: open a file
 			openPath(m.U)
 			return
 		case "dl-show": // downloads page: reveal in Explorer
 			showInFolder(m.U)
 			return
-		case "wdrag", "wtopresize", "wmaxtoggle", "wmin", "wclose":
+		case "wdrag", "wtopresize", "wmaxtoggle", "wmin":
 			act := m.A
 			a.postTask(func() { a.windowAction(act) })
 			return

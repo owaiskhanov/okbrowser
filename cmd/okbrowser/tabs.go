@@ -164,9 +164,8 @@ func (a *app) postNewTab(url string) {
 // openSplit creates a real second WebView and places it beside the active page.
 // The link remains a normal tab, so switching tabs naturally promotes it later.
 func (a *app) openSplit(url string) {
-	if a.splitTab != nil {
-		a.splitTab = nil
-	}
+	// Two panes is the maximum. Ignore additional edge drops while split.
+	if a.splitTab != nil { return }
 	t := a.newTabMode(url, false, true)
 	if t == nil { return }
 	a.splitTab = t
