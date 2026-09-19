@@ -12,6 +12,7 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.webkit.DownloadListener;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -37,8 +38,8 @@ public class MainActivity extends Activity {
         super.onCreate(state);
         Window w = getWindow();
         w.setStatusBarColor(Color.TRANSPARENT);
-        w.setNavigationBarColor(Color.rgb(16, 16, 20));
-        w.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
+        w.setNavigationBarColor(Color.TRANSPARENT);
+        hideSystemBars();
 
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.rgb(20, 20, 24));
@@ -49,7 +50,7 @@ public class MainActivity extends Activity {
         progress.setMax(100);
         progress.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.rgb(10,132,255)));
         FrameLayout.LayoutParams pp = new FrameLayout.LayoutParams(-1, dp(2));
-        pp.topMargin = dp(25);
+        pp.topMargin = 0;
         root.addView(progress, pp);
 
         glass = new LinearLayout(this);
@@ -80,7 +81,7 @@ public class MainActivity extends Activity {
 
         FrameLayout.LayoutParams gp = new FrameLayout.LayoutParams(-1, dp(54));
         gp.gravity = Gravity.TOP;
-        gp.setMargins(dp(10), dp(31), dp(10), 0);
+        gp.setMargins(dp(10), dp(9), dp(10), 0);
         root.addView(glass, gp);
         setContentView(root);
         configureWebView();
@@ -161,6 +162,36 @@ public class MainActivity extends Activity {
         else web.loadUrl("https://www.google.com/search?q=" + URLEncoder.encode(q, StandardCharsets.UTF_8));
     }
 
+    /**
+     * Keep both Android system bars hidden. A deliberate edge swipe reveals
+     * transient controls, and Android automatically hides them again.
+     */
+    private void hideSystemBars() {
+        Window w = getWindow();
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            w.setDecorFitsSystemWindows(false);
+            WindowInsetsController controller = w.getInsetsController();
+            if (controller != null) {
+                controller.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+                controller.setSystemBarsBehavior(
+                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            }
+        } else {
+            w.getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY |
+                    View.SYSTEM_UI_FLAG_FULLSCREEN |
+                    View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
+                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
+                    View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+        }
+    }
+
+    @Override protected void onResume() { super.onResume(); hideSystemBars(); }
+    @Override public void onWindowFocusChanged(boolean focused) {
+        super.onWindowFocusChanged(focused);
+        if (focused) hideSystemBars();
+    }
     @Override public void onBackPressed() { if (web.canGoBack()) web.goBack(); else super.onBackPressed(); }
     @Override protected void onSaveInstanceState(Bundle out) { web.saveState(out); super.onSaveInstanceState(out); }
     @Override protected void onDestroy() { web.destroy(); super.onDestroy(); }

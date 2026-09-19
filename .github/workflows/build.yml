@@ -206,14 +206,24 @@ jobs:
         with:
           gradle-version: "8.10.2"
 
-      - name: Build installable APK
-        run: gradle --no-daemon :mobile:assembleDebug
+      - name: Build unsigned release APK
+        run: gradle --no-daemon :mobile:assembleRelease
+
+      - name: Verify APK is unsigned
+        run: |
+          APK=mobile/build/outputs/apk/release/mobile-release-unsigned.apk
+          test -f "$APK"
+          if apksigner verify "$APK"; then
+            echo "APK unexpectedly contains a valid signature" >&2
+            exit 1
+          fi
+          echo "Verified unsigned release APK"
 
       - name: Upload APK beside the Windows executable
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="$(gh release view --json tagName --jq .tagName)"
-          cp mobile/build/outputs/apk/debug/mobile-debug.apk OKBrowser-Android.apk
-          gh release upload "$TAG" OKBrowser-Android.apk --clobber
-          echo "Uploaded APK to $TAG"
+          cp mobile/build/outputs/apk/release/mobile-release-unsigned.apk OKBrowser-Android-unsigned.apk
+          gh release upload "$TAG" OKBrowser-Android-unsigned.apk --clobber
+          echo "Uploaded unsigned APK to $TAG"
