@@ -41,6 +41,28 @@ func ParseWithEngine(input, engine string) string {
 	return parse(input, searchURL)
 }
 
+// externalSchemes are the non-web URL schemes OK Browser hands to the
+// operating system's default handler (mail client, dialer, messaging app)
+// instead of trying to load as a web page. The list is a deliberate safe
+// allowlist: a web page must not be able to launch arbitrary local handlers
+// (file://, custom app protocols, etc.) just by scripting a link.
+var externalSchemes = []string{"mailto:", "tel:", "sms:", "callto:", "geo:"}
+
+// ExternalScheme reports whether s should be opened by the operating system
+// rather than navigated to inside the browser. WebView2 cannot load these
+// schemes, and running them through Parse corrupts them (e.g.
+// "mailto:a@b.com" would wrongly become "https://mailto:a@b.com"), so the
+// caller must route them to the shell instead.
+func ExternalScheme(s string) bool {
+	low := strings.ToLower(strings.TrimSpace(s))
+	for _, prefix := range externalSchemes {
+		if strings.HasPrefix(low, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // IsSearchURL reports whether u is a search-engine results page - such
 // pages are excluded from history tiles and most-visited rankings.
 func IsSearchURL(u string) bool {

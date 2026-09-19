@@ -29,6 +29,7 @@ type tab struct {
 	title   string
 	url     string
 	favicon string // page-reported icon URL ('' = letter avatar)
+	tint    string // Ambient Glass: page's dominant color as "r,g,b" ('' = none)
 	isStart bool
 	errPage bool // the currently shown page is our error page
 	pinned  bool // pinned tabs render as favicon-only pills
@@ -120,6 +121,11 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 		if uri == "" {
 			return
 		}
+		// mailto:/tel:/sms: new-window requests go to the OS default handler.
+		if nav.ExternalScheme(uri) {
+			a.postTask(func() { openExternal(uri) })
+			return
+		}
 		if user {
 			// A trusted user gesture (a real click on a _blank link) must
 			// always open its tab - never eat a user action.
@@ -128,6 +134,29 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 		}
 		if a.allowSpawn() {
 			a.postTask(func() { a.newTab(uri, true) })
+		}
+	}
+	// Ad / tracker blocking: answer known ad and tracker requests with an
+	// empty HTTP 204 so the page loads faster and cleaner. Gated on the
+	// user's setting, read live so toggling it applies to the next request.
+	c.WebResourceRequestedCallback = func(req *edge.ICoreWebView2WebResourceRequest, args *edge.ICoreWebView2WebResourceRequestedEventArgs) {
+		if !a.store.Settings().AdBlock {
+			return
+		}
+		uri, err := req.GetUri()
+		if err != nil || uri == "" || !shouldBlock(uri) {
+			return
+		}
+		env := c.Environment()
+		if env == nil {
+			return
+		}
+		resp, err := env.CreateWebResourceResponse(nil, 204, "No Content", "")
+		if err != nil || resp == nil {
+			return
+		}
+		if args.PutResponse(resp) == nil {
+			noteBlocked()
 		}
 	}
 	c.DownloadStartingCallback = func(args *edge.ICoreWebView2DownloadStartingEventArgs) { a.onDownloadStarting(t, args) }
@@ -158,6 +187,11 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 	// tab and every navigation in dark mode. Must run AFTER Embed: the
 	// controller only exists once the engine has been created.
 	c.SetDefaultBackgroundColor(edge.COREWEBVIEW2_COLOR{A: 255, R: 28, G: 28, B: 30})
+
+	// Ask the engine to raise WebResourceRequested for every request so the
+	// ad/tracker blocker (WebResourceRequestedCallback above) can inspect
+	// them. The callback itself no-ops instantly when blocking is disabled.
+	c.AddWebResourceRequestedFilter("*", edge.COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL)
 
 	if st, err := c.GetSettings(); err == nil {
 		_ = st.PutAreDefaultContextMenusEnabled(true)
@@ -265,16 +299,6 @@ func (a *app) closeSplit() {
 	a.pushBarState()
 }
 
-func (a *app) resizeSplit(delta float64) {
-	if a.splitTab == nil { return }
-	var rc win.RECT
-	if !win.GetClientRect(a.hwnd, &rc) || rc.Right <= 0 { return }
-	a.splitRatio += delta / float64(rc.Right)
-	if a.splitRatio < .28 { a.splitRatio = .28 }
-	if a.splitRatio > .72 { a.splitRatio = .72 }
-	a.layout()
-}
-
 func (a *app) swapSplit() {
 	if a.splitTab == nil { return }
 	old := a.active()
@@ -370,6 +394,12 @@ func (a *app) navigateTab(t *tab, raw string) {
 	low := strings.ToLower(s)
 	if strings.HasPrefix(low, "okbrowser://") {
 		a.showInternal(t, strings.TrimPrefix(low, "okbrowser://"))
+		return
+	}
+	// mailto:/tel:/sms: and friends can't be loaded by WebView2 - hand them
+	// to the OS default handler and leave the current page untouched.
+	if nav.ExternalScheme(s) {
+		openExternal(s)
 		return
 	}
 	u := nav.ParseWithEngine(s, a.store.Settings().Engine)
@@ -690,7 +720,7 @@ func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompleted
 	a.pushBarState()
 	a.scheduleBarPush(false)
 	a.selftestNavHook(t)
-	t.chromium.Eval(`window.__ok && window.__ok({ t: "nav", u: location.href, d: document.title, f: (function(){try{var l=document.querySelector('link[rel~="shortcut icon"],link[rel~="icon"]');return l&&l.href?l.href:(location.origin+'/favicon.ico')}catch(e){return ''}})() })`)
+	t.chromium.Eval(`window.__ok && window.__ok({ t: "nav", u: location.href, d: document.title, a: (window.__okTint?window.__okTint():''), f: (function(){try{var l=document.querySelector('link[rel~="shortcut icon"],link[rel~="icon"]');return l&&l.href?l.href:(location.origin+'/favicon.ico')}catch(e){return ''}})() })`)
 }
 
 // showErrorPage replaces the tab's content with a glass error page that

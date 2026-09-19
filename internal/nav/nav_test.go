@@ -59,18 +59,6 @@ func TestParseIsDeterministicAndTrimmed(t *testing.T) {
 	}
 }
 
-
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (func() bool {
-		for i := 0; i+len(sub) <= len(s); i++ {
-			if s[i:i+len(sub)] == sub {
-				return true
-			}
-		}
-		return false
-	})()
-}
-
 func TestParseWithEngine(t *testing.T) {
 	if got := ParseWithEngine("giraffe", "Bing"); got != "https://www.bing.com/search?q=giraffe" {
 		t.Errorf("ParseWithEngine(bing) = %q", got)
@@ -83,5 +71,37 @@ func TestParseWithEngine(t *testing.T) {
 	}
 	if !IsSearchURL("https://www.google.com/search?q=x") || IsSearchURL("https://example.com/") {
 		t.Error("IsSearchURL misclassifies")
+	}
+}
+
+func TestExternalScheme(t *testing.T) {
+	external := []string{
+		"mailto:hi@example.com",
+		"MAILTO:hi@example.com",
+		"tel:+15551234567",
+		"sms:+15551234567",
+		"callto:username",
+		"geo:19.07,72.87",
+		"  mailto:spaced@example.com  ",
+	}
+	for _, s := range external {
+		if !ExternalScheme(s) {
+			t.Errorf("ExternalScheme(%q) = false, want true", s)
+		}
+	}
+	internal := []string{
+		"https://example.com",
+		"http://example.com",
+		"example.com",
+		"file:///C:/x.html",
+		"okbrowser://settings",
+		"javascript:void(0)",
+		"data:text/html,hi",
+		"",
+	}
+	for _, s := range internal {
+		if ExternalScheme(s) {
+			t.Errorf("ExternalScheme(%q) = true, want false", s)
+		}
 	}
 }

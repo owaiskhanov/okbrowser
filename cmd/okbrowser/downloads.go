@@ -71,7 +71,7 @@ func (a *app) downloadAction(path, action string) bool {
 	return false
 }
 
-func sourceHost(raw string) string { u, _ := url.Parse(raw); return u.Hostname() }
+func sourceHost(raw string) string { u, err := url.Parse(raw); if err != nil || u == nil { return "" }; return u.Hostname() }
 
 func (a *app) hasActiveDownload(t *tab) bool {
 	for _, d := range a.downloads { if d.owner == t && d.state == 0 { return true } }

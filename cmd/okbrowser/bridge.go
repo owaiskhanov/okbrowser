@@ -12,6 +12,8 @@ import (
 
 	"github.com/jchv/go-webview2/pkg/edge"
 	"github.com/lxn/win"
+
+	"github.com/owaiskhanov/okbrowser/internal/nav"
 )
 
 // bridgeJS is injected into every page before any of its own scripts run.
@@ -23,6 +25,50 @@ import (
 const bridgeJS = `
 window.__ok = function (o) {
   try { window.chrome.webview.postMessage(JSON.stringify(o)); } catch (e) {}
+};
+// __okTint samples the page's dominant color for the Ambient Glass UI. It
+// prefers the site's declared <meta name="theme-color">, then the computed
+// background of the header/body, and returns "r,g,b" (or "" when the color is
+// missing, transparent, or plain white/black - in which case the UI keeps its
+// neutral glass so a blank page never washes the chrome out).
+window.__okTint = function () {
+  try {
+    function parse(str) {
+      if (!str) return null;
+      str = str.trim().toLowerCase();
+      if (str === 'transparent') return null;
+      var m = str.match(/^#([0-9a-f]{3,8})$/);
+      if (m) {
+        var h = m[1];
+        if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+        return [parseInt(h.substr(0,2),16), parseInt(h.substr(2,2),16), parseInt(h.substr(4,2),16)];
+      }
+      m = str.match(/rgba?\(([^)]+)\)/);
+      if (m) {
+        var p = m[1].split(',');
+        if (p.length >= 4 && parseFloat(p[3]) < 0.5) return null; // mostly transparent
+        return [parseInt(p[0],10)||0, parseInt(p[1],10)||0, parseInt(p[2],10)||0];
+      }
+      return null;
+    }
+    function usable(c) {
+      if (!c) return false;
+      var mx = Math.max(c[0],c[1],c[2]), mn = Math.min(c[0],c[1],c[2]);
+      // Skip near-white and near-black backgrounds: they carry no useful hue
+      // and would just grey the glass. Keep everything with real color.
+      if (mx > 244 && mn > 244) return false;
+      if (mx < 18) return false;
+      return true;
+    }
+    var meta = document.querySelector('meta[name="theme-color"]');
+    var c = meta ? parse(meta.getAttribute('content')) : null;
+    if (usable(c)) return c.join(',');
+    var head = document.querySelector('header,[role="banner"],nav');
+    if (head) { c = parse(getComputedStyle(head).backgroundColor); if (usable(c)) return c.join(','); }
+    c = parse(getComputedStyle(document.body || document.documentElement).backgroundColor);
+    if (usable(c)) return c.join(',');
+    return '';
+  } catch (e) { return ''; }
 };
 (function () {
   if (window.top !== window) {
@@ -46,14 +92,15 @@ window.__ok = function (o) {
     var a = anchor(e.target);
     if (a && a.target && a.target !== "_self" && !a.hasAttribute("data-ok-engine")) {
       e.preventDefault();
-      window.__ok({ t: "open", u: a.href });
+      // a:"1" marks a genuine user gesture so the host never rate-limits it.
+      window.__ok({ t: "open", u: a.href, a: "1" });
     }
   }, true);
   document.addEventListener("auxclick", function (e) {
     var a = anchor(e.target);
     if (a && e.button === 1 && !a.hasAttribute("data-ok-engine")) {
       e.preventDefault();
-      window.__ok({ t: "open", u: a.href });
+      window.__ok({ t: "open", u: a.href, a: "1" });
     }
   }, true);
   // Link edge gestures. Drag any ordinary link toward an edge: left previews
@@ -107,7 +154,7 @@ const barJS = `
   if (window.__okBarInstalled) return;
   window.__okBarInstalled = true;
 
-  var S = { tabs: [{ t: "New Tab" }], a: 0, u: "", b: false, f: false, m: false, k: false, e: "Google" };
+  var S = { tabs: [{ t: "New Tab" }], a: 0, u: "", b: false, f: false, m: false, k: false, e: "Google", c: "", am: true };
 
   var SV = function (inner) {
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + inner + '</svg>';
@@ -366,6 +413,28 @@ const barJS = `
     ":host(.large) .strip{height:46px}:host(.large) .tab{height:32px;border-radius:16px}",
     ":host(.large) .wcap{height:34px}:host(.large) .wbtn{height:30px;width:46px}",
     ":host(.large) .okb{height:34px;border-radius:18px}",
+    // --- Ambient Glass: page-colored tint over the frosted glass ----------
+    // --ok-accent is set to the page's "r,g,b". Each surface keeps its own
+    // frosted base and layers a low-alpha wash of the accent on top, so the
+    // chrome subtly takes on the site's color without hurting contrast.
+    ":host(.ambient-anim) .strip,:host(.ambient-anim) .tab,:host(.ambient-anim) .okb,",
+    ":host(.ambient-anim) .wcap,:host(.ambient-anim) .prog{transition:background .55s ease,box-shadow .55s ease,border-color .55s ease}",
+    ":host(.ambient) .strip{background:",
+    "linear-gradient(rgba(var(--ok-accent),.14),rgba(var(--ok-accent),.14)),rgba(250,250,252,.52)}",
+    ":host(.ambient) .tab.on{background:",
+    "linear-gradient(rgba(var(--ok-accent),.22),rgba(var(--ok-accent),.22)),rgba(255,255,255,.72)}",
+    ":host(.ambient) .okb{background:",
+    "linear-gradient(rgba(var(--ok-accent),.16),rgba(var(--ok-accent),.16)),rgba(255,255,255,.42);",
+    "box-shadow:0 1px 8px rgba(var(--ok-accent),.20),inset 0 0 0 .5px rgba(var(--ok-accent),.30)}",
+    ":host(.ambient) .wcap{background:",
+    "linear-gradient(rgba(var(--ok-accent),.14),rgba(var(--ok-accent),.14)),rgba(250,250,252,.5)}",
+    ":host(.ambient) .prog{background:linear-gradient(90deg,rgb(var(--ok-accent)),rgba(var(--ok-accent),.55))}",
+    ":host(.ambient) .edge{background:linear-gradient(90deg,transparent,rgba(var(--ok-accent),.42),transparent)}",
+    "@media (prefers-color-scheme:dark){",
+    ":host(.ambient) .strip{background:linear-gradient(rgba(var(--ok-accent),.20),rgba(var(--ok-accent),.20)),rgba(24,24,28,.55)}",
+    ":host(.ambient) .tab.on{background:linear-gradient(rgba(var(--ok-accent),.30),rgba(var(--ok-accent),.30)),rgba(255,255,255,.18)}",
+    ":host(.ambient) .okb{background:linear-gradient(rgba(var(--ok-accent),.24),rgba(var(--ok-accent),.24)),rgba(28,28,32,.46)}",
+    ":host(.ambient) .wcap{background:linear-gradient(rgba(var(--ok-accent),.20),rgba(var(--ok-accent),.20)),rgba(28,28,32,.55)}}",
     "@media (prefers-reduced-motion:reduce){*{animation:none !important;transition-duration:.01ms !important}}",
     "@media (forced-colors:active){.strip,.wcap,.okb,.menu,.ctx,.sug,.find{background:Canvas;border:1px solid CanvasText;backdrop-filter:none}.tab.on{outline:2px solid Highlight}}",
     "@media print{.strip,.wcap,.edge,.find,.edgeact{display:none !important}}"
@@ -835,6 +904,7 @@ const barJS = `
   // --- suggestions (history + bookmarks) ------------------------------------
   var sug = root.getElementById('sug');
   var sugItems = [];
+  var localCount = 0; // how many leading rows are local (history/bookmark)
   var sugSel = -1; // -1 = the typed/search row, 0.. = items
   var sugTimer = 0;
 
@@ -878,7 +948,7 @@ const barJS = `
         r.className = 'srow';
         var ic = document.createElement('div');
         ic.className = 'sic';
-        ic.innerHTML = it.s === 'b' ? I_STARF : I_CLK;
+        ic.innerHTML = it.s === 'b' ? I_STARF : (it.s === 's' ? I_LENS : I_CLK);
         r.appendChild(ic);
         var meta = document.createElement('div');
         meta.className = 'smeta';
@@ -890,7 +960,8 @@ const barJS = `
         meta.appendChild(uu);
         r.appendChild(meta);
         tt.textContent = it.t || it.u;
-        uu.textContent = it.u;
+        // Search-suggestion rows (source 's') show only the query - no URL line.
+        uu.textContent = it.s === 's' ? '' : it.u;
         r.addEventListener('mousedown', function (e) { e.preventDefault(); submit(it.u); });
         r.addEventListener('mouseenter', function () { sugSel = idx; sugPaint(); });
         sug.appendChild(r);
@@ -901,9 +972,28 @@ const barJS = `
   }
   window.__okSuggest = function (list) {
     sugItems = list || [];
+    localCount = sugItems.length;
     if (document.activeElement === input && input.value.trim()) {
       sugBuild();
     }
+  };
+  // Search-engine autocomplete arrives asynchronously; merge it in behind the
+  // local (history/bookmark) rows, de-duplicated, and only if it still matches
+  // what the user has typed (stale replies for an old query are dropped).
+  window.__okSuggestRemote = function (payload) {
+    if (!payload || payload.q !== input.value.trim()) return;
+    if (document.activeElement !== input || !input.value.trim()) return;
+    var have = {};
+    for (var i = 0; i < sugItems.length; i++) have[(sugItems[i].u || '').toLowerCase()] = 1;
+    var merged = sugItems.slice(0, localCount);
+    var remote = payload.s || [];
+    for (var j = 0; j < remote.length; j++) {
+      var key = (remote[j].u || '').toLowerCase();
+      if (key && !have[key]) { have[key] = 1; merged.push(remote[j]); }
+      if (merged.length >= 8) break;
+    }
+    sugItems = merged;
+    sugBuild();
   };
   input.addEventListener('input', function () {
     if (sugTimer) clearTimeout(sugTimer);
@@ -1162,8 +1252,34 @@ const barJS = `
     host.style.display = document.fullscreenElement ? 'none' : '';
   });
 
+  // --- Ambient Glass: the chrome takes on the page's dominant color ---------
+  // A single --ok-accent custom property (plus low-alpha variants) drives a
+  // subtle tint across the strip, active tab, address bubble, capsule, menus
+  // and loading line. CSS transitions make every navigation a liquid color
+  // shift. Honors the setting, reduced motion (instant) and forced colors
+  // (disabled) so it never harms legibility.
+  var reduceMotion = false, forcedColors = false;
+  try { reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
+  try { forcedColors = matchMedia('(forced-colors: active)').matches; } catch (e) {}
+  var ambientOn = false;
+  function applyAmbient() {
+    var want = S.am && !forcedColors && !!S.c;
+    if (want) {
+      var rgb = S.c;
+      host.style.setProperty('--ok-accent', rgb);
+      host.classList.add('ambient');
+    } else {
+      host.classList.remove('ambient');
+    }
+    // The color transition is disabled for reduced-motion users (they still
+    // get the tint, just without the animated ramp).
+    host.classList.toggle('ambient-anim', want && !reduceMotion);
+    ambientOn = want;
+  }
+
   window.__okBar = function (s) {
     S = s; window.__okSplitActive = !!S.v; render(); sync(); stateLive = true;
+    applyAmbient();
     root.getElementById('wclose').title = S.v ? 'Close Split View' : 'Close';
     if (!S.u) { revealBar(false); setOpen(true); if (!stateLive) { input.focus(); input.select(); } }
   };
@@ -1233,6 +1349,28 @@ type barTab struct {
 	N bool   `json:"n"` // site excluded from sleeping
 }
 
+// sanitizeTint validates an Ambient Glass color reported by page JS. The page
+// is untrusted, so only a strict "r,g,b" of three 0-255 integers is accepted;
+// anything else yields "" (no tint), which the shell renders as neutral glass.
+func sanitizeTint(s string) string {
+	if s == "" {
+		return ""
+	}
+	parts := strings.Split(s, ",")
+	if len(parts) != 3 {
+		return ""
+	}
+	out := make([]string, 3)
+	for i, p := range parts {
+		n, err := strconv.Atoi(strings.TrimSpace(p))
+		if err != nil || n < 0 || n > 255 {
+			return ""
+		}
+		out[i] = strconv.Itoa(n)
+	}
+	return strings.Join(out, ",")
+}
+
 // barState is the full state pushed to the active tab's shell UI.
 type barState struct {
 	Tabs []barTab `json:"tabs"`
@@ -1248,6 +1386,8 @@ type barState struct {
 	Q    bool              `json:"q"` // this is the focused split pane
 	L    bool              `json:"l"` // this is the left/original pane
 	G    bool              `json:"g"` // larger browser controls
+	C    string            `json:"c"` // Ambient Glass tint "r,g,b" ('' = neutral)
+	Am   bool              `json:"am"` // Ambient Glass enabled
 }
 
 func (a *app) permissionStateFor(t *tab) map[string]string {
@@ -1291,6 +1431,8 @@ func (a *app) pushBarState() {
 			Q:    a.commandTab() == view,
 			L:    view == a.active(),
 			G:    a.store.Settings().LargeControls,
+			C:    view.tint,
+			Am:   a.store.Settings().Ambient,
 		}
 		b, err := json.Marshal(st)
 		if err == nil {
@@ -1431,7 +1573,19 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		if a.inSelfTest {
 			a.stlog("[selftest] bridge open request: %s", m.U)
 		}
-		if m.U != "" && a.allowSpawn() {
+		if m.U == "" {
+			break
+		}
+		// mailto:/tel:/sms: links must go to the OS handler, never open an
+		// empty tab that then shows an error page.
+		if nav.ExternalScheme(m.U) {
+			url := m.U
+			a.postTask(func() { openExternal(url) })
+			break
+		}
+		// A real user click (A == "1") must always open - only rate-limit
+		// unattended scripted popups, which is what allowSpawn guards.
+		if m.A == "1" || a.allowSpawn() {
 			// Never create engines from inside the message callback: post
 			// the work to the window-proc context instead.
 			url := m.U
@@ -1452,6 +1606,9 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			t.favicon = m.F
 			a.store.SetFavicon(m.U, m.F)
 		}
+		// Ambient Glass: remember the page's sampled dominant color so the
+		// tint survives later bar re-pushes (tab switches, split panes).
+		t.tint = sanitizeTint(m.A)
 		if m.U == "" || m.U == "about:blank" {
 			t.isStart = true
 			t.title = "New Tab"
@@ -1504,6 +1661,12 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			st.LargeControls = m.U == "1"
 		case "sleep":
 			if n, err := strconv.Atoi(m.U); err == nil && n >= 0 && n <= 120 { st.SleepMinutes = n }
+		case "adblock":
+			st.AdBlock = m.U == "1"
+		case "searchsuggest":
+			st.SearchSuggest = m.U == "1"
+		case "ambient":
+			st.Ambient = m.U == "1"
 		}
 		a.store.SetSettings(st)
 		if m.M == "autofill" {
@@ -1519,6 +1682,7 @@ func (a *app) onWebMessage(t *tab, msg string) {
 
 	case "suggest": // address bubble typing: reply with suggestions
 		q := m.U
+		// Local suggestions (history + bookmarks) are instant - send them first.
 		a.postTask(func() {
 			sug := a.store.Suggest(q, 6)
 			b, err := json.Marshal(sug)
@@ -1527,6 +1691,31 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			}
 			a.execActive("window.__okSuggest&&window.__okSuggest(" + string(b) + ")")
 		})
+		// Search-engine autocomplete is a network call - fetch it off the UI
+		// thread and merge the results in when they arrive. Guarded by the
+		// setting and never run in incognito.
+		if a.store.Settings().SearchSuggest && !incognitoMode {
+			engine := a.store.Settings().Engine
+			go func() {
+				remote := fetchSearchSuggestions(engine, q, 6)
+				if len(remote) == 0 {
+					return
+				}
+				a.postTask(func() {
+					// Skip stale replies: only merge if the user is still on
+					// (a prefix of) the same query is handled JS-side; here we
+					// just deliver the remote batch tagged for merging.
+					b, err := json.Marshal(struct {
+						Q string       `json:"q"`
+						S []suggestion `json:"s"`
+					}{Q: q, S: remote})
+					if err != nil {
+						return
+					}
+					a.execActive("window.__okSuggestRemote&&window.__okSuggestRemote(" + string(b) + ")")
+				})
+			}()
+		}
 
 	case "menu": // the menu button beside minimize
 		switch m.M {
@@ -1683,6 +1872,18 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			return
 			case "updates":
 			a.checkForUpdates()
+			return
+		case "make-default": // settings: become the default browser
+			a.postTask(func() {
+				if err := makeDefaultBrowser(); err != nil {
+					a.updateToast("Could not register OK Browser")
+				} else {
+					a.updateToast("Choose OK Browser in the window that opened")
+				}
+			})
+			return
+		case "import-bookmarks": // settings / bookmarks page: import from another browser
+			a.postTask(func() { a.importBookmarksFlow() })
 			return
 		case "dl-open": // downloads page: open a validated file
 			if isDownloadPath(m.U) { openPath(m.U) }

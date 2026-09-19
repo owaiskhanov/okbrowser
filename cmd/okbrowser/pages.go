@@ -183,9 +183,11 @@ func BookmarksHTML(items []bmEntry) string {
 	var b strings.Builder
 	b.WriteString(pageBase)
 	b.WriteString(toastMount)
-	b.WriteString(`<div class="wrap fade"><h1>Bookmarks</h1><div class="card" id="list">`)
+	b.WriteString(`<div class="wrap fade"><h1>Bookmarks</h1>`)
+	b.WriteString(`<div class="card" style="margin-bottom:14px"><div class="row" id="importbm"><div class="meta"><div class="tt">Import bookmarks</div><div class="uu">From Chrome, Edge, Firefox, Brave or Safari (exported HTML)</div></div><div class="xx" style="opacity:.7">Import ›</div></div></div>`)
+	b.WriteString(`<div class="card" id="list">`)
 	if len(items) == 0 {
-		b.WriteString(`<div class="row"><div class="meta"><div class="tt">No bookmarks yet</div><div class="uu">Tap the ★ in the address bar to save a page</div></div></div>`)
+		b.WriteString(`<div class="row"><div class="meta"><div class="tt">No bookmarks yet</div><div class="uu">Tap the ★ in the address bar to save a page — or import them above</div></div></div>`)
 	}
 	for _, it := range items {
 		b.WriteString(`<div class="row" data-u="` + htmlEsc(it.URL) + `">` + avHTML(it.URL) +
@@ -196,6 +198,8 @@ func BookmarksHTML(items []bmEntry) string {
 	b.WriteString(`<script>
 (function(){
   var post=function(o){try{window.__ok(o)}catch(e){}};
+  var ib=document.getElementById('importbm');
+  if(ib) ib.addEventListener('click',function(){ post({t:'ui',a:'import-bookmarks'}); });
   var rows=document.querySelectorAll('.row[data-u]');
   for(var i=0;i<rows.length;i++){
     (function(r){
@@ -313,6 +317,37 @@ func SettingsHTML(s Settings, version string) string {
 		b.WriteString(`<option value="` + strconv.Itoa(n) + `"` + selected + `>` + label + `</option>`)
 	}
 	b.WriteString(`</select></div></div>`)
+
+	// Appearance
+	b.WriteString(`<div style="font-size:12px;font-weight:650;opacity:.5;margin:22px 4px 8px;text-transform:uppercase;letter-spacing:.06em">Appearance</div><div class="card">`)
+	ambient := ""
+	if s.Ambient { ambient = " checked" }
+	b.WriteString(`<div class="row"><div class="meta"><div class="tt">Ambient Glass</div><div class="uu">Tint the browser glass with each page's dominant color</div></div><input id="ambient" type="checkbox"` + ambient + `></div></div>`)
+
+	// Privacy & content blocking
+	b.WriteString(`<div style="font-size:12px;font-weight:650;opacity:.5;margin:22px 4px 8px;text-transform:uppercase;letter-spacing:.06em">Privacy & content blocking</div><div class="card">`)
+	adblock := ""
+	if s.AdBlock { adblock = " checked" }
+	blockNote := "Blocks ads, analytics and trackers for faster, cleaner pages"
+	if n := blockedTotal(); n > 0 {
+		blockNote = fmt.Sprintf("Blocked %d ad and tracker requests this session", n)
+	}
+	b.WriteString(`<div class="row"><div class="meta"><div class="tt">Block ads &amp; trackers</div><div class="uu">` + blockNote + `</div></div><input id="adblock" type="checkbox"` + adblock + `></div>`)
+	suggest := ""
+	if s.SearchSuggest { suggest = " checked" }
+	b.WriteString(`<div class="row"><div class="meta"><div class="tt">Search suggestions</div><div class="uu">Show live suggestions from your search engine as you type</div></div><input id="searchsuggest" type="checkbox"` + suggest + `></div></div>`)
+
+	// Default browser
+	b.WriteString(`<div style="font-size:12px;font-weight:650;opacity:.5;margin:22px 4px 8px;text-transform:uppercase;letter-spacing:.06em">Default browser</div><div class="card">`)
+	if isDefaultBrowser() {
+		b.WriteString(`<div class="row"><div class="meta"><div class="tt">OK Browser is your default</div><div class="uu">Links from other apps open here</div></div><div style="flex:0 0 auto;color:#34c759;font-size:20px">✓</div></div></div>`)
+	} else {
+		b.WriteString(`<div class="row" id="makedefault"><div class="meta"><div class="tt">Make OK Browser the default</div><div class="uu">Open Windows settings to set OK Browser for web links</div></div><div class="xx">Set ›</div></div></div>`)
+	}
+
+	// Bookmarks import
+	b.WriteString(`<div style="font-size:12px;font-weight:650;opacity:.5;margin:22px 4px 8px;text-transform:uppercase;letter-spacing:.06em">Bookmarks</div><div class="card">`)
+	b.WriteString(`<div class="row" id="importbm"><div class="meta"><div class="tt">Import bookmarks</div><div class="uu">From Chrome, Edge, Firefox, Brave or Safari (exported HTML)</div></div><div class="xx">Import ›</div></div></div>`)
 
 	// Accessibility
 	b.WriteString(`<div style="font-size:12px;font-weight:650;opacity:.5;margin:22px 4px 8px;text-transform:uppercase;letter-spacing:.06em">Accessibility</div><div class="card">`)
@@ -505,6 +540,16 @@ const settingsPageJS = `(function(){
   if(af) af.addEventListener('change',function(){post({t:'set',m:'autofill',u:this.checked?'1':'0'});toast(this.checked?'Autofill enabled':'Autofill disabled');});
   var sl=document.getElementById('sleep');
   if(sl) sl.addEventListener('change',function(){post({t:'set',m:'sleep',u:this.value});toast(this.value==='0'?'Sleeping tabs disabled':'Tabs sleep after '+this.value+' minutes');});
+  var am=document.getElementById('ambient');
+  if(am) am.addEventListener('change',function(){post({t:'set',m:'ambient',u:this.checked?'1':'0'});toast(this.checked?'Ambient Glass on':'Ambient Glass off');});
+  var ab=document.getElementById('adblock');
+  if(ab) ab.addEventListener('change',function(){post({t:'set',m:'adblock',u:this.checked?'1':'0'});toast(this.checked?'Ad & tracker blocking on':'Ad & tracker blocking off');});
+  var ss=document.getElementById('searchsuggest');
+  if(ss) ss.addEventListener('change',function(){post({t:'set',m:'searchsuggest',u:this.checked?'1':'0'});toast(this.checked?'Search suggestions on':'Search suggestions off');});
+  var md=document.getElementById('makedefault');
+  if(md) md.addEventListener('click',function(){post({t:'ui',a:'make-default'});});
+  var ib=document.getElementById('importbm');
+  if(ib) ib.addEventListener('click',function(){post({t:'ui',a:'import-bookmarks'});});
   function act(id,m,msg){
     var el=document.getElementById(id);
     if(el) el.addEventListener('click',function(){

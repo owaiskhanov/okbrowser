@@ -54,6 +54,9 @@ type Settings struct {
 	SleepMinutes   int    `json:"sleepMin"` // 0 disables sleeping tabs
 	NeverSleep     map[string]bool `json:"neverSleep,omitempty"`
 	LargeControls  bool `json:"largeControls"`
+	AdBlock        bool `json:"adblock"` // block ad/tracker network requests
+	SearchSuggest  bool `json:"searchSuggest"` // live search-engine autocomplete
+	Ambient        bool `json:"ambient"` // Ambient Glass: tint the UI with each page's color
 }
 
 // sessionTab is one tab of a saved session.
@@ -103,6 +106,9 @@ func newStore() *store {
 			RestoreSession: true,
 			Autofill:       true,
 			SleepMinutes:   5,
+			AdBlock:        true,
+			SearchSuggest:  true,
+			Ambient:        true,
 		},
 		permissions: make(map[string]map[string]string),
 		favicons: make(map[string]string),
@@ -303,6 +309,39 @@ func (s *store) RemoveBookmark(url string) {
 			return
 		}
 	}
+}
+
+// ImportBookmarks adds bookmarks in bulk, skipping any URL that is already
+// bookmarked. It returns how many new bookmarks were actually added.
+func (s *store) ImportBookmarks(items []bmEntry) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	have := make(map[string]bool, len(s.bookmarks))
+	for _, b := range s.bookmarks {
+		have[b.URL] = true
+	}
+	added := 0
+	now := time.Now().UnixMilli()
+	for _, it := range items {
+		if it.URL == "" || have[it.URL] {
+			continue
+		}
+		have[it.URL] = true
+		title := it.Title
+		if title == "" {
+			title = it.URL
+		}
+		ts := it.TS
+		if ts == 0 {
+			ts = now
+		}
+		s.bookmarks = append(s.bookmarks, bmEntry{URL: it.URL, Title: title, TS: ts})
+		added++
+	}
+	if added > 0 {
+		s.markDirty("bookmarks.json")
+	}
+	return added
 }
 
 // SnapshotBookmarks returns a copy of the bookmarks.
