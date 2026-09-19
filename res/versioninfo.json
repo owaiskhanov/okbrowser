@@ -2,13 +2,13 @@
   "FixedFileInfo": {
     "FileVersion": {
       "Major": 1,
-      "Minor": 13,
+      "Minor": 16,
       "Patch": 0,
       "Build": 0
     },
     "ProductVersion": {
       "Major": 1,
-      "Minor": 13,
+      "Minor": 16,
       "Patch": 0,
       "Build": 0
     },
@@ -22,12 +22,12 @@
     "Comments": "OK Browser - a very light and very fast web browser for Windows 10+",
     "CompanyName": "OK Browser",
     "FileDescription": "OK Browser",
-    "FileVersion": "1.13.0.0",
+    "FileVersion": "1.16.0.0",
     "InternalName": "OKBrowser",
     "LegalCopyright": "",
     "OriginalFilename": "OKBrowser.exe",
     "ProductName": "OK Browser",
-    "ProductVersion": "1.13.0"
+    "ProductVersion": "1.16.0"
   },
   "VarFileInfo": {
     "Translation": {
