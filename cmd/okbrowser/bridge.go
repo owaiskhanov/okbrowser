@@ -1553,6 +1553,9 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		case "dl-show": // downloads page: reveal a validated file in Explorer
 			if isDownloadPath(m.U) { showInFolder(m.U) }
 			return
+		case "dl-control":
+			if isDownloadPath(m.U) { a.downloadAction(m.U, m.A) }
+			return
 		case "dl-refresh":
 			a.postTask(func() { if t == a.active() { a.showInternal(t, "downloads") } })
 			return

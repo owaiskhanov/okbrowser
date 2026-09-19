@@ -331,6 +331,14 @@ type dlFile struct {
 	Mod      int64 // unix millis
 	Partial  bool
 	Risky    bool
+	Source   string
+	Mime     string
+	Speed    int64
+	Total    int64
+	NativeState uint32 // 0 active, 1 interrupted, 2 complete
+	Interrupt uint32
+	CanResume bool
+	Paused bool
 }
 
 // listDownloads returns the newest files in the user's Downloads folder.
@@ -398,14 +406,25 @@ func DownloadsHTML(files []dlFile) string {
 	for _, f := range files {
 		status := humanSize(f.Size) + ` · ` + time.UnixMilli(f.Mod).Format("2 Jan, 3:04 PM")
 		class := ""
-		if f.Partial { status = `<span class="live"><i class="dot"></i>Downloading</span> · ` + humanSize(f.Size); class = " partial" }
+		if f.Partial {
+			pct := ""
+			if f.Total > 0 { pct = fmt.Sprintf(" · %.0f%%", 100*float64(f.Size)/float64(f.Total)) }
+			status = `<span class="live"><i class="dot"></i>Downloading</span>` + pct + ` · ` + humanSize(f.Size)
+			if f.Speed > 0 { status += ` · ` + humanSize(f.Speed) + `/s` }
+			class = " partial"
+		} else if f.NativeState == 1 { status = `<span class="warn">Interrupted</span>`; if f.CanResume { status += ` · can resume` } }
+		if host := sourceHost(f.Source); host != "" { status += ` · ` + htmlEsc(host) }
 		if f.Risky && !f.Partial { status += ` · <span class="warn">Executable — verify before opening</span>` }
 		openLabel := "Open"
 		if f.Partial { openLabel = "Cancel" }
+		extra := ""
+		if f.Partial && !f.Paused { extra = `<div class="db pause">Pause</div>` }
+		if f.Partial && f.Paused { extra = `<div class="db resume">Resume</div>`; status = `<span class="warn">Paused</span> · ` + humanSize(f.Size) }
+		if f.NativeState == 1 && f.CanResume { extra = `<div class="db resume">Resume</div>` }
 		b.WriteString(`<div class="row` + class + `" data-p="` + htmlEsc(f.Path) + `" data-partial="` + strconv.FormatBool(f.Partial) + `">` +
 			`<div class="av">` + htmlEsc(avChar("http://"+f.Name)) + `</div>` +
 			`<div class="meta"><div class="tt">` + htmlEsc(f.Name) + `</div><div class="uu">` + status + `</div></div>` +
-			`<div class="acts"><div class="db primary">` + openLabel + `</div><div class="db show">Show</div><div class="db del">Remove</div></div></div>`)
+			`<div class="acts"><div class="db primary">` + openLabel + `</div>` + extra + `<div class="db show">Show</div><div class="db del">Remove</div></div></div>`)
 	}
 	b.WriteString(`</div></div>`)
 	b.WriteString(`<script>
@@ -416,9 +435,11 @@ func DownloadsHTML(files []dlFile) string {
     (function(r){
       var p=r.getAttribute('data-p'), partial=r.getAttribute('data-partial')==='true';
       r.querySelector('.primary').addEventListener('click',function(){
-        if(partial){ if(confirm('Cancel this download?')) post({t:'dl-remove',u:p}); }
+        if(partial){ if(confirm('Cancel this download?')) post({t:'dl-control',a:'cancel',u:p}); }
         else post({t:'dl-open',u:p});
       });
+      var pause=r.querySelector('.pause');if(pause)pause.addEventListener('click',function(){post({t:'dl-control',a:'pause',u:p});});
+      var resume=r.querySelector('.resume');if(resume)resume.addEventListener('click',function(){post({t:'dl-control',a:'resume',u:p});});
       r.querySelector('.show').addEventListener('click',function(){post({t:'dl-show',u:p});});
       r.querySelector('.del').addEventListener('click',function(){
         if(confirm(partial?'Cancel and remove this partial download?':'Permanently delete this downloaded file?')) post({t:'dl-remove',u:p});

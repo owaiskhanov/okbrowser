@@ -112,6 +112,7 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 			a.postTask(func() { a.newTab(uri, true) })
 		}
 	}
+	c.DownloadStartingCallback = a.onDownloadStarting
 	c.ProcessFailedCallback = func(kind edge.CoreWebView2ProcessFailedKind) {
 		a.postTask(func() { a.recoverFailedTab(t, kind) })
 	}
@@ -347,7 +348,7 @@ func (a *app) showInternal(t *tab, page string) {
 	case "settings":
 		html, title = SettingsHTML(a.store.Settings(), appVersion), "Settings"
 	case "downloads":
-		html, title = DownloadsHTML(listDownloads()), "Downloads"
+		html, title = DownloadsHTML(a.downloadFiles()), "Downloads"
 	default: // start
 		html, title = StartPageHTML(a.store.MostVisited(12), a.store.Settings().Engine), "New Tab"
 		page, isStart = "start", true

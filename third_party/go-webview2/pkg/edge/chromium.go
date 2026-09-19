@@ -31,6 +31,7 @@ type Chromium struct {
 	navigationStarting    *ICoreWebView2NavigationStartingEventHandler // OK Browser addition
 	newWindowRequested    *ICoreWebView2NewWindowRequestedEventHandler // OK Browser addition
 	processFailed         *iCoreWebView2ProcessFailedEventHandler       // OK Browser addition
+	downloadStarting      *iDownloadStartingHandler                      // OK Browser addition
 
 	// OK Browser addition: keeps per-call DevTools handlers referenced so
 	// the GC cannot collect them while native code still holds a pointer.
@@ -53,6 +54,7 @@ type Chromium struct {
 	NewWindowRequestedCallback   func(args *ICoreWebView2NewWindowRequestedEventArgs)                        // OK Browser addition
 	PermissionRequestedCallback  func(uri string, kind CoreWebView2PermissionKind) CoreWebView2PermissionState // OK Browser addition
 	ProcessFailedCallback         func(kind CoreWebView2ProcessFailedKind)                              // OK Browser addition
+	DownloadStartingCallback      func(args *ICoreWebView2DownloadStartingEventArgs)                    // OK Browser addition
 	AcceleratorKeyCallback       func(uint) bool
 }
 
@@ -79,6 +81,7 @@ func NewChromium() *Chromium {
 	e.navigationStarting = newICoreWebView2NavigationStartingEventHandler(e) // OK Browser addition
 	e.newWindowRequested = newICoreWebView2NewWindowRequestedEventHandler(e) // OK Browser addition
 	e.processFailed = newICoreWebView2ProcessFailedEventHandler(e)           // OK Browser addition
+	e.downloadStarting = newDownloadStartingHandler(e)                        // OK Browser addition
 	e.permissions = make(map[CoreWebView2PermissionKind]CoreWebView2PermissionState)
 
 	return e
@@ -257,6 +260,10 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 		uintptr(unsafe.Pointer(e.processFailed)),
 		uintptr(unsafe.Pointer(&token)),
 	)
+	if web4 := e.webview.get4(); web4 != nil { // OK Browser addition
+		_, _, _ = web4.vtbl.AddDownloadStarting.Call(uintptr(unsafe.Pointer(web4)), uintptr(unsafe.Pointer(e.downloadStarting)), uintptr(unsafe.Pointer(&token)))
+		web4.vtbl.Release.Call(uintptr(unsafe.Pointer(web4)))
+	}
 
 	_ = e.controller.AddAcceleratorKeyPressed(e.acceleratorKeyPressed, &token)
 
@@ -404,6 +411,12 @@ func (e *Chromium) NewWindowRequested(sender *ICoreWebView2, args *ICoreWebView2
 	if e.NewWindowRequestedCallback != nil {
 		e.NewWindowRequestedCallback(args)
 	}
+	return 0
+}
+
+// DownloadStarting exposes the native WebView2 operation to the host.
+func (e *Chromium) DownloadStarting(args *ICoreWebView2DownloadStartingEventArgs) uintptr {
+	if e.DownloadStartingCallback != nil { e.DownloadStartingCallback(args) }
 	return 0
 }
 

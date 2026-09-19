@@ -86,6 +86,7 @@ type app struct {
 
 	// closedTabs remembers recently closed tab URLs for Ctrl+Shift+T.
 	closedTabs []string
+	downloads []*managedDownload // native WebView2 download operations
 
 	// store is the local data vault: history, bookmarks, settings, session.
 	store *store
@@ -265,9 +266,8 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		if wp == 3 {
 			a.selftestClickTick()
 		}
-		if wp == 4 {
-			a.sleepInactiveTabs()
-		}
+		if wp == 4 { a.sleepInactiveTabs() }
+		if wp == 5 { a.pollDownloads() }
 		return 0
 
 	case win.WM_DPICHANGED:
