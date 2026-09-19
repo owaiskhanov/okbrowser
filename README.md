@@ -31,8 +31,11 @@ just content:
   sits on top of your content while you browse. The glass bar (tabs, `+`,
   address bubble) **with the min / max / close capsule** hides away and
   glides back together the instant your mouse touches the top edge, and
-  reveals itself on `Ctrl+T`, `Ctrl+L` and tab switches; it slides away
-  again when you leave it. Drag the bar's empty middle to move the window,
+  reveals itself on `Ctrl+T`, `Ctrl+L` and tab switches. It also responds
+  continuously to cursor proximity: tabs and window controls begin gliding
+  into view within 160 px of the top (or 210 px during a fast upward gesture),
+  becoming fully interactive before the pointer arrives; it slides away again
+  when you leave it. Drag the bar's empty middle to move the window,
   double-click it to maximize; the top edge resizes the window while the
   bar is hidden. No native title bar in any
   state (borderless `WS_POPUP | WS_THICKFRAME | WS_CAPTION` style +

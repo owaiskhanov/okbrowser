@@ -99,8 +99,10 @@ const barJS = `
     "background:rgba(250,250,252,.52);",
     "backdrop-filter:blur(26px) saturate(1.7);-webkit-backdrop-filter:blur(26px) saturate(1.7);",
     "box-shadow:0 1px 12px rgba(0,0,0,.08),inset 0 -.5px 0 rgba(0,0,0,.07);",
-    "transform:translateY(-100%);transition:transform .24s cubic-bezier(.32,.72,.24,1)}",
-    ".strip.open{transform:translateY(0)}",
+    "transform:translateY(calc(-100% + (100% * var(--ok-proximity,0))));",
+    "opacity:calc(.18 + (.82 * var(--ok-proximity,0)));",
+    "transition:transform .10s ease-out,opacity .10s ease-out}",
+    ".strip.open{transform:translateY(0);opacity:1}",
     "@media (prefers-color-scheme:dark){.strip{background:rgba(24,24,28,.55);",
     "box-shadow:0 1px 12px rgba(0,0,0,.32),inset 0 -.5px 0 rgba(255,255,255,.06)}}",
     ".tz{display:flex;gap:4px;align-items:center;min-width:0;height:100%;",
@@ -161,7 +163,7 @@ const barJS = `
     ".drag{flex:1 1 auto;height:100%;pointer-events:auto}",
     ".wcap{position:fixed;top:5px;right:6px;height:26px;display:flex;align-items:center;",
     "padding:0 3px;border-radius:14px;z-index:2147483647;pointer-events:auto;",
-    "transform:translateY(0);transition:transform .24s cubic-bezier(.32,.72,.24,1),opacity .2s}",
+    "transform:translateY(0);transition:transform .10s ease-out,opacity .10s ease-out}",
     "background:rgba(250,250,252,.5);",
     "backdrop-filter:blur(24px) saturate(1.7);-webkit-backdrop-filter:blur(24px) saturate(1.7);",
     "box-shadow:0 2px 12px rgba(0,0,0,.14),inset 0 1px 0 rgba(255,255,255,.5),",
@@ -169,7 +171,9 @@ const barJS = `
     "@media (prefers-color-scheme:dark){.wcap{background:rgba(28,28,32,.55);",
     "box-shadow:0 2px 12px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.09),",
     "inset 0 0 0 .5px rgba(255,255,255,.08)}}",
-    ".wcap.hid{transform:translateY(-160%);opacity:0;pointer-events:none}",
+    ".wcap.hid{transform:translateY(calc(-160% + (160% * var(--ok-proximity,0))));",
+    "opacity:var(--ok-proximity,0);pointer-events:none}",
+    ".wcap.hid.near{pointer-events:auto}",
     ".wbtn{width:40px;height:22px;border-radius:11px;display:grid;place-items:center;color:#3c4043;",
     "cursor:default;transition:background .12s,opacity .12s}",
     ".menu,.ctx{position:fixed;top:34px;right:6px;width:224px;padding:6px;border-radius:16px;",
@@ -353,6 +357,9 @@ const barJS = `
     if (wc) wc.classList.add('hid'); // the capsule hides with the bar
     closeMenu();
     closeCtx();
+    strip.style['--ok-proximity'] = '0';
+    var cap = root.getElementById('wcap');
+    if (cap) { cap.style['--ok-proximity'] = '0'; cap.classList.remove('near'); }
   }
   function uiOpen(id) {
     var el = root.getElementById(id);
@@ -375,11 +382,39 @@ const barJS = `
       briefTimer = setTimeout(function () { briefTimer = 0; hideIfIdle(); }, 2000);
     }
   }
-  // Tripwires at the top edge. The .edge element is hit-tested above page
-  // content AND iframes; the document mousemove is the fast path.
+  // Proximity reveal: the chrome begins following the pointer before it
+  // reaches the edge, then becomes fully interactive near the top.  A pointer
+  // moving upward quickly gets a wider magnetic range so the controls meet it.
+  var lastPointerY = window.innerHeight || 10000;
+  var clockNow = function () { return window.performance ? window.performance.now() : Date.now(); };
+  var nextFrame = window.requestAnimationFrame || function (fn) { fn(); return 0; };
+  var dropFrame = window.cancelAnimationFrame || function () {};
+  var lastPointerAt = clockNow();
+  var proximityFrame = 0;
+  function paintProximity(y, upwardSpeed) {
+    if (barPinned || strip.classList.contains('open')) return;
+    var range = upwardSpeed > 0.65 ? 210 : 160;
+    var fullAt = 32;
+    var amount = Math.max(0, Math.min(1, (range - y) / (range - fullAt)));
+    // Ease the first hint in, while retaining a direct, cursor-linked finish.
+    amount = amount * amount * (3 - 2 * amount);
+    strip.style['--ok-proximity'] = amount.toFixed(3);
+    wcap.style['--ok-proximity'] = amount.toFixed(3);
+    wcap.classList.toggle('near', amount > 0.82);
+    if (y <= fullAt) revealBar(false);
+  }
   root.getElementById('edge').addEventListener('mouseenter', function () { revealBar(false); });
   document.addEventListener('mousemove', function (e) {
-    if (e.clientY <= 4) revealBar(false);
+    var now = clockNow();
+    var dt = Math.max(1, now - lastPointerAt);
+    var upwardSpeed = Math.max(0, (lastPointerY - e.clientY) / dt);
+    lastPointerY = e.clientY;
+    lastPointerAt = now;
+    if (proximityFrame) dropFrame(proximityFrame);
+    proximityFrame = nextFrame(function () {
+      proximityFrame = 0;
+      paintProximity(e.clientY, upwardSpeed);
+    });
   }, true);
   strip.addEventListener('mouseenter', function () { barPinned = true; });
   strip.addEventListener('mouseleave', function () {
