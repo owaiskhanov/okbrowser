@@ -12,6 +12,8 @@ import (
 
 	"github.com/jchv/go-webview2/pkg/edge"
 	"github.com/lxn/win"
+
+	"github.com/owaiskhanov/okbrowser/internal/nav"
 )
 
 // bridgeJS is injected into every page before any of its own scripts run.
@@ -46,14 +48,15 @@ window.__ok = function (o) {
     var a = anchor(e.target);
     if (a && a.target && a.target !== "_self" && !a.hasAttribute("data-ok-engine")) {
       e.preventDefault();
-      window.__ok({ t: "open", u: a.href });
+      // a:"1" marks a genuine user gesture so the host never rate-limits it.
+      window.__ok({ t: "open", u: a.href, a: "1" });
     }
   }, true);
   document.addEventListener("auxclick", function (e) {
     var a = anchor(e.target);
     if (a && e.button === 1 && !a.hasAttribute("data-ok-engine")) {
       e.preventDefault();
-      window.__ok({ t: "open", u: a.href });
+      window.__ok({ t: "open", u: a.href, a: "1" });
     }
   }, true);
   // Link edge gestures. Drag any ordinary link toward an edge: left previews
@@ -1431,7 +1434,19 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		if a.inSelfTest {
 			a.stlog("[selftest] bridge open request: %s", m.U)
 		}
-		if m.U != "" && a.allowSpawn() {
+		if m.U == "" {
+			break
+		}
+		// mailto:/tel:/sms: links must go to the OS handler, never open an
+		// empty tab that then shows an error page.
+		if nav.ExternalScheme(m.U) {
+			url := m.U
+			a.postTask(func() { openExternal(url) })
+			break
+		}
+		// A real user click (A == "1") must always open - only rate-limit
+		// unattended scripted popups, which is what allowSpawn guards.
+		if m.A == "1" || a.allowSpawn() {
 			// Never create engines from inside the message callback: post
 			// the work to the window-proc context instead.
 			url := m.U

@@ -85,3 +85,35 @@ func TestParseWithEngine(t *testing.T) {
 		t.Error("IsSearchURL misclassifies")
 	}
 }
+
+func TestExternalScheme(t *testing.T) {
+	external := []string{
+		"mailto:hi@example.com",
+		"MAILTO:hi@example.com",
+		"tel:+15551234567",
+		"sms:+15551234567",
+		"callto:username",
+		"geo:19.07,72.87",
+		"  mailto:spaced@example.com  ",
+	}
+	for _, s := range external {
+		if !ExternalScheme(s) {
+			t.Errorf("ExternalScheme(%q) = false, want true", s)
+		}
+	}
+	internal := []string{
+		"https://example.com",
+		"http://example.com",
+		"example.com",
+		"file:///C:/x.html",
+		"okbrowser://settings",
+		"javascript:void(0)",
+		"data:text/html,hi",
+		"",
+	}
+	for _, s := range internal {
+		if ExternalScheme(s) {
+			t.Errorf("ExternalScheme(%q) = true, want false", s)
+		}
+	}
+}

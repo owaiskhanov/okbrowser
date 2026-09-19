@@ -120,6 +120,11 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 		if uri == "" {
 			return
 		}
+		// mailto:/tel:/sms: new-window requests go to the OS default handler.
+		if nav.ExternalScheme(uri) {
+			a.postTask(func() { openExternal(uri) })
+			return
+		}
 		if user {
 			// A trusted user gesture (a real click on a _blank link) must
 			// always open its tab - never eat a user action.
@@ -370,6 +375,12 @@ func (a *app) navigateTab(t *tab, raw string) {
 	low := strings.ToLower(s)
 	if strings.HasPrefix(low, "okbrowser://") {
 		a.showInternal(t, strings.TrimPrefix(low, "okbrowser://"))
+		return
+	}
+	// mailto:/tel:/sms: and friends can't be loaded by WebView2 - hand them
+	// to the OS default handler and leave the current page untouched.
+	if nav.ExternalScheme(s) {
+		openExternal(s)
 		return
 	}
 	u := nav.ParseWithEngine(s, a.store.Settings().Engine)
