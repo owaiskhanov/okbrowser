@@ -135,7 +135,9 @@ assert.ok(wmax._html.includes('<path'), 'restore icon adds the second window out
 // --- the address bubble ---
 const okb = shadow.getElementById('okb');
 const input = shadow.getElementById('q');
-assert.ok(!okb.className.includes('open'), 'bubble starts collapsed');
+assert.ok(okb.className.includes('open'), 'bubble stays open on the home screen');
+// Simulate navigation before testing the normal collapsed/hover behavior.
+okb.className = 'okb';
 
 okb.dispatch('mouseenter', EV);
 assert.ok(okb.className.includes('open'), 'hover opens the bubble');

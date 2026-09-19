@@ -174,6 +174,18 @@ func (a *app) openSplit(url string) {
 	a.execActive("window.__okSplitToast&&window.__okSplitToast()")
 }
 
+// closeSplit closes the secondary pane and restores the active page to full width.
+func (a *app) closeSplit() {
+	t := a.splitTab
+	if t == nil { return }
+	idx := -1
+	for i, candidate := range a.tabs { if candidate == t { idx = i; break } }
+	a.splitTab = nil
+	if idx >= 0 { a.closeTab(idx) }
+	a.layout()
+	a.pushBarState()
+}
+
 func (a *app) switchToTab(i int) {
 	if i < 0 || i >= len(a.tabs) {
 		return

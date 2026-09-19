@@ -21,7 +21,12 @@ window.__ok = function (o) {
   try { window.chrome.webview.postMessage(JSON.stringify(o)); } catch (e) {}
 };
 (function () {
-  if (window.top !== window) return;
+  if (window.top !== window) {
+    document.addEventListener("mousemove", function (e) {
+      if (e.clientY < 180) window.__ok({ t: "proximity" });
+    }, true);
+    return;
+  }
   function anchor(el) { return el && el.closest ? el.closest("a") : null; }
   document.addEventListener("click", function (e) {
     var a = anchor(e.target);
@@ -113,7 +118,6 @@ const barJS = `
   var I_SET  = SV('<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>');
 
   var host = document.createElement('div');
-  if (window.__okSecondary) host.style.display = 'none';
   var root = host.attachShadow({ mode: 'closed' });
 
   var css = [
@@ -321,6 +325,11 @@ const barJS = `
     ".edge-top{left:32%;right:32%;top:8px;height:64px;border-radius:32px;transform:translateY(-125%) scale(.9)}",
     ".edge-top.show{transform:translateY(-72%) scale(.96)}.edge-top.hot{transform:translateY(0) scale(1)}",
     ".edgeact span{padding:10px 16px;border-radius:20px;background:rgba(0,0,0,.2);text-align:center}",
+    ".splitclose{position:fixed;top:42px;left:50%;transform:translateX(-50%);z-index:2147483647;",
+    "display:none;padding:7px 13px;border-radius:16px;pointer-events:auto;cursor:default;",
+    "font:600 11px -apple-system,'Segoe UI',sans-serif;color:#fff;background:rgba(35,35,40,.68);",
+    "backdrop-filter:blur(24px);box-shadow:0 8px 30px rgba(0,0,0,.25)}",
+    ".splitclose.show{display:block}.splitclose:hover{background:#e81123}",
     "@media print{.strip,.wcap,.edge,.find,.edgeact{display:none !important}}"
   ].join("");
 
@@ -370,9 +379,10 @@ const barJS = `
       '<div class="mrow" id="c-others">Close other tabs</div>' +
     '</div>' +
     '<div class="sug" id="sug"></div>' +
-    '<div class="edgeact edge-left" id="edge-left"><span>Drop for Split View</span></div>' +
-    '<div class="edgeact edge-right" id="edge-right"><span>Drop to Read Later</span></div>' +
-    '<div class="edgeact edge-top" id="edge-top"><span>Drop to Open Tab</span></div>' +
+    '<div class="edgeact edge-left" id="edge-left"><span>Drop to Queue for Later</span></div>' +
+    '<div class="edgeact edge-right" id="edge-right"><span>Drop for Peek & Split</span></div>' +
+    '<div class="edgeact edge-top" id="edge-top"><span></span></div>' +
+    '<div class="splitclose" id="splitclose">Close Split View</div>' +
     '<div class="find" id="find">' +
       '<input id="fq" placeholder="Find in page" spellcheck="false">' +
       '<div class="fc" id="fc">0/0</div>' +
@@ -494,14 +504,14 @@ const barJS = `
   document.addEventListener('ok-link-edge', function (e) {
     var d = e.detail || {};
     if (d.phase === 'end') { clearEdgeGesture(); return; }
-    var zone = d.x < 92 ? 'split' : (d.x > innerWidth - 92 ? 'later' : (d.y < 72 ? 'tab' : ''));
+    var zone = d.x < 92 ? 'later' : (d.x > innerWidth - 92 ? 'split' : '');
     [edgeLeft, edgeRight, edgeTop].forEach(function (el) { el.classList.toggle('show', d.phase !== 'drop'); });
-    edgeLeft.classList.toggle('hot', zone === 'split');
-    edgeRight.classList.toggle('hot', zone === 'later');
-    edgeTop.classList.toggle('hot', zone === 'tab');
+    edgeLeft.classList.toggle('hot', zone === 'later');
+    edgeRight.classList.toggle('hot', zone === 'split');
+    edgeTop.classList.remove('show', 'hot');
     edgeZone = zone;
     if (d.url) {
-      try { edgeLeft.firstElementChild.textContent = 'Split View  ·  ' + new URL(d.url).hostname; } catch (_) {}
+      try { edgeRight.firstElementChild.textContent = 'Peek & Split  ·  ' + new URL(d.url).hostname; } catch (_) {}
     }
     if (d.phase === 'drop') {
       if (zone && d.url) post({ t: 'edge-link', a: zone, u: d.url });
@@ -870,6 +880,7 @@ const barJS = `
   root.getElementById('wmin').addEventListener('click', function () { post({ t: 'ui', a: 'wmin' }); });
   root.getElementById('wmax').addEventListener('click', function () { post({ t: 'ui', a: 'wmaxtoggle' }); });
   root.getElementById('wclose').addEventListener('click', function () { post({ t: 'ui', a: 'wclose' }); });
+  root.getElementById('splitclose').addEventListener('click', function () { post({ t: 'ui', a: 'close-split' }); });
 
   // Empty strip area: drag to move the window, double-click to maximize.
   var drag = root.getElementById('drag');
@@ -1005,7 +1016,11 @@ const barJS = `
     host.style.display = document.fullscreenElement ? 'none' : '';
   });
 
-  window.__okBar = function (s) { S = s; render(); sync(); stateLive = true; };
+  window.__okBar = function (s) {
+    S = s; render(); sync(); stateLive = true;
+    if (!S.u) { revealBar(false); setOpen(true); if (!stateLive) { input.focus(); input.select(); } }
+  };
+  window.__okProximityReveal = function () { revealBar(true); };
 
   // Liquid loading hairline at the top edge while a page loads.
   var prog = root.getElementById('prog');
@@ -1076,6 +1091,7 @@ type barState struct {
 	M    bool     `json:"m"` // window maximized
 	K    bool     `json:"k"` // current page bookmarked
 	E    string   `json:"e"` // search engine name
+	V    bool     `json:"v"` // split view is active
 }
 
 // pushBarState sends tab list, address and window state to the shell of the
@@ -1102,12 +1118,16 @@ func (a *app) pushBarState() {
 		M:    a.maximized,
 		K:    t.url != "" && !t.isStart && a.store.IsBookmarked(t.url),
 		E:    a.store.Settings().Engine,
+		V:    a.splitTab != nil,
 	}
 	b, err := json.Marshal(st)
 	if err != nil {
 		return
 	}
 	a.execActive("window.__okBar&&window.__okBar(" + string(b) + ")")
+	if a.splitTab != nil && a.splitTab.chromium != nil {
+		a.splitTab.chromium.Eval("window.__okBar&&window.__okBar(" + string(b) + ")")
+	}
 }
 
 // scheduleBarPush re-pushes bar state shortly after a load, covering the
@@ -1187,6 +1207,9 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			a.stClickTab, a.stClickX, a.stClickY, a.stClickTicks = t, m.X, m.Y, 0
 			win.SetTimer(a.hwnd, 3, 50, 0)
 		}
+
+	case "proximity":
+		if t == a.active() { a.execActive("window.__okProximityReveal&&window.__okProximityReveal()") }
 
 	case "edge-link": // a dragged link committed at a window edge
 		if m.U != "" {
@@ -1365,6 +1388,8 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			from, to := m.I, m.To
 			a.postTask(func() { a.reorderTab(from, to) })
 			return
+		case "close-split":
+			a.postTask(func() { a.closeSplit() })
 		case "dl-open": // downloads page: open a file
 			openPath(m.U)
 			return

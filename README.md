@@ -66,10 +66,11 @@ just content:
   others. Every tab is its own web engine instance sharing one engine
   process, so tabs stay isolated and cheap
 - **Liquid link-edge gestures**: drag any link toward an edge and a springy,
-  blurred drop surface flows in to meet the cursor. Drop on the **left** to open
-  the link in a real side-by-side Split View, on the **right** to queue it as a
-  background tab for later, or at the **top** to open it as a normal tab. The
-  Split View uses a second WebView—not an iframe—so sites remain fully usable
+  blurred drop surface flows in to meet the cursor. Drop on the **left** to queue
+  it as a background tab for later, or on the **right** for a Peek preview that
+  opens into a real side-by-side Split View. Split View uses a second WebView—not
+  an iframe—keeps browser controls available across both panes, and includes a
+  one-click control to close the secondary pane and return to a single view
 - **Liquid loading line**: a thin blue hairline runs along the top edge
   while a page loads and sweeps away when it's done
 - **Incognito** (`Ctrl+Shift+N`): a private window with a throwaway
