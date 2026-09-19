@@ -15,7 +15,7 @@ permissions:
   attestations: write
 
 env:
-  VERSION_BASE: "1.16.0"
+  VERSION_BASE: "1.17.0"
 
 jobs:
   windows:

@@ -117,6 +117,14 @@ just content:
 - **☰ menu** beside the minimize button: new tab, incognito, bookmarks,
   history, downloads and settings — all in glass. Settings actions confirm
   with a small glass toast
+- **Instant new tabs**: creating a web engine blocks for a noticeable moment,
+  so OK Browser keeps one **pre-warmed in the background** with the start page
+  already rendered. `Ctrl+T` adopts it, so the tab appears immediately instead
+  of pausing; a replacement warms during the next idle moment
+- **New Tab types straight away**: the address bar opens **and takes focus**
+  on every new tab, so you can type the moment it appears — no click, no
+  `Ctrl+L`. It never steals focus from a loaded page, and never re-selects
+  what you have already typed
 - The address bar updates **the instant** you navigate (not after the page loads)
 - **Automatic `www` fallback**: plenty of sites only answer on one of
   `example.com` or `www.example.com` — the other name has stale DNS, refuses

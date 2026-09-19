@@ -136,7 +136,12 @@ assert.ok(wmax._html.includes('<path'), 'restore icon adds the second window out
 const okb = shadow.getElementById('okb');
 const input = shadow.getElementById('q');
 assert.ok(okb.className.includes('open'), 'bubble stays open on the home screen');
-// Simulate navigation before testing the normal collapsed/hover behavior.
+// New Tab also focuses the field so you can type immediately.
+assert.ok(input.focused && input.selected, 'new tab focuses and selects the address input');
+
+// Simulate navigating away before testing the normal collapsed/hover
+// behavior (a real navigation blurs the field and fills in a URL).
+input.blur();
 okb.className = 'okb';
 
 okb.dispatch('mouseenter', EV);
@@ -159,6 +164,33 @@ assert.ok(!okb.className.includes('open'), 'bubble collapses after submit');
 
 win.__okBubbleFocus();
 assert.ok(okb.className.includes('open') && input.focused, 'Ctrl+L opens and focuses the bubble');
+
+// --- New Tab: the address bar is open AND focused, and repeated state
+// pushes must not fight the user once they start typing -----------------
+input.blur();
+okb.className = 'okb';
+win.__okBar({ tabs: [{ t: 'New Tab' }], a: 0, u: '', b: false, f: false, m: false });
+assert.ok(okb.className.includes('open'), 'new tab leaves the address bar open');
+assert.ok(input.focused && input.selected, 'new tab focuses the address bar for typing');
+
+// The engine steals focus back as the start page paints; the next push
+// must re-assert focus so typing still lands in the address bar.
+input.blur();
+win.__okBar({ tabs: [{ t: 'New Tab' }], a: 0, u: '', b: false, f: false, m: false });
+assert.ok(input.focused, 'a later push re-asserts focus on an empty tab');
+
+// But once the caret is already in the field, a push must not re-select
+// and clobber what the user has typed.
+input.value = 'githu';
+input.selected = false;
+win.__okBar({ tabs: [{ t: 'New Tab' }], a: 0, u: '', b: false, f: false, m: false });
+assert.strictEqual(input.value, 'githu', 'in-progress typing is preserved');
+assert.ok(!input.selected, 'a push must not re-select text while typing');
+
+// A tab with a real URL must NOT grab focus - that would hijack the page.
+input.blur();
+win.__okBar({ tabs: [{ t: 'Example' }], a: 0, u: 'https://example.com/', b: false, f: false, m: false });
+assert.ok(!input.focused, 'a loaded page must not steal focus into the address bar');
 
 // --- keyed rendering: pills update in place, only genuinely new ones animate ---
 const pill0 = tz.children[0];
