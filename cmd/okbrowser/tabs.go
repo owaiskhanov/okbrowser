@@ -270,16 +270,6 @@ func (a *app) closeSplit() {
 	a.pushBarState()
 }
 
-func (a *app) resizeSplit(delta float64) {
-	if a.splitTab == nil { return }
-	var rc win.RECT
-	if !win.GetClientRect(a.hwnd, &rc) || rc.Right <= 0 { return }
-	a.splitRatio += delta / float64(rc.Right)
-	if a.splitRatio < .28 { a.splitRatio = .28 }
-	if a.splitRatio > .72 { a.splitRatio = .72 }
-	a.layout()
-}
-
 func (a *app) swapSplit() {
 	if a.splitTab == nil { return }
 	old := a.active()

@@ -48,7 +48,9 @@ func (a *app) checkForUpdates() {
 	a.updateToast("Checking for updates…")
 	go func() {
 		client:=&http.Client{Timeout:20*time.Second}
-		req,_:=http.NewRequest("GET",latestReleaseAPI,nil);req.Header.Set("User-Agent","OKBrowser/"+appVersion)
+		req,err:=http.NewRequest("GET",latestReleaseAPI,nil)
+		if err!=nil { a.postTask(func(){a.updateToast("Update check failed")});return }
+		req.Header.Set("User-Agent","OKBrowser/"+appVersion)
 		resp,err:=client.Do(req)
 		if err!=nil { a.postTask(func(){a.updateToast("Update check failed")});return }
 		defer resp.Body.Close();if resp.StatusCode!=200 { a.postTask(func(){a.updateToast("Update service unavailable")});return }
