@@ -206,24 +206,27 @@ jobs:
         with:
           gradle-version: "8.10.2"
 
-      - name: Build unsigned release APK
-        run: gradle --no-daemon :mobile:assembleRelease
+      - name: Build unsigned release and installable APKs
+        run: gradle --no-daemon :mobile:assembleRelease :mobile:assembleDebug
 
-      - name: Verify APK is unsigned
+      - name: Verify APK signatures
         run: |
-          APK=mobile/build/outputs/apk/release/mobile-release-unsigned.apk
-          test -f "$APK"
-          if apksigner verify "$APK"; then
-            echo "APK unexpectedly contains a valid signature" >&2
+          UNSIGNED=mobile/build/outputs/apk/release/mobile-release-unsigned.apk
+          INSTALLABLE=mobile/build/outputs/apk/debug/mobile-debug.apk
+          test -f "$UNSIGNED" && test -f "$INSTALLABLE"
+          if apksigner verify "$UNSIGNED"; then
+            echo "Release APK unexpectedly contains a valid signature" >&2
             exit 1
           fi
-          echo "Verified unsigned release APK"
+          apksigner verify --verbose --print-certs "$INSTALLABLE"
+          echo "Verified unsigned archival APK and signed installable APK"
 
-      - name: Upload APK beside the Windows executable
+      - name: Upload APKs beside the Windows executable
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="$(gh release view --json tagName --jq .tagName)"
           cp mobile/build/outputs/apk/release/mobile-release-unsigned.apk OKBrowser-Android-unsigned.apk
-          gh release upload "$TAG" OKBrowser-Android-unsigned.apk --clobber
-          echo "Uploaded unsigned APK to $TAG"
+          cp mobile/build/outputs/apk/debug/mobile-debug.apk OKBrowser-Android-installable.apk
+          gh release upload "$TAG" OKBrowser-Android-unsigned.apk OKBrowser-Android-installable.apk --clobber
+          echo "Uploaded unsigned archival and signed installable APKs to $TAG"
