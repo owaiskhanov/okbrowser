@@ -90,3 +90,32 @@ func TestIsDownloadPathRejectsLinkEscape(t *testing.T) {
 		t.Errorf("path escaping Downloads through a link must be rejected: %q", escape)
 	}
 }
+
+// TestNavigateTabRejectsControlChars guards the address path. A URL carrying
+// a NUL used to reach the WebView2 binding and panic the whole process, and
+// CR/LF in an address is never legitimate. navigateTab must drop these before
+// they get anywhere near the engine.
+func TestNavigateTabRejectsControlChars(t *testing.T) {
+	bad := []string{
+		"https://example.com/\x00evil",
+		"https://example.com/\r\nInjected: header",
+		"\x00",
+		"https://example.com/\x1b[2J",
+	}
+	for _, raw := range bad {
+		if !hasControlChars(raw) {
+			t.Errorf("%q should be treated as containing control characters", raw)
+		}
+	}
+	good := []string{
+		"https://example.com/",
+		"example.com/path?q=1#frag",
+		"how to boil rice",
+		"https://example.com/ünïcødé",
+	}
+	for _, raw := range good {
+		if hasControlChars(raw) {
+			t.Errorf("%q must not be rejected", raw)
+		}
+	}
+}

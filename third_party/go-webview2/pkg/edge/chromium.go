@@ -102,7 +102,12 @@ func (e *Chromium) Embed(hwnd uintptr) bool {
 		dataPath = filepath.Join(os.Getenv("AppData"), currentExeName)
 	}
 
-	res, err := createCoreWebView2EnvironmentWithOptions(nil, windows.StringToUTF16Ptr(dataPath), 0, e.envCompleted)
+	dataPathPtr, ok := utf16Ptr(dataPath)
+	if !ok {
+		log.Printf("Invalid WebView2 data path %q", dataPath)
+		return false
+	}
+	res, err := createCoreWebView2EnvironmentWithOptions(nil, dataPathPtr, 0, e.envCompleted)
 	if err != nil {
 		log.Printf("Error calling Webview2Loader: %v", err)
 		return false
@@ -134,32 +139,58 @@ func (e *Chromium) Embed(hwnd uintptr) bool {
 	return true
 }
 
+// utf16Ptr converts s for a COM call. windows.StringToUTF16Ptr PANICS when s
+// contains a NUL, and several of these strings are attacker-controlled (a page
+// can post any URL through the bridge, or set any document.title), so a single
+// embedded NUL would take the whole browser down. Reject the string instead.
+// (OK Browser addition.)
+func utf16Ptr(s string) (*uint16, bool) {
+	p, err := windows.UTF16PtrFromString(s)
+	if err != nil {
+		return nil, false
+	}
+	return p, true
+}
+
 func (e *Chromium) Navigate(url string) {
+	p, ok := utf16Ptr(url)
+	if !ok {
+		return
+	}
 	_, _, _ = e.webview.vtbl.Navigate.Call(
 		uintptr(unsafe.Pointer(e.webview)),
-		uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(url))),
+		uintptr(unsafe.Pointer(p)),
 	)
 }
 
 func (e *Chromium) NavigateToString(htmlContent string) {
+	p, ok := utf16Ptr(htmlContent)
+	if !ok {
+		return
+	}
 	_, _, _ = e.webview.vtbl.NavigateToString.Call(
 		uintptr(unsafe.Pointer(e.webview)),
-		uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(htmlContent))),
+		uintptr(unsafe.Pointer(p)),
 	)
 }
 
 func (e *Chromium) Init(script string) {
+	p, ok := utf16Ptr(script)
+	if !ok {
+		return
+	}
 	_, _, _ = e.webview.vtbl.AddScriptToExecuteOnDocumentCreated.Call(
 		uintptr(unsafe.Pointer(e.webview)),
-		uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(script))),
+		uintptr(unsafe.Pointer(p)),
 		0,
 	)
 }
 
 func (e *Chromium) Eval(script string) {
-	_script, err := windows.UTF16PtrFromString(script)
-	if err != nil {
-		log.Fatal(err)
+	// Never log.Fatal here: this is reachable with page-derived content.
+	_script, ok := utf16Ptr(script)
+	if !ok {
+		return
 	}
 
 	_, _, _ = e.webview.vtbl.ExecuteScript.Call(
@@ -190,8 +221,14 @@ func (e *Chromium) Release() uintptr {
 }
 
 func (e *Chromium) EnvironmentCompleted(res uintptr, env *ICoreWebView2Environment) uintptr {
-	if int64(res) < 0 {
-		log.Fatalf("Creating environment failed with %08x", res)
+	// OK Browser addition: mirror CreateCoreWebView2ControllerCompleted and
+	// unblock Embed with a failure instead of log.Fatalf, which killed the
+	// process with a console message no GUI user ever sees. The host then
+	// shows the "WebView2 runtime missing" dialog.
+	if int64(res) < 0 || env == nil {
+		log.Printf("Creating environment failed with %08x", res)
+		atomic.StoreUintptr(&e.initFailed, 1)
+		return 1
 	}
 	_, _, _ = env.vtbl.AddRef.Call(uintptr(unsafe.Pointer(env)))
 	e.environment = env
@@ -331,9 +368,12 @@ func (e *Chromium) PermissionRequested(_ *ICoreWebView2, args *iCoreWebView2Perm
 }
 
 func (e *Chromium) WebResourceRequested(sender *ICoreWebView2, args *ICoreWebView2WebResourceRequestedEventArgs) uintptr {
+	// OK Browser addition: a failed request lookup is not worth killing the
+	// browser over (this used to be log.Fatal).
 	req, err := args.GetRequest()
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("WebResourceRequested: %v", err)
+		return 0
 	}
 	if e.WebResourceRequestedCallback != nil {
 		e.WebResourceRequestedCallback(req, args)
@@ -342,9 +382,9 @@ func (e *Chromium) WebResourceRequested(sender *ICoreWebView2, args *ICoreWebVie
 }
 
 func (e *Chromium) AddWebResourceRequestedFilter(filter string, ctx COREWEBVIEW2_WEB_RESOURCE_CONTEXT) {
-	err := e.webview.AddWebResourceRequestedFilter(filter, ctx)
-	if err != nil {
-		log.Fatal(err)
+	// OK Browser addition: report instead of terminating the process.
+	if err := e.webview.AddWebResourceRequestedFilter(filter, ctx); err != nil {
+		log.Printf("AddWebResourceRequestedFilter(%q): %v", filter, err)
 	}
 }
 

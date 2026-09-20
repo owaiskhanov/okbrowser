@@ -377,6 +377,12 @@ func (a *app) navigateTab(t *tab, raw string) {
 	if s == "" {
 		return
 	}
+	// Control characters never belong in a URL. A NUL in particular used to
+	// reach the engine binding and panic the whole browser, and CR/LF would
+	// let a crafted address smuggle extra lines into the request.
+	if hasControlChars(s) {
+		return
+	}
 	low := strings.ToLower(s)
 	if strings.HasPrefix(low, "okbrowser://") {
 		a.showInternal(t, strings.TrimPrefix(low, "okbrowser://"))
@@ -810,6 +816,18 @@ func errorHTML(urlJSON, name, hint string) string {
 }
 
 // htmlEsc escapes text for safe interpolation into HTML.
+// hasControlChars reports whether s contains a C0/DEL control character
+// (tab excepted). Such bytes are never valid in an address and one of them,
+// NUL, used to panic the WebView2 string conversion and kill the browser.
+func hasControlChars(s string) bool {
+	for _, r := range s {
+		if r == 0x7f || (r < 0x20 && r != '\t') {
+			return true
+		}
+	}
+	return false
+}
+
 func htmlEsc(s string) string {
 	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&#34;", "'", "&#39;")
 	return r.Replace(s)
