@@ -115,12 +115,11 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 		a.warmSpareLater()
 		return t
 	}
-	t := a.createTab(secondary)
+	t := a.createTab(secondary, url)
 	if t == nil {
 		a.engineStartFailed()
 		return nil
 	}
-	t.pendingURL = url
 	a.attachTab(t, url, activate)
 	a.warmSpareLater()
 	return t
@@ -129,7 +128,7 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 // createTab builds the host window and starts the engine WITHOUT waiting for
 // it. The engine reports readiness later through onEngineReady, so opening a
 // tab never blocks the UI thread.
-func (a *app) createTab(secondary bool) *tab {
+func (a *app) createTab(secondary bool, url string) *tab {
 	tn, _ := syscall.UTF16PtrFromString(tabHostClassName)
 	a.hostSeq++
 	h := win.CreateWindowEx(0, tn, nil, win.WS_CHILD,
@@ -141,7 +140,13 @@ func (a *app) createTab(secondary bool) *tab {
 		return nil
 	}
 
-	t := &tab{host: h, title: "New Tab", zoom: 1.0, secondary: secondary}
+	// pendingURL MUST be set before EmbedAsync: WebView2 can invoke the
+	// completion handler synchronously when the browser process and
+	// environment already exist, which is the normal case for a popup opened
+	// from a page that is already loaded (a "Sign in with Google" window, for
+	// example). Assigning it after the call left the URL stranded and the tab
+	// showed an empty New Tab instead of the sign-in page.
+	t := &tab{host: h, title: "New Tab", zoom: 1.0, secondary: secondary, pendingURL: url}
 
 	c := edge.NewChromium()
 	c.DataPath = dataPath()
@@ -278,11 +283,13 @@ func (a *app) attachTab(t *tab, url string, activate bool) {
 	}
 
 	// A warmed spare is already showing its start page; only navigate when
-	// the caller actually asked for a URL.
+	// the caller actually asked for a URL. t.pendingURL is empty here when the
+	// engine came up synchronously and onEngineReady already performed the
+	// navigation, which stops it being issued twice.
 	if t.ready {
-		if url != "" {
+		if url != "" && t.pendingURL == "" && t.url != url {
 			a.navigateTab(t, url)
-		} else if t.isStart && t.startRev != a.store.Rev() {
+		} else if url == "" && t.isStart && t.startRev != a.store.Rev() {
 			// Browsing happened since this page was warmed, so its
 			// most-visited tiles are out of date.
 			a.showStartPage(t)
@@ -359,7 +366,7 @@ func (a *app) warmSpare() {
 	if systemMemoryLoad() >= 85 {
 		return
 	}
-	a.spare = a.createTab(false)
+	a.spare = a.createTab(false, "")
 }
 
 // takeSpare returns the warmed tab when one is ready for use. A spare that is
