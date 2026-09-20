@@ -172,6 +172,44 @@ func (a *app) createTab(secondary bool, url string) *tab {
 		if uri == "" {
 			return
 		}
+
+		// A page that asks for an explicit size wants a popup, not a tab:
+		// this is how sign-in flows (Google, Microsoft, GitHub) open their
+		// consent window, and they close it themselves with window.close().
+		// Read the features here - the args are only valid for the duration
+		// of this callback, so nothing may be deferred until after it.
+		popW, popH, popX, popY := int32(0), int32(0), int32(0), int32(0)
+		wantPopup, havePos := false, false
+		if wf, e := args.GetWindowFeatures(); e == nil && wf != nil {
+			hasSize, _ := wf.HasSize()
+			hasPos, _ := wf.HasPosition()
+			if hasSize {
+				rw, _ := wf.Width()
+				rh, _ := wf.Height()
+				popW, popH = popupSize(rw, rh, true)
+				wantPopup = true
+			}
+			if hasPos {
+				rx, _ := wf.Left()
+				ry, _ := wf.Top()
+				popX, popY = int32(rx), int32(ry)
+				havePos = true
+			}
+			_ = wf.Release()
+		}
+
+		if wantPopup && (user || a.allowSpawn()) {
+			var owner win.RECT
+			win.GetWindowRect(a.hwnd, &owner)
+			x, y := popupOrigin(owner, uint32(popX), uint32(popY), havePos, popW, popH)
+			a.postTask(func() {
+				if !a.openPopup(uri, popW, popH, x, y) {
+					a.newTab(uri, true) // popup window failed: never lose the page
+				}
+			})
+			return
+		}
+
 		if user {
 			// A trusted user gesture (a real click on a _blank link) must
 			// always open its tab - never eat a user action.

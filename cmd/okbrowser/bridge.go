@@ -148,10 +148,7 @@ const barJS = `
     "background:rgba(250,250,252,.52);",
     "backdrop-filter:blur(26px) saturate(1.7);-webkit-backdrop-filter:blur(26px) saturate(1.7);",
     "box-shadow:0 1px 12px rgba(0,0,0,.08),inset 0 -.5px 0 rgba(0,0,0,.07);",
-    "transform:translateY(calc(-100% + (100% * var(--ok-proximity,0))));",
-    "opacity:calc(.18 + (.82 * var(--ok-proximity,0)));",
-    "transition:transform .10s ease-out,opacity .10s ease-out}",
-    ".strip.open{transform:translateY(0);opacity:1}",
+    "transform:none;opacity:1}",
     ".strip.paneactive{box-shadow:inset 0 -2px 0 #0a84ff,0 1px 12px rgba(0,0,0,.12)}",
     "@media (prefers-color-scheme:dark){.strip{background:rgba(24,24,28,.55);",
     "box-shadow:0 1px 12px rgba(0,0,0,.32),inset 0 -.5px 0 rgba(255,255,255,.06)}}",
@@ -220,9 +217,7 @@ const barJS = `
     "@media (prefers-color-scheme:dark){.wcap{background:rgba(28,28,32,.55);",
     "box-shadow:0 2px 12px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.09),",
     "inset 0 0 0 .5px rgba(255,255,255,.08)}}",
-    ".wcap.hid{transform:translateY(calc(-160% + (160% * var(--ok-proximity,0))));",
-    "opacity:var(--ok-proximity,0);pointer-events:none}",
-    ".wcap.hid.near{pointer-events:auto}",
+    ".wcap.hid{transform:none;opacity:1;pointer-events:auto}",
     ".wbtn{width:40px;height:22px;border-radius:11px;display:grid;place-items:center;color:#3c4043;",
     "cursor:default;transition:background .12s,opacity .12s}",
     ".sitepanel{position:fixed;top:40px;left:8px;width:290px;padding:12px;border-radius:18px;z-index:2147483647;",
@@ -377,7 +372,7 @@ const barJS = `
     '<div class="sr" id="live" role="status" aria-live="polite"></div>' +
     '<div class="prog" id="prog"></div>' +
     '<div class="edge" id="edge"></div>' +
-    '<div class="strip" id="strip">' +
+    '<div class="strip open" id="strip">' +
       '<div class="tz" id="tz"></div>' +
       '<div class="plus" id="plus">' + I_PLUS + '</div>' +
       '<div class="okb" id="okb">' +
@@ -473,29 +468,17 @@ const barJS = `
   var hideTimer = 0;
   var briefTimer = 0;
 
-  function hideBar() {
-    strip.classList.remove('open');
-    var wc = root.getElementById('wcap');
-    if (wc) wc.classList.add('hid'); // the capsule hides with the bar
-    closeMenu();
-    closeCtx();
-    strip.style['--ok-proximity'] = '0';
-    var cap = root.getElementById('wcap');
-    if (cap) { cap.style['--ok-proximity'] = '0'; cap.classList.remove('near'); }
-  }
+  // The bar is a permanent surface: it is always on screen, like Chrome's.
+  // It used to retract whenever the pointer left the top of the window, which
+  // hid the address field and its suggestions and meant the tab strip was not
+  // there when you reached for it. hideBar is kept as a no-op so the existing
+  // idle/blur paths stay harmless.
+  function hideBar() {}
   function uiOpen(id) {
     var el = root.getElementById(id);
     return !!el && el.classList.contains('open');
   }
-  function hideIfIdle() {
-    // New Tab is a persistent command surface: its tabs and URL field never
-    // retreat, even when the pointer leaves the top of the window.
-    if (!S.u || barPinned || document.activeElement === input) return;
-    // Popovers anchored to the bar (menu, tab menu, suggestions, find)
-    // are part of it: the bar must never retire while one is open.
-    if (uiOpen('menu') || uiOpen('ctx') || uiOpen('sug') || uiOpen('find') || uiOpen('sitepanel')) return;
-    hideBar();
-  }
+  function hideIfIdle() {} // the bar never retires
   function revealBar(brief) {
     strip.classList.add('open');
     var wc = root.getElementById('wcap');
@@ -821,9 +804,11 @@ const barJS = `
   });
   input.addEventListener('focus', function () { setOpen(true); });
 
-  function submit(url) {
+  // newTab: open the result in a new tab instead of replacing this page,
+  // matching Chrome's Alt+Enter / Ctrl+Enter on the address bar.
+  function submit(url, newTab) {
     var v = url || input.value.trim();
-    if (v) post({ t: 'go', u: v });
+    if (v) post({ t: 'go', u: v, n: !!newTab });
     input.blur();
     post({ t: 'ui', a: 'refocus' });
   }
@@ -887,7 +872,7 @@ const barJS = `
         r.appendChild(meta);
         tt.textContent = it.t || it.u;
         uu.textContent = it.u;
-        r.addEventListener('mousedown', function (e) { e.preventDefault(); submit(it.u); });
+        r.addEventListener('mousedown', function (e) { e.preventDefault(); submit(it.u, e.button === 1 || e.altKey || e.ctrlKey || e.metaKey); });
         r.addEventListener('mouseenter', function () { sugSel = idx; sugPaint(); });
         sug.appendChild(r);
       })(sugItems[i], i);
@@ -916,10 +901,12 @@ const barJS = `
   input.addEventListener('keydown', function (e) {
     if (e.key === 'Enter') {
       e.preventDefault();
+      // Alt+Enter and Ctrl+Enter open the result in a new tab.
+      var inNew = !!(e.altKey || e.ctrlKey || e.metaKey);
       if (sug.classList.contains('open') && sugSel >= 0 && sugItems[sugSel]) {
-        submit(sugItems[sugSel].u);
+        submit(sugItems[sugSel].u, inNew);
       } else {
-        submit();
+        submit(null, inNew);
       }
     } else if (e.key === 'ArrowDown' && sug.classList.contains('open')) {
       e.preventDefault();
@@ -1418,6 +1405,7 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		X  float64 `json:"x"`
 		Y  float64 `json:"y"`
 		Ts int64   `json:"ts"`
+		N  bool    `json:"n"` // "go": open in a new tab (Alt/Ctrl+Enter)
 	}
 	if err := json.Unmarshal([]byte(msg), &m); err != nil {
 		return
@@ -1476,6 +1464,12 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		}
 
 	case "go": // address bubble, start page or built-in pages
+		if m.N {
+			// Alt/Ctrl+Enter (or a modifier-click on a suggestion): keep the
+			// current page and open the result alongside it, like Chrome.
+			a.newTab(m.U, true)
+			break
+		}
 		a.navigateTab(t, m.U)
 
 	case "nav": // page reported its URL, title and favicon

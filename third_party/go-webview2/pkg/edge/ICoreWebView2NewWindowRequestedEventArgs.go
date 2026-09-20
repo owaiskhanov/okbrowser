@@ -20,6 +20,7 @@ type _ICoreWebView2NewWindowRequestedEventArgsVtbl struct {
 	GetHandled         ComProc
 	GetIsUserInitiated ComProc
 	GetDeferral        ComProc
+	GetWindowFeatures  ComProc
 }
 
 type ICoreWebView2NewWindowRequestedEventArgs struct {
@@ -69,4 +70,19 @@ func (i *ICoreWebView2NewWindowRequestedEventArgs) GetIsUserInitiated() (bool, e
 		return false, err
 	}
 	return v != 0, nil
+}
+
+// GetWindowFeatures returns the window features the page requested (the
+// width/height/left/top of a window.open call). Chrome uses these to decide
+// whether to open a small popup window instead of a tab.
+func (i *ICoreWebView2NewWindowRequestedEventArgs) GetWindowFeatures() (*ICoreWebView2WindowFeatures, error) {
+	var wf *ICoreWebView2WindowFeatures
+	_, _, err := i.vtbl.GetWindowFeatures.Call(
+		uintptr(unsafe.Pointer(i)),
+		uintptr(unsafe.Pointer(&wf)),
+	)
+	if err != windows.ERROR_SUCCESS {
+		return nil, err
+	}
+	return wf, nil
 }

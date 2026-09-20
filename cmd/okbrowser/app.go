@@ -238,27 +238,8 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 			}
 			bx := int32(win.GetSystemMetrics(win.SM_CXFRAME) + win.GetSystemMetrics(smCXPaddedBorder))
 			by := int32(win.GetSystemMetrics(win.SM_CYFRAME) + win.GetSystemMetrics(smCXPaddedBorder))
-			left := x < wr.Left+bx
-			right := x >= wr.Right-bx
-			top := y < wr.Top+by
-			bottom := y >= wr.Bottom-by
-			switch {
-			case left && top:
-				return win.HTTOPLEFT
-			case right && top:
-				return win.HTTOPRIGHT
-			case left && bottom:
-				return win.HTBOTTOMLEFT
-			case right && bottom:
-				return win.HTBOTTOMRIGHT
-			case left:
-				return win.HTLEFT
-			case right:
-				return win.HTRIGHT
-			case top:
-				return win.HTTOP
-			case bottom:
-				return win.HTBOTTOM
+			if ht := frameHitTest(x, y, wr, bx, by, a.scaled(8)); ht != 0 {
+				return ht
 			}
 		}
 		break // client area: DefWindowProc
@@ -317,6 +298,7 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		break // DefWindowProc destroys the window
 	case win.WM_DESTROY:
 		a.discardSpare()
+		closePopups() // sign-in windows must not outlive the browser
 		a.saveSession()
 		if a.store != nil {
 			a.store.Flush()
@@ -342,6 +324,9 @@ func NewApp(startURL string) (*app, bool) {
 	cursor := win.LoadCursor(0, win.MAKEINTRESOURCE(win.IDC_ARROW))
 
 	if !a.registerClass(mainClassName, windows.NewCallback(wndProc), icon, cursor) {
+		return nil, false
+	}
+	if !a.registerClass(popupClassName, windows.NewCallback(popupProc), icon, cursor) {
 		return nil, false
 	}
 	if !a.registerClass(tabHostClassName, windows.NewCallback(defTabHostProc), icon, cursor) {
@@ -648,6 +633,54 @@ func (a *app) layout() {
 			t.chromium.Hide()
 		}
 	}
+}
+
+// frameHitTest reports which resize border the point (x,y) falls in, or 0 for
+// the client area. It is pure so the geometry can be unit tested.
+//
+// bx/by are the system frame metrics, which on their own give a 4-8px band
+// that is fiddly to hit - narrower than what Windows really offers on a
+// normal window, because the DWM grab margin extends past the visible border.
+// minBand raises that to a comfortable width. Corners use a square twice the
+// edge width on both axes, otherwise diagonal resize is almost unhittable.
+func frameHitTest(x, y int32, wr win.RECT, bx, by, minBand int32) uintptr {
+	if bx < minBand {
+		bx = minBand
+	}
+	if by < minBand {
+		by = minBand
+	}
+	cx, cy := bx*2, by*2
+
+	left := x < wr.Left+bx
+	right := x >= wr.Right-bx
+	top := y < wr.Top+by
+	bottom := y >= wr.Bottom-by
+
+	cleft := x < wr.Left+cx
+	cright := x >= wr.Right-cx
+	ctop := y < wr.Top+cy
+	cbottom := y >= wr.Bottom-cy
+
+	switch {
+	case cleft && ctop:
+		return win.HTTOPLEFT
+	case cright && ctop:
+		return win.HTTOPRIGHT
+	case cleft && cbottom:
+		return win.HTBOTTOMLEFT
+	case cright && cbottom:
+		return win.HTBOTTOMRIGHT
+	case left:
+		return win.HTLEFT
+	case right:
+		return win.HTRIGHT
+	case top:
+		return win.HTTOP
+	case bottom:
+		return win.HTBOTTOM
+	}
+	return 0
 }
 
 // postTask schedules f to run in the normal window-proc context. Engine
