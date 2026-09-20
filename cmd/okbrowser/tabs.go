@@ -168,16 +168,15 @@ func (a *app) createTab(secondary bool, url string) *tab {
 		if a.inSelfTest {
 			a.stlog("[selftest] engine NewWindowRequested: uri=%s user=%v", uri, user)
 		}
-		_ = args.PutHandled(true)
 		if uri == "" {
+			_ = args.PutHandled(true)
 			return
 		}
 
 		// A page that asks for an explicit size wants a popup, not a tab:
 		// this is how sign-in flows (Google, Microsoft, GitHub) open their
-		// consent window, and they close it themselves with window.close().
-		// Read the features here - the args are only valid for the duration
-		// of this callback, so nothing may be deferred until after it.
+		// consent window. Read the features here - the args are only valid
+		// inside this callback unless a deferral is taken.
 		popW, popH, popX, popY := int32(0), int32(0), int32(0), int32(0)
 		wantPopup, havePos := false, false
 		if wf, e := args.GetWindowFeatures(); e == nil && wf != nil {
@@ -199,17 +198,49 @@ func (a *app) createTab(secondary bool, url string) *tab {
 		}
 
 		if wantPopup && (user || a.allowSpawn()) {
+			// The opener MUST end up with a live handle to this window, or
+			// the sign-in flow breaks in ways that look like "the popup did
+			// nothing": window.close() from the provider is ignored,
+			// postMessage back to the opener is dropped and popup.closed
+			// never turns true. That means answering with put_NewWindow, and
+			// because creating an engine is asynchronous it has to be done
+			// under a deferral - the opener's script stays blocked until
+			// Complete, so the handle is never observed empty.
+			deferral, derr := args.GetDeferral()
+			if derr != nil || deferral == nil {
+				// No deferral: a tab is still better than a dead window.
+				_ = args.PutHandled(true)
+				a.postTask(func() { a.newTab(uri, true) })
+				return
+			}
+			_ = args.AddRef() // the args must outlive this callback
+
 			var owner win.RECT
 			win.GetWindowRect(a.hwnd, &owner)
 			x, y := popupOrigin(owner, uint32(popX), uint32(popY), havePos, popW, popH)
-			a.postTask(func() {
-				if !a.openPopup(uri, popW, popH, x, y) {
-					a.newTab(uri, true) // popup window failed: never lose the page
+
+			finish := func(view *edge.ICoreWebView2) {
+				if view != nil {
+					if err := args.PutNewWindow(view); err == nil {
+						_ = args.PutHandled(true)
+					}
+				} else {
+					// The engine failed: let WebView2 open its own window
+					// rather than handing the page a handle to nothing.
+					_ = args.PutHandled(false)
 				}
-			})
+				_ = deferral.Complete()
+				_ = deferral.Release()
+				_ = args.Release()
+			}
+
+			if !a.openPopup(popW, popH, x, y, finish) {
+				finish(nil)
+			}
 			return
 		}
 
+		_ = args.PutHandled(true)
 		if user {
 			// A trusted user gesture (a real click on a _blank link) must
 			// always open its tab - never eat a user action.

@@ -86,3 +86,54 @@ func (i *ICoreWebView2NewWindowRequestedEventArgs) GetWindowFeatures() (*ICoreWe
 	}
 	return wf, nil
 }
+
+// GetDeferral puts the event into a deferred state so the host can supply a
+// NewWindow asynchronously. The opener's window.open() call does not return
+// until Complete is called on the returned deferral.
+func (i *ICoreWebView2NewWindowRequestedEventArgs) GetDeferral() (*ICoreWebView2Deferral, error) {
+	var d *ICoreWebView2Deferral
+	_, _, err := i.vtbl.GetDeferral.Call(
+		uintptr(unsafe.Pointer(i)),
+		uintptr(unsafe.Pointer(&d)),
+	)
+	if err != windows.ERROR_SUCCESS {
+		return nil, err
+	}
+	return d, nil
+}
+
+// PutNewWindow supplies the WebView that should back the opened window.
+//
+// This is what makes window.open() return a LIVE handle to the opener. With
+// Handled set but no NewWindow, WebView2 hands the page a proxy for a testing
+// window that never loads: window.close() from the popup does nothing,
+// postMessage back to the opener is dropped and popup.closed never turns true
+// - which is exactly how an OAuth sign-in flow hangs.
+func (i *ICoreWebView2NewWindowRequestedEventArgs) PutNewWindow(w *ICoreWebView2) error {
+	_, _, err := i.vtbl.PutNewWindow.Call(
+		uintptr(unsafe.Pointer(i)),
+		uintptr(unsafe.Pointer(w)),
+	)
+	if err != windows.ERROR_SUCCESS {
+		return err
+	}
+	return nil
+}
+
+// AddRef keeps the args alive across a deferral.
+func (i *ICoreWebView2NewWindowRequestedEventArgs) AddRef() error {
+	_, _, err := i.vtbl.AddRef.Call(uintptr(unsafe.Pointer(i)))
+	if err != windows.ERROR_SUCCESS {
+		return err
+	}
+	return nil
+}
+
+// Release drops a reference taken with AddRef.
+func (i *ICoreWebView2NewWindowRequestedEventArgs) Release() error {
+	_, _, err := i.vtbl.Release.Call(uintptr(unsafe.Pointer(i)))
+	if err != windows.ERROR_SUCCESS {
+		return err
+	}
+	return nil
+}

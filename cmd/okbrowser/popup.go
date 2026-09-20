@@ -98,9 +98,15 @@ func popupProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr
 	return win.DefWindowProc(hwnd, msg, wp, uintptr(lp))
 }
 
-// openPopup creates the popup window and starts its engine. Returns false if
-// the window could not be created, so the caller can fall back to a tab.
-func (a *app) openPopup(url string, w, h, x, y int32) bool {
+// openPopup creates the popup window and starts its engine.
+//
+// ready is called once the engine exists, with the new ICoreWebView2 that the
+// caller must hand back to the opener via put_NewWindow; it receives nil when
+// the engine could not be created. The popup performs NO navigation of its
+// own: once it is adopted as the opener's new window, WebView2 drives the
+// navigation, which is what keeps window.close(), postMessage and
+// popup.closed working.
+func (a *app) openPopup(w, h, x, y int32, ready func(*edge.ICoreWebView2)) bool {
 	cn, err := syscall.UTF16PtrFromString(popupClassName)
 	if err != nil {
 		return false
@@ -117,7 +123,7 @@ func (a *app) openPopup(url string, w, h, x, y int32) bool {
 	hwnd := win.CreateWindowEx(0, cn, title,
 		win.WS_OVERLAPPEDWINDOW,
 		x, y, w+fw, h+fh,
-		a.hwnd, 0, a.instance, nil)
+		0, 0, a.instance, nil)
 	if hwnd == 0 {
 		return false
 	}
@@ -131,9 +137,8 @@ func (a *app) openPopup(url string, w, h, x, y int32) bool {
 
 	if !c.EmbedAsync(uintptr(hwnd), func(ok bool) {
 		if !ok {
-			// The engine could not start: close the empty frame rather than
-			// leaving a blank window on screen.
-			a.postTask(func() { win.DestroyWindow(hwnd) })
+			win.DestroyWindow(hwnd)
+			ready(nil)
 			return
 		}
 		c.SetDefaultBackgroundColor(edge.COREWEBVIEW2_COLOR{A: 255, R: 28, G: 28, B: 30})
@@ -144,17 +149,16 @@ func (a *app) openPopup(url string, w, h, x, y int32) bool {
 			_ = st.PutIsPasswordAutosaveEnabled(autofill)
 			_ = st.PutIsGeneralAutofillEnabled(autofill)
 		}
-		c.Navigate(url)
 		c.Resize()
 		c.Show()
+		win.ShowWindow(hwnd, win.SW_SHOW)
+		win.SetForegroundWindow(hwnd)
 		c.Focus()
+		ready(c.CoreWebView2())
 	}) {
 		win.DestroyWindow(hwnd)
 		return false
 	}
-
-	win.ShowWindow(hwnd, win.SW_SHOW)
-	win.SetForegroundWindow(hwnd)
 	return true
 }
 

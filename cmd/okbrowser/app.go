@@ -211,8 +211,7 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 			// Windowed: keep the resize frame on the sides and bottom
 			// (native resize borders + DWM shadow), but pull the client
 			// up to the window's top edge so the glass bar is flush.
-			fx := int32(win.GetSystemMetrics(win.SM_CXFRAME) + win.GetSystemMetrics(smCXPaddedBorder))
-			fy := int32(win.GetSystemMetrics(win.SM_CYFRAME) + win.GetSystemMetrics(smCXPaddedBorder))
+			fx, fy := a.resizeBand()
 			r := p.Rc0
 			p.Rc0 = win.RECT{Left: r.Left + fx, Top: r.Top, Right: r.Right - fx, Bottom: r.Bottom - fy}
 			return 0
@@ -236,9 +235,8 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 			if !win.GetWindowRect(hwnd, &wr) {
 				break
 			}
-			bx := int32(win.GetSystemMetrics(win.SM_CXFRAME) + win.GetSystemMetrics(smCXPaddedBorder))
-			by := int32(win.GetSystemMetrics(win.SM_CYFRAME) + win.GetSystemMetrics(smCXPaddedBorder))
-			if ht := frameHitTest(x, y, wr, bx, by, a.scaled(8)); ht != 0 {
+			bx, by := a.resizeBand()
+			if ht := frameHitTest(x, y, wr, bx, by); ht != 0 {
 				return ht
 			}
 		}
@@ -456,6 +454,28 @@ func (a *app) saveSession() {
 	a.store.SaveSession(sd)
 }
 
+// resizeBand is the width of the window's resize border, in physical pixels.
+//
+// The system metrics alone give roughly 4-8px, which is narrower than what
+// Windows really offers on a normal window: DWM extends an invisible grab
+// margin beyond the visible border. More importantly, the band must be part
+// of the NON-CLIENT area - the tab host child window covers the whole client
+// area and a child swallows the mouse, so any "resize band" left inside the
+// client is simply never hit-tested by the parent.
+//
+// WM_NCCALCSIZE and WM_NCHITTEST must therefore agree on this exact value.
+func (a *app) resizeBand() (int32, int32) {
+	bx := int32(win.GetSystemMetrics(win.SM_CXFRAME) + win.GetSystemMetrics(smCXPaddedBorder))
+	by := int32(win.GetSystemMetrics(win.SM_CYFRAME) + win.GetSystemMetrics(smCXPaddedBorder))
+	if min := a.scaled(8); bx < min {
+		bx = min
+	}
+	if min := a.scaled(8); by < min {
+		by = min
+	}
+	return bx, by
+}
+
 // registerClass registers a window class for the main window or tab hosts.
 func (a *app) registerClass(name string, proc uintptr, icon win.HANDLE, cursor win.HCURSOR) bool {
 	cn, err := syscall.UTF16PtrFromString(name)
@@ -638,18 +658,10 @@ func (a *app) layout() {
 // frameHitTest reports which resize border the point (x,y) falls in, or 0 for
 // the client area. It is pure so the geometry can be unit tested.
 //
-// bx/by are the system frame metrics, which on their own give a 4-8px band
-// that is fiddly to hit - narrower than what Windows really offers on a
-// normal window, because the DWM grab margin extends past the visible border.
-// minBand raises that to a comfortable width. Corners use a square twice the
-// edge width on both axes, otherwise diagonal resize is almost unhittable.
-func frameHitTest(x, y int32, wr win.RECT, bx, by, minBand int32) uintptr {
-	if bx < minBand {
-		bx = minBand
-	}
-	if by < minBand {
-		by = minBand
-	}
+// bx/by come from resizeBand and MUST match the inset WM_NCCALCSIZE reserved:
+// only non-client pixels ever reach this handler. Corners use a square twice
+// the edge width on both axes, otherwise diagonal resize is almost unhittable.
+func frameHitTest(x, y int32, wr win.RECT, bx, by int32) uintptr {
 	cx, cy := bx*2, by*2
 
 	left := x < wr.Left+bx

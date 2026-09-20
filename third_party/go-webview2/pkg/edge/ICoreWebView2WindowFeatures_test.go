@@ -102,3 +102,34 @@ func TestNewWindowRequestedArgsVtblOrder(t *testing.T) {
 		}
 	}
 }
+
+// ICoreWebView2Deferral adds exactly one method after IUnknown. If Complete
+// were not in slot 3, completing a deferral would call an arbitrary function
+// pointer - and the deferral is what keeps an OAuth opener's script blocked
+// until the popup's engine exists.
+func TestDeferralVtblOrder(t *testing.T) {
+	want := []string{"QueryInterface", "AddRef", "Release", "Complete"}
+
+	var got []string
+	var walk func(reflect.Type)
+	walk = func(rt reflect.Type) {
+		for i := 0; i < rt.NumField(); i++ {
+			f := rt.Field(i)
+			if f.Anonymous && f.Type.Kind() == reflect.Struct {
+				walk(f.Type)
+				continue
+			}
+			got = append(got, f.Name)
+		}
+	}
+	walk(reflect.TypeOf(_ICoreWebView2DeferralVtbl{}))
+
+	if len(got) != len(want) {
+		t.Fatalf("vtable has %d slots, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("slot %d is %q, want %q", i, got[i], want[i])
+		}
+	}
+}

@@ -1023,14 +1023,27 @@ const barJS = `
 
   // The very top of the window (the bar's own backdrop) is a resize grip:
   // like any native window, drag it to resize from the top edge.
+  // The top edge is the one border Windows cannot hit-test for us: the client
+  // area is pulled up flush to the window top so the glass bar sits there, so
+  // those pixels belong to the page, not to the frame. Forward them by hand.
+  // 6px matches the side/bottom band closely enough to feel the same, and the
+  // cursor has to be set explicitly or the edge gives no affordance at all.
+  var TOP_GRIP = 6;
+  var docEl = document.documentElement;
+  document.addEventListener('mousemove', function (e) {
+    if (document.fullscreenElement) return;
+    if (e.clientY < TOP_GRIP) {
+      if (docEl && docEl.style.cursor !== 'ns-resize') { docEl.style.cursor = 'ns-resize'; }
+    } else if (docEl && docEl.style.cursor === 'ns-resize') {
+      docEl.style.cursor = '';
+    }
+  }, true);
   document.addEventListener('mousedown', function (e) {
-    if (e.button === 0 && !document.fullscreenElement) {
-      var open = strip.classList.contains('open');
-      if (e.clientY < (open ? 3 : 6)) {
-        e.preventDefault();
-        e.stopPropagation();
-        post({ t: 'ui', a: 'wtopresize' });
-      }
+    if (e.button === 0 && !document.fullscreenElement && e.clientY < TOP_GRIP) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (docEl) docEl.style.cursor = '';
+      post({ t: 'ui', a: 'wtopresize' });
     }
   }, true);
 

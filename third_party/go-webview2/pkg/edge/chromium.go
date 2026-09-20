@@ -183,6 +183,15 @@ func utf16Ptr(s string) (*uint16, bool) {
 	return p, true
 }
 
+// CoreWebView2 exposes the raw ICoreWebView2 pointer.
+//
+// OK Browser addition: needed to answer a NewWindowRequested event with
+// put_NewWindow, which is the only way the opener script keeps a live handle
+// to the window it opened.
+func (e *Chromium) CoreWebView2() *ICoreWebView2 {
+	return e.webview
+}
+
 func (e *Chromium) Navigate(url string) {
 	if e.webview == nil { // OK Browser addition: engine not ready yet
 		return

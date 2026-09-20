@@ -19,7 +19,8 @@ import (
 // made the edges hard to grab.
 var wr = win.RECT{Left: 100, Top: 100, Right: 1100, Bottom: 800}
 
-func ht(x, y int32) uintptr { return frameHitTest(x, y, wr, 4, 4, 8) }
+// resizeBand() already applied its 8px minimum before this is called.
+func ht(x, y int32) uintptr { return frameHitTest(x, y, wr, 8, 8) }
 
 func TestEveryEdgeAndCornerIsReachable(t *testing.T) {
 	midX, midY := int32(600), int32(450)
@@ -45,16 +46,17 @@ func TestEveryEdgeAndCornerIsReachable(t *testing.T) {
 	}
 }
 
-// The whole point of the change: an 8px band must be honoured even when the
-// system frame metrics are smaller.
-func TestMinimumBandIsHonoured(t *testing.T) {
+// The band the hit-test uses must be exactly the band WM_NCCALCSIZE reserved
+// as non-client. Anything wider is dead: those pixels are client area, and
+// the tab-host child window covers them, so the parent is never asked.
+func TestBandMatchesTheReservedNonClientArea(t *testing.T) {
 	for y := int32(100); y < 108; y++ {
-		if got := frameHitTest(600, y, wr, 4, 4, 8); got != win.HTTOP {
+		if got := frameHitTest(600, y, wr, 8, 8); got != win.HTTOP {
 			t.Fatalf("y=%d should be within the top resize band, got %d", y, got)
 		}
 	}
-	if got := frameHitTest(600, 108, wr, 4, 4, 8); got != 0 {
-		t.Errorf("y=108 is past an 8px band and should be client area, got %d", got)
+	if got := frameHitTest(600, 108, wr, 8, 8); got != 0 {
+		t.Errorf("y=108 is past the 8px band and should be client area, got %d", got)
 	}
 }
 
@@ -92,6 +94,51 @@ func TestNoEdgePixelFallsThroughToClient(t *testing.T) {
 		}
 		if ht(wr.Right-1, y) == 0 {
 			t.Fatalf("right border at y=%d fell through to client area", y)
+		}
+	}
+}
+
+// This is the invariant the first attempt at this fix got wrong.
+//
+// WM_NCCALCSIZE decides how much of the window is non-client; WM_NCHITTEST is
+// only ever consulted for those pixels. Everything else is client area, and
+// the tab-host child window covers all of it - a child swallows the mouse, so
+// the parent's hit-test never runs there.
+//
+// Widening only the hit-test band therefore changes nothing: the extra pixels
+// belong to the child. Both must come from resizeBand().
+func TestHitTestBandCannotExceedReservedFrame(t *testing.T) {
+	// Simulate what WM_NCCALCSIZE reserves for a given band, then assert the
+	// hit-test finds a border at every reserved pixel and none beyond it.
+	for _, band := range []int32{4, 8, 12, 16} {
+		client := win.RECT{
+			Left:   wr.Left + band,
+			Top:    wr.Top, // top stays flush: the bar sits there
+			Right:  wr.Right - band,
+			Bottom: wr.Bottom - band,
+		}
+
+		// Every pixel OUTSIDE the client rect on the left must hit-test.
+		for x := wr.Left; x < client.Left; x++ {
+			if got := frameHitTest(x, 450, wr, band, band); got == 0 {
+				t.Fatalf("band=%d: reserved pixel x=%d reported client area", band, x)
+			}
+		}
+		// The first client pixel must NOT be claimed, or the band is wider
+		// than what was reserved and those hits never arrive.
+		if got := frameHitTest(client.Left, 450, wr, band, band); got != 0 {
+			t.Errorf("band=%d: x=%d is client area but hit-test claimed %d (band wider than reserved)",
+				band, client.Left, got)
+		}
+		// Same on the bottom edge.
+		for y := client.Bottom; y < wr.Bottom; y++ {
+			if got := frameHitTest(600, y, wr, band, band); got == 0 {
+				t.Fatalf("band=%d: reserved pixel y=%d reported client area", band, y)
+			}
+		}
+		if got := frameHitTest(600, client.Bottom-1, wr, band, band); got != 0 {
+			t.Errorf("band=%d: y=%d is client area but hit-test claimed %d",
+				band, client.Bottom-1, got)
 		}
 	}
 }
