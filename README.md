@@ -84,9 +84,10 @@ just content:
   for camera, microphone, location, notifications, clipboard and sensors;
   choices persist by origin, with one-click permission reset and per-site
   cookie/storage clearing
-- **Web notifications**: a stable Windows application identity lets WebView2
-  register notifications from WhatsApp Web and other permitted sites with the
-  native Windows notification platform; permissions remain controllable per site
+- **Web notifications**: permitted sites can show non-persistent notifications
+  while their page is open; permissions remain controllable per site. WebView2
+  does not implement Web Push, so background alerts from WhatsApp Web, mail,
+  chat, and similar services are unavailable in this browser
 - **Windows-protected autofill**: password saving, passkeys, addresses and
   payment autofill are delegated directly to the WebView2 profile; OK Browser
   never reads or stores credential values itself
@@ -117,7 +118,21 @@ just content:
 - **☰ menu** beside the minimize button: new tab, incognito, bookmarks,
   history, downloads and settings — all in glass. Settings actions confirm
   with a small glass toast
+- **Instant new tabs**: creating a web engine blocks for a noticeable moment,
+  so OK Browser keeps one **pre-warmed in the background** with the start page
+  already rendered. `Ctrl+T` adopts it, so the tab appears immediately instead
+  of pausing; a replacement warms during the next idle moment
+- **New Tab types straight away**: the address bar opens **and takes focus**
+  on every new tab, so you can type the moment it appears — no click, no
+  `Ctrl+L`. It never steals focus from a loaded page, and never re-selects
+  what you have already typed
 - The address bar updates **the instant** you navigate (not after the page loads)
+- **Automatic `www` fallback**: plenty of sites only answer on one of
+  `example.com` or `www.example.com` — the other name has stale DNS, refuses
+  the connection, or carries a certificate for just one of the two. When a
+  page fails to reach its host, OK Browser silently retries the alternate
+  name once (either direction) before showing the error page, so typing the
+  bare domain just works. Local addresses and IPs are never rewritten
 - Back / forward / reload appear as tiny glyphs that light up only when usable (real history state)
 - `target="_blank"` links, middle-click on links and `window.open()` open a **new tab**; `Ctrl+N` opens a new window
 - Zoom (`Ctrl+ +` / `Ctrl+-` / `Ctrl+0`), print (`Ctrl+P`), fullscreen (`F11`), mouse buttons 4/5 for back/forward

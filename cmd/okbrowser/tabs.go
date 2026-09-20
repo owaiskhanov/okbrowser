@@ -3,6 +3,8 @@
 package main
 
 import (
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -19,6 +21,26 @@ import (
 	"github.com/owaiskhanov/okbrowser/internal/nav"
 )
 
+// pendingPermission is an unresolved WebView2 permission request. Keeping it
+// on the tab lets the trusted shell render an explicit Allow/Block choice
+// while WebView2's deferral keeps the page's request alive.
+type pendingPermission struct {
+	origin  string
+	kind    string
+	request *edge.PermissionRequest
+}
+
+// newShellToken creates a capability known only to the native host and the
+// closed-shadow shell. Page JavaScript can use the general web-message bridge,
+// so a notification Allow/Block decision must carry this unguessable value.
+func newShellToken() string {
+	b := make([]byte, 24)
+	if _, err := cryptorand.Read(b); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b)
+}
+
 // tab is one browser tab: its own host window and web engine, switched in
 // and out of the shared content area. All tabs share one engine process via
 // the shared user-data folder, so a new tab is cheap.
@@ -32,6 +54,18 @@ type tab struct {
 	isStart bool
 	errPage bool // the currently shown page is our error page
 	pinned  bool // pinned tabs render as favicon-only pills
+	altTried bool // the apex/www alternate was already retried in this chain
+	warmStart   bool // carries a pre-rendered start page (skip re-rendering)
+	warmPainted bool // that start page has already painted (instant reveal)
+	// internalNavs counts NavigateToString documents awaiting completion.
+	// WebView2 exposes these as data:text/html URLs; they must never be
+	// mistaken for failed web navigations when a user clicks a link quickly.
+	internalNavs    int
+	internalNavIDs  map[uint64]struct{}
+	activeNavID     uint64 // newest top-level NavigationStarting event
+	activeNavKnown  bool
+	permissionPrompt *pendingPermission // unresolved notification permission
+	permissionToken  string             // closed-shell capability for permission actions
 	zoom         float64
 	inactiveSince time.Time
 	sleeping     bool
@@ -59,6 +93,88 @@ func permissionOrigin(raw string) string {
 	return strings.ToLower(u.Scheme + "://" + u.Host)
 }
 
+// isNavigateToStringURI identifies the synthetic data document WebView2 uses
+// for NavigateToString. It is not a network URL and can complete as
+// ConnectionAborted when a user immediately follows a link from the page.
+func isNavigateToStringURI(raw string) bool {
+	return strings.HasPrefix(strings.ToLower(raw), "data:text/html")
+}
+
+// preserveInternalDocumentState reports whether a synthetic WebView2 data
+// navigation belongs to browser chrome rather than the page in the address
+// bar. In particular, errPage protects the failed URL while its error UI is
+// being rendered.
+func (t *tab) preserveInternalDocumentState(raw string) bool {
+	return t != nil && isNavigateToStringURI(raw) && (t.internalNavs > 0 || t.errPage)
+}
+
+// navigateInternal starts a browser-owned document and records its completion
+// separately from web navigation. Without this marker, a canceled New Tab
+// start page could be reported as an aborted click on the next real link.
+func (t *tab) navigateInternal(html string) {
+	if t == nil || t.chromium == nil {
+		return
+	}
+	t.internalNavs++
+	// The matching NavigationStarting event will install this document's ID.
+	// Until then, an older web navigation is no longer current.
+	t.activeNavID, t.activeNavKnown = 0, false
+	t.chromium.NavigateToString(html)
+}
+
+// markInternalNavigation associates the just-started data document with its
+// WebView2 navigation ID. The fallback count remains for runtimes that cannot
+// provide an ID, but current runtimes get exact completion correlation.
+func (t *tab) markInternalNavigation(id uint64) {
+	if t == nil {
+		return
+	}
+	if t.internalNavIDs == nil {
+		t.internalNavIDs = make(map[uint64]struct{})
+	}
+	t.internalNavIDs[id] = struct{}{}
+}
+
+// completeInternalNavigation consumes only the matching browser-owned
+// completion when an ID is available. It deliberately never lets an arbitrary
+// real navigation consume an outstanding internal-page marker.
+func (t *tab) completeInternalNavigation(id uint64, hasID bool) bool {
+	if t == nil || t.internalNavs == 0 {
+		return false
+	}
+	if hasID {
+		if _, ok := t.internalNavIDs[id]; !ok {
+			return false
+		}
+		delete(t.internalNavIDs, id)
+	} else {
+		// Legacy fallback for a runtime that did not expose navigation IDs.
+		// Completion order is WebView2's ordering in that case.
+	}
+	t.internalNavs--
+	return true
+}
+
+// isStaleNavigation reports whether an identifiable completion belongs to an
+// older navigation than the tab's newest real NavigationStarting event.
+func (t *tab) isStaleNavigation(id uint64, hasID bool) bool {
+	return t != nil && hasID && t.activeNavKnown && id != t.activeNavID
+}
+
+// navigateErrorDocument intentionally does not add an internal completion
+// marker. Error/recovery documents already have errPage set, which makes any
+// stale completion harmless; clearing older markers here prevents a canceled
+// New Tab page from stealing the next real navigation after an error.
+func (t *tab) navigateErrorDocument(html string) {
+	if t == nil || t.chromium == nil {
+		return
+	}
+	t.internalNavs = 0
+	t.internalNavIDs = nil
+	t.activeNavID, t.activeNavKnown = 0, false
+	t.chromium.NavigateToString(html)
+}
+
 // active returns the currently displayed tab, or nil.
 func (a *app) active() *tab {
 	if a.activeIdx < 0 || a.activeIdx >= len(a.tabs) {
@@ -82,7 +198,30 @@ func (a *app) newTab(url string, activate bool) *tab {
 	return a.newTabMode(url, activate, false)
 }
 
+// newTabMode creates (or adopts a pre-warmed) tab and shows it.
+//
+// Building a WebView2 controller blocks the UI thread inside a nested
+// message pump, which is what made Ctrl+T feel slow. A spare engine is
+// therefore kept warm in the background: when one is available this
+// function just adopts it, so the tab appears immediately.
 func (a *app) newTabMode(url string, activate, secondary bool) *tab {
+	t := a.takeSpare(secondary)
+	if t == nil {
+		t = a.buildTab(secondary)
+	}
+	if t == nil {
+		return nil
+	}
+	a.attachTab(t, url, activate)
+	// Replace the spare we just consumed, once the UI is idle again.
+	a.scheduleSpareWarm()
+	return t
+}
+
+// buildTab creates a tab's host window and web engine. This is the
+// expensive part (a nested message pump runs until the engine exists), so
+// it is what gets pre-warmed.
+func (a *app) buildTab(secondary bool) *tab {
 	tn, _ := syscall.UTF16PtrFromString(tabHostClassName)
 	a.hostSeq++
 	h := win.CreateWindowEx(0, tn, nil, win.WS_CHILD,
@@ -94,18 +233,25 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 		return nil
 	}
 
-	t := &tab{host: h, title: "New Tab", zoom: 1.0}
+	t := &tab{host: h, title: "New Tab", zoom: 1.0, permissionToken: newShellToken()}
 
 	c := edge.NewChromium()
 	c.DataPath = dataPath()
 	c.MessageCallback = func(msg string) { a.onWebMessage(t, msg) }
 	c.AcceleratorKeyCallback = func(vk uint) bool { a.focusedTab = t; return a.onAccelerator(vk) }
-	c.PermissionRequestedCallback = func(raw string, kind edge.CoreWebView2PermissionKind) edge.CoreWebView2PermissionState {
-		name := permissionName(kind)
-		saved := a.store.Permission(permissionOrigin(raw), name)
-		if saved == "allow" { return edge.CoreWebView2PermissionStateAllow }
-		if saved == "deny" { return edge.CoreWebView2PermissionStateDeny }
-		return edge.CoreWebView2PermissionStateDefault
+	c.PermissionRequestedCallback = func(raw string, kind edge.CoreWebView2PermissionKind, request *edge.PermissionRequest) (edge.CoreWebView2PermissionState, bool) {
+		name, origin := permissionName(kind), permissionOrigin(raw)
+		saved := a.store.Permission(origin, name)
+		if saved == "allow" { return edge.CoreWebView2PermissionStateAllow, false }
+		if saved == "deny" { return edge.CoreWebView2PermissionStateDeny, false }
+		if name != "notifications" || origin == "" || request == nil {
+			return edge.CoreWebView2PermissionStateDefault, false
+		}
+		// WebView2 has no built-in permission prompt for notifications: its
+		// Default result simply rejects Notification.requestPermission().
+		// Keep its deferral alive and ask through our trusted browser shell.
+		a.postTask(func() { a.queuePermissionPrompt(t, origin, name, request) })
+		return edge.CoreWebView2PermissionStateDefault, true
 	}
 	// The engine-level safety net for new windows (target=_blank,
 	// window.open) - covers cases the page-side bridge cannot see (e.g.
@@ -169,10 +315,19 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 		_ = st.PutIsPasswordAutosaveEnabled(a.store.Settings().Autofill && !incognitoMode)
 		_ = st.PutIsGeneralAutofillEnabled(a.store.Settings().Autofill && !incognitoMode)
 	}
+	// This runs before bridgeJS/barJS and is deleted by barJS after it has
+	// captured the value in its private closure. Page scripts therefore
+	// cannot forge privileged permission-button web messages.
+	c.Init("window.__okShellToken=" + strconv.Quote(t.permissionToken) + ";")
 	c.Init(bridgeJS)
 	if secondary { c.Init("window.__okSecondary=true;") }
 	c.Init(barJS)
+	return t
+}
 
+// attachTab adds an already-built tab to the strip, shows it and points it
+// at its first page. Cheap: no engine creation happens here.
+func (a *app) attachTab(t *tab, url string, activate bool) {
 	a.tabs = append(a.tabs, t)
 	win.SetTimer(a.hwnd, 4, 30000, 0) // periodic inactive-tab memory trim
 	if activate || len(a.tabs) == 1 {
@@ -183,6 +338,17 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 		prev := a.active()
 		if prev != nil && prev != t && isWnd(prev.host) {
 			a.beginTabFade(t, prev.host)
+			// A pre-warmed tab has already painted its start page, so its
+			// NavigationCompleted (which normally arms the reveal) fired
+			// before adoption. Arm it here or the fade would sit through
+			// its full ~700ms fallback - the opposite of instant.
+			if t.warmPainted {
+				// It is safe to reveal a proved-painted spare as a single
+				// opaque frame. A 250ms cosmetic cross-fade made Ctrl+T look
+				// slow even though its engine was ready.
+				a.fadeReady = true
+				a.fadeAlpha = 255
+			}
 		}
 		a.switchToTab(len(a.tabs) - 1)
 	} else {
@@ -190,7 +356,17 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 	}
 
 	if url != "" {
+		t.warmStart, t.warmPainted = false, false // start page is about to be replaced
 		a.navigateTab(t, url)
+	} else if t.warmStart {
+		// A pre-warmed spare already rendered the start page: re-rendering
+		// it would throw away the very work that makes Ctrl+T instant.
+		// Just refresh the chrome so the bar shows the new empty tab.
+		t.warmStart, t.warmPainted = false, false
+		if a.isActive(t) {
+			a.syncTitle()
+			a.pushBarState()
+		}
 	} else {
 		a.showStartPage(t)
 	}
@@ -198,7 +374,91 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 	if a.inSelfTest {
 		a.stlog("[selftest] tab %d created (url=%s)", len(a.tabs), url)
 	}
+}
+
+// takeSpare hands over the pre-warmed tab if one is ready and usable.
+//
+// The spare is only valid for a primary tab: a secondary (split) pane is
+// initialised with an extra script before its engine is created, so it
+// cannot be swapped in after the fact.
+func (a *app) takeSpare(secondary bool) *tab {
+	if secondary || a.spare == nil {
+		return nil
+	}
+	t := a.spare
+	a.spare = nil
+	if t.chromium == nil || !isWnd(t.host) {
+		return nil // stale spare: fall back to building one inline
+	}
+	// The speed-dial tiles were rendered when the spare was warmed. If the
+	// user has browsed since, re-render so a new tab never shows a stale
+	// list. The engine already exists, so this is cheap - it is the
+	// controller creation, not the HTML, that used to cost the delay.
+	if t.warmStart && a.spareStamp != a.store.HistoryStamp() {
+		t.navigateInternal(StartPageHTML(a.store.MostVisited(12), a.store.Settings().Engine))
+		// It still carries the start page (so attachTab must not render a
+		// third time), but that render has not painted yet - so the reveal
+		// waits for first paint as usual instead of showing a blank frame.
+		t.warmPainted = false
+	}
+	if a.inSelfTest {
+		a.stlog("[selftest] adopted pre-warmed tab engine")
+	}
 	return t
+}
+
+// scheduleSpareWarm asks for a background spare to be built once the
+// message queue is drained, so the cost never lands on a keystroke.
+func (a *app) scheduleSpareWarm() {
+	// selfTestMode (not a.inSelfTest) is the right guard: it is set before
+	// the app is built, whereas inSelfTest is only set after the first tab
+	// already exists. The self test counts engines and tabs, so it must
+	// not race a background one.
+	if a.spare != nil || a.warmingSpare || a.hwnd == 0 || selfTestMode {
+		return
+	}
+	a.warmingSpare = true
+	win.SetTimer(a.hwnd, 6, 120, 0)
+}
+
+// warmSpare builds the spare engine. Called from the idle timer, never
+// from an engine callback.
+func (a *app) warmSpare() {
+	a.warmingSpare = false
+	if a.spare != nil || a.hwnd == 0 {
+		return
+	}
+	// Don't hold engines open for an unbounded number of windows/tabs:
+	// one spare is enough to make Ctrl+T instant.
+	if t := a.buildTab(false); t != nil {
+		a.spare = t
+		// Render the start page now so the first paint is already done
+		// when the tab is adopted - this is what removes the blank
+		// flash as well as the delay.
+		t.isStart = true
+		t.title = "New Tab"
+		// NavigateToString is asynchronous. It is only safe to call this
+		// painted after NavigationCompleted confirms the document's first
+		// frame exists; claiming it here was the remaining flash on Ctrl+T.
+		t.warmStart, t.warmPainted = true, false
+		a.spareStamp = a.store.HistoryStamp()
+		t.navigateInternal(StartPageHTML(a.store.MostVisited(12), a.store.Settings().Engine))
+	}
+}
+
+// discardSpare tears down an unused pre-warmed engine (on shutdown).
+func (a *app) discardSpare() {
+	t := a.spare
+	a.spare = nil
+	if t == nil {
+		return
+	}
+	if t.chromium != nil {
+		t.chromium.Close()
+	}
+	if isWnd(t.host) {
+		win.DestroyWindow(t.host)
+	}
 }
 
 // switchToTab displays tab i and syncs title and glass-bar state.
@@ -206,7 +466,13 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 // engine callbacks).
 func (a *app) postNewTab(url string) {
 	a.postTask(func() {
-		a.newTab(url, true)
+		t := a.newTab(url, true)
+		// A pre-warmed tab already has the shell script running, so the
+		// address bar can be focused right now instead of waiting out the
+		// 150ms "bar push" timer that exists for engines still booting.
+		if t != nil && url == "" && t.chromium != nil {
+			t.chromium.Eval("window.__okBubbleFocus&&window.__okBubbleFocus()")
+		}
 		a.scheduleBarPush(true)
 	})
 }
@@ -301,8 +567,14 @@ func (a *app) switchToTab(i int) {
 	a.splitTab = nil
 	if cur := a.active(); cur != nil {
 		cur.inactiveSince = time.Now()
-		win.ShowWindow(cur.host, win.SW_HIDE)
-		cur.chromium.Hide()
+		// beginTabFade deliberately leaves the old host visible below the
+		// incoming one. Hiding it here created a blank flash while the new
+		// host was still waiting for its first paint.
+		keepForFade := a.fading && cur.host == a.fadePrev && a.tabs[i].host == a.fadeHost
+		if !keepForFade {
+			win.ShowWindow(cur.host, win.SW_HIDE)
+			cur.chromium.Hide()
+		}
 	}
 	a.activeIdx = i
 	t := a.tabs[i]
@@ -322,16 +594,71 @@ func (a *app) switchToTab(i int) {
 	}
 }
 
+// queuePermissionPrompt turns a deferred WebView2 notification request into a
+// browser-chrome prompt. Notifications are special in WebView2: unlike camera
+// or microphone, StateDefault has no built-in prompt and simply rejects the
+// web request, so it must be an explicit host decision.
+func (a *app) queuePermissionPrompt(t *tab, origin, kind string, request *edge.PermissionRequest) {
+	if request == nil {
+		return
+	}
+	if t == nil || t.chromium == nil || !a.tabAlive(t) {
+		request.Resolve(edge.CoreWebView2PermissionStateDefault)
+		return
+	}
+	// A page can ask more than once. Resolve the older one non-persistently
+	// rather than leaking a COM deferral or letting a stale prompt decide it.
+	a.cancelPermissionPrompt(t)
+	t.permissionPrompt = &pendingPermission{origin: origin, kind: kind, request: request}
+	if a.isActive(t) {
+		a.pushBarState()
+	}
+}
+
+func (a *app) cancelPermissionPrompt(t *tab) {
+	if t == nil || t.permissionPrompt == nil {
+		return
+	}
+	t.permissionPrompt.request.Resolve(edge.CoreWebView2PermissionStateDefault)
+	t.permissionPrompt = nil
+}
+
+// resolvePermissionPrompt persists the user's Allow/Block choice for the
+// requesting origin, then completes the WebView2 deferral that is awaiting it.
+func (a *app) resolvePermissionPrompt(t *tab, choice string) {
+	if t == nil || t.permissionPrompt == nil {
+		return
+	}
+	p := t.permissionPrompt
+	state := edge.CoreWebView2PermissionStateDeny
+	if choice == "allow" {
+		state = edge.CoreWebView2PermissionStateAllow
+	} else {
+		choice = "deny"
+	}
+	a.store.SetPermission(p.origin, p.kind, choice)
+	if t.chromium != nil {
+		t.chromium.SetPermission(edge.CoreWebView2PermissionKindNotifications, state)
+	}
+	t.permissionPrompt = nil
+	p.request.Resolve(state)
+	if a.isActive(t) {
+		a.pushBarState()
+	}
+}
+
 // closeTab removes tab i. Closing the last tab closes the window.
 func (a *app) closeTab(i int) {
 	if i < 0 || i >= len(a.tabs) {
 		return
 	}
 	if len(a.tabs) == 1 {
+		a.cancelPermissionPrompt(a.tabs[0])
 		win.DestroyWindow(a.hwnd)
 		return
 	}
 	t := a.tabs[i]
+	a.cancelPermissionPrompt(t)
 	if a.splitTab == t { a.splitTab = nil }
 	if t.url != "" && !t.isStart {
 		// Remember it for Ctrl+Shift+T (reopen closed tab).
@@ -376,8 +703,13 @@ func (a *app) navigateTab(t *tab, raw string) {
 	if u == "" {
 		return
 	}
+	// A permission prompt belongs to the old document, not a URL the user
+	// is navigating to. Complete it with the non-persistent default first.
+	a.cancelPermissionPrompt(t)
 	t.isStart = false
 	t.errPage = false
+	// A fresh user-initiated navigation earns a fresh apex/www retry.
+	t.altTried = false
 	t.url = u
 	if a.isActive(t) {
 		a.pushBarState()
@@ -388,6 +720,7 @@ func (a *app) navigateTab(t *tab, raw string) {
 
 // showInternal renders one of the built-in okbrowser:// pages in tab t.
 func (a *app) showInternal(t *tab, page string) {
+	a.cancelPermissionPrompt(t)
 	var html, title string
 	isStart := false
 	switch page {
@@ -415,7 +748,7 @@ func (a *app) showInternal(t *tab, page string) {
 		a.syncTitle()
 		a.pushBarState()
 	}
-	t.chromium.NavigateToString(html)
+	t.navigateInternal(html)
 }
 
 // recoverFailedTab reloads an isolated renderer/GPU failure without taking
@@ -436,7 +769,7 @@ func (a *app) recoverFailedTab(t *tab, kind edge.CoreWebView2ProcessFailedKind) 
 	t.errPage = true
 	t.title = "Page crashed"
 	html := `<!doctype html><meta name="viewport" content="width=device-width"><style>body{background:#151519;color:#f2f2f7;font:15px system-ui;display:grid;place-items:center;height:100vh;margin:0}.c{text-align:center;max-width:460px}button{border:0;border-radius:18px;padding:11px 18px;background:#0a84ff;color:white}</style><div class=c><h1>This page keeps crashing</h1><p>OK Browser stopped the reload loop. Your other tabs are safe.</p><button onclick="location.reload()">Try again</button></div>`
-	t.chromium.NavigateToString(html)
+	t.navigateErrorDocument(html)
 	a.pushBarState()
 }
 
@@ -533,6 +866,14 @@ func (a *app) fadeTick() {
 		if t := a.tabByHost(a.fadeHost); t != nil && t.chromium != nil {
 			t.chromium.Show()
 			t.chromium.Resize()
+		}
+		// A genuinely pre-painted spare needs no cosmetic fade: it can
+		// replace the old frame at full opacity on this first tick. Besides
+		// feeling instant, avoiding the translucent ramp eliminates the
+		// visible double-image of the old start page underneath it.
+		if a.fadeAlpha >= 255 {
+			a.endTabFade()
+			return
 		}
 		a.fadeRamping = true // revealed - the liquid ramp begins next tick
 		return
@@ -653,6 +994,24 @@ func (a *app) onNavStarting(t *tab, args *edge.ICoreWebView2NavigationStartingEv
 	if err != nil || uri == "" || uri == "about:blank" {
 		return
 	}
+	navID, navIDErr := args.GetNavigationId()
+	// NavigateToString reports a data:text/html URI through the same event
+	// as real links. Keep the already-set internal URL/title/error state;
+	// treating it as a website caused the long base64 data blob in error UI.
+	if t.preserveInternalDocumentState(uri) {
+		if navIDErr == nil && t.internalNavs > 0 {
+			t.markInternalNavigation(navID)
+			t.activeNavID, t.activeNavKnown = navID, true
+		}
+		return
+	}
+	// A completed navigation can arrive after a newer click. Store the ID of
+	// this newest navigation so its predecessor's completion is ignored.
+	if navIDErr == nil {
+		t.activeNavID, t.activeNavKnown = navID, true
+	} else {
+		t.activeNavID, t.activeNavKnown = 0, false
+	}
 	t.url = uri
 	t.isStart = false
 	t.errPage = false
@@ -669,6 +1028,38 @@ func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompleted
 	if t.chromium == nil {
 		return
 	}
+	// An error/recovery document owns this tab until the user explicitly
+	// retries. Late completions from the failed page must not update its URL
+	// (or run the bridge and report the generated data: document).
+	if t.errPage {
+		return
+	}
+	var navID uint64
+	hasNavID := false
+	if args != nil {
+		var err error
+		navID, err = args.GetNavigationId()
+		hasNavID = err == nil
+	}
+	if t.completeInternalNavigation(navID, hasNavID) {
+		// A spare is only eligible for the zero-flicker, instant hand-off
+		// once WebView2 confirms its start page has completed. This applies
+		// only to the matching internal completion, never a newer real link
+		// that happened to start while the page was being replaced.
+		if t.warmStart {
+			t.warmPainted = true
+		}
+		if a.fading && t.host == a.fadeHost {
+			a.fadeReady = true
+		}
+		return
+	}
+	// Ignore a completion for a superseded navigation. In particular,
+	// ConnectionAborted is normal when clicking a link replaces an unfinished
+	// New Tab/internal document; it must not become an error page for the link.
+	if t.isStaleNavigation(navID, hasNavID) {
+		return
+	}
 	if a.fading && t.host == a.fadeHost {
 		a.fadeReady = true // first paint done - begin the liquid ramp
 	}
@@ -681,16 +1072,114 @@ func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompleted
 			// 14 = OperationCanceled (user stopped or replaced the
 			// navigation) - not an error worth showing.
 			if code != 0 && code != 14 && t.url != "" {
+				// Many domains only answer on one of apex / www. Retry
+				// the other name once before admitting defeat, exactly
+				// as mainstream browsers do from their address bar.
+				if a.retryAltHost(t, code) {
+					return
+				}
 				a.showErrorPage(t, code)
 				return
 			}
 		}
 	}
+	// A page actually loaded, so this navigation chain is over: give the
+	// next one a fresh apex/www retry. Re-arming here (rather than when a
+	// navigation *starts*) is deliberate - an HTTP redirect raises another
+	// NavigationStarting with the same navigation id, and re-arming there
+	// would let an apex -> www redirect whose target keeps failing retry
+	// forever.
+	t.altTried = false
+
 	a.applyZoomTab(t)
 	a.pushBarState()
 	a.scheduleBarPush(false)
 	a.selftestNavHook(t)
 	t.chromium.Eval(`window.__ok && window.__ok({ t: "nav", u: location.href, d: document.title, f: (function(){try{var l=document.querySelector('link[rel~="shortcut icon"],link[rel~="icon"]');return l&&l.href?l.href:(location.origin+'/favicon.ico')}catch(e){return ''}})() })`)
+}
+
+// hostErrorIsRetryable reports whether a COREWEBVIEW2_WEB_ERROR_STATUS
+// describes a failure to reach or authenticate the *host*, as opposed to a
+// failure of the page itself. Only these are worth retrying on the
+// apex / www alternate: a site whose apex has stale DNS, refuses the
+// connection, times out, or presents a certificate issued only for the
+// "www" name all land here.
+func hostErrorIsRetryable(code uint32) bool {
+	switch code {
+	case 1, // CertificateCommonNameIsIncorrect - cert covers only www
+		2,  // CertificateExpired
+		4,  // CertificateRevoked
+		5,  // CertificateIsInvalid
+		6,  // ServerUnreachable
+		7,  // Timeout
+		9,  // ConnectionAborted
+		10, // ConnectionReset
+		12, // CannotConnect
+		13: // HostNameNotResolved
+		return true
+	}
+	return false
+}
+
+// altRetryTarget returns the URL a failed navigation should be retried on,
+// or "" when it should not be retried at all. Split out from retryAltHost
+// so the whole policy is unit-testable without a live web engine.
+func altRetryTarget(t *tab, code uint32) string {
+	if t == nil || t.altTried || !hostErrorIsRetryable(code) {
+		return ""
+	}
+	return nav.AltHostURL(t.url)
+}
+
+// retryAltHost transparently re-navigates a tab to the apex / www
+// alternate of a URL that just failed to load, and reports whether it did.
+//
+// Sites such as hthecofounder.com publish A records for the apex that no
+// longer serve the site while www.hthecofounder.com works - typing the
+// bare domain simply failed. Every mainstream browser papers over this by
+// retrying the other host, but that logic lives in their address bar;
+// WebView2 has no address bar, so OK Browser owns it.
+//
+// The retry is deliberately conservative: at most one per navigation
+// chain (t.altTried, cleared only when a page actually loads or the user
+// navigates somewhere new - never on a redirect hop, which would let the
+// pair retry each other forever), only for host-level failures, and only
+// when the tab is still alive. AltHostURL is an involution, so the single
+// retry can never ping-pong either.
+func (a *app) retryAltHost(t *tab, code uint32) bool {
+	alt := altRetryTarget(t, code)
+	if alt == "" || t.chromium == nil {
+		return false
+	}
+	t.altTried = true
+	if a.inSelfTest {
+		a.stlog("[selftest] host error %d on %s, retrying %s", code, t.url, alt)
+	}
+	// Navigating from inside the engine's own completion callback is not
+	// safe: hand the retry back to the window-proc context first.
+	a.postTask(func() {
+		if t.chromium == nil || !a.tabAlive(t) {
+			return
+		}
+		t.url = alt
+		t.errPage = false
+		if a.isActive(t) {
+			a.pushBarState()
+		}
+		t.chromium.Navigate(alt)
+	})
+	return true
+}
+
+// tabAlive reports whether t is still one of the app's live tabs - a tab
+// can be closed between posting a task and running it.
+func (a *app) tabAlive(t *tab) bool {
+	for _, x := range a.tabs {
+		if x == t {
+			return true
+		}
+	}
+	return t == a.splitTab && t != nil
 }
 
 // showErrorPage replaces the tab's content with a glass error page that
@@ -705,7 +1194,7 @@ func (a *app) showErrorPage(t *tab, code uint32) {
 		a.pushBarState()
 	}
 	u, _ := json.Marshal(url)
-	t.chromium.NavigateToString(errorHTML(string(u), name, hint))
+	t.navigateErrorDocument(errorHTML(string(u), name, hint))
 }
 
 // webErrorText maps a COREWEBVIEW2_WEB_ERROR_STATUS to a friendly message.

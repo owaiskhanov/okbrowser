@@ -14,6 +14,54 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// PermissionRequest holds WebView2's asynchronous permission deferral. A
+// host that wants to show its own UI keeps the request until the user chooses,
+// then calls Resolve exactly once. The retained COM references keep the event
+// arguments valid after PermissionRequested returns.
+type PermissionRequest struct {
+	args     *iCoreWebView2PermissionRequestedEventArgs
+	deferral *iCoreWebView2Deferral
+	done     bool
+}
+
+func newPermissionRequest(args *iCoreWebView2PermissionRequestedEventArgs) *PermissionRequest {
+	if args == nil {
+		return nil
+	}
+	// The event args are otherwise only valid for the callback. Retain them
+	// for the custom prompt's eventual Resolve call.
+	args.vtbl.AddRef.Call(uintptr(unsafe.Pointer(args)))
+	var deferral *iCoreWebView2Deferral
+	_, _, _ = args.vtbl.GetDeferral.Call(
+		uintptr(unsafe.Pointer(args)),
+		uintptr(unsafe.Pointer(&deferral)),
+	)
+	return &PermissionRequest{args: args, deferral: deferral}
+}
+
+// Resolve finishes a permission request. It is deliberately idempotent: a
+// tab can be closed or navigate away while the permission chip is on screen.
+func (r *PermissionRequest) Resolve(state CoreWebView2PermissionState) {
+	if r == nil || r.done {
+		return
+	}
+	r.done = true
+	if r.args != nil {
+		_, _, _ = r.args.vtbl.PutState.Call(
+			uintptr(unsafe.Pointer(r.args)), uintptr(state),
+		)
+	}
+	if r.deferral != nil {
+		_, _, _ = r.deferral.vtbl.Complete.Call(uintptr(unsafe.Pointer(r.deferral)))
+		r.deferral.vtbl.Release.Call(uintptr(unsafe.Pointer(r.deferral)))
+		r.deferral = nil
+	}
+	if r.args != nil {
+		r.args.vtbl.Release.Call(uintptr(unsafe.Pointer(r.args)))
+		r.args = nil
+	}
+}
+
 type Chromium struct {
 	hwnd                  uintptr
 	focusOnInit           bool
@@ -52,7 +100,12 @@ type Chromium struct {
 	NavigationCompletedCallback  func(sender *ICoreWebView2, args *ICoreWebView2NavigationCompletedEventArgs)
 	NavigationStartingCallback   func(sender *ICoreWebView2, args *ICoreWebView2NavigationStartingEventArgs) // OK Browser addition
 	NewWindowRequestedCallback   func(args *ICoreWebView2NewWindowRequestedEventArgs)                        // OK Browser addition
-	PermissionRequestedCallback  func(uri string, kind CoreWebView2PermissionKind) CoreWebView2PermissionState // OK Browser addition
+	// PermissionRequestedCallback may take ownership of a request by
+	// returning deferred=true. The callback must eventually Resolve the
+	// supplied request; this lets the host present an explicit permission
+	// choice instead of relying on WebView2's defaults (which silently deny
+	// notification requests).
+	PermissionRequestedCallback  func(uri string, kind CoreWebView2PermissionKind, request *PermissionRequest) (state CoreWebView2PermissionState, deferred bool) // OK Browser addition
 	ProcessFailedCallback         func(kind CoreWebView2ProcessFailedKind)                              // OK Browser addition
 	DownloadStartingCallback      func(args *ICoreWebView2DownloadStartingEventArgs)                    // OK Browser addition
 	AcceleratorKeyCallback       func(uint) bool
@@ -313,7 +366,19 @@ func (e *Chromium) PermissionRequested(_ *ICoreWebView2, args *iCoreWebView2Perm
 	if uriPtr != nil { windows.CoTaskMemFree(unsafe.Pointer(uriPtr)) }
 	var result CoreWebView2PermissionState
 	if e.PermissionRequestedCallback != nil {
-		result = e.PermissionRequestedCallback(uri, kind)
+		request := newPermissionRequest(args)
+		result, deferred := e.PermissionRequestedCallback(uri, kind, request)
+		if deferred && request != nil && request.deferral != nil {
+			// The host owns the COM deferral and will Resolve it after its
+			// permission UI gets a user decision.
+			return 0
+		}
+		// Normal synchronous path: Resolve also releases the AddRef taken
+		// above. This keeps both paths lifetime-safe.
+		if request != nil {
+			request.Resolve(result)
+			return 0
+		}
 	} else if e.globalPermission != nil {
 		result = *e.globalPermission
 	} else {

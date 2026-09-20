@@ -80,7 +80,7 @@ let createdHost = null;
 const docListeners = {};
 global.setInterval = () => 0;
 global.clearInterval = () => {};
-const win = { __ok: o => sent.push(o), __okBarInstalled: false };
+const win = { __ok: o => sent.push(o), __okBarInstalled: false, __okShellToken: 'test-shell-token' };
 win.top = win; // act as the top frame
 global.window = win;
 global.document = {
@@ -98,7 +98,23 @@ const shadow = global.__shadow;
 assert.strictEqual(createdHost.parentNode, global.document.body, 'shell should mount immediately when the document is ready');
 assert.strictEqual(typeof win.__okBar, 'function', 'shell API not installed');
 assert.strictEqual(typeof win.__okBubbleFocus, 'function', 'bubble focus API not installed');
+assert.strictEqual(win.__okShellToken, undefined, 'permission capability must not remain visible to page scripts');
 assert.ok(!shadow.getElementById('strip').classList.contains('open'), 'bar starts hidden (immersive)');
+
+// Ordinary clicks must remain entirely in the page: reporting every pointer
+// through WebView2 only to rediscover the active pane adds needless work.
+sent.length = 0;
+(docListeners.pointerdown || []).forEach(fn => fn({}));
+assert.strictEqual(sent.length, 0, 'a non-split click must not cross the host bridge');
+
+// In Split View only the not-yet-focused pane reports its first click; once
+// native state returns with q=true its later clicks must be local too.
+win.__okBar({ tabs: [{ t: 'A' }, { t: 'B' }], a: 0, u: 'https://example.com/', b: false, f: false, m: false, v: true, q: false });
+(docListeners.pointerdown || []).forEach(fn => fn({}));
+assert.deepStrictEqual(sent.shift(), { t: 'pane-focus' }, 'the other Split View pane must report its first focus click');
+win.__okBar({ tabs: [{ t: 'A' }, { t: 'B' }], a: 0, u: 'https://example.com/', b: false, f: false, m: false, v: true, q: true });
+(docListeners.pointerdown || []).forEach(fn => fn({}));
+assert.strictEqual(sent.length, 0, 'the focused Split View pane must not re-report every click');
 
 // --- tabs in the frameless top bar ---
 win.__okBar({ tabs: [{ t: 'A' }, { t: 'B' }, { t: 'C' }], a: 1, u: 'https://example.com/x', b: true, f: false, m: false });
@@ -136,7 +152,12 @@ assert.ok(wmax._html.includes('<path'), 'restore icon adds the second window out
 const okb = shadow.getElementById('okb');
 const input = shadow.getElementById('q');
 assert.ok(okb.className.includes('open'), 'bubble stays open on the home screen');
-// Simulate navigation before testing the normal collapsed/hover behavior.
+// New Tab also focuses the field so you can type immediately.
+assert.ok(input.focused && input.selected, 'new tab focuses and selects the address input');
+
+// Simulate navigating away before testing the normal collapsed/hover
+// behavior (a real navigation blurs the field and fills in a URL).
+input.blur();
 okb.className = 'okb';
 
 okb.dispatch('mouseenter', EV);
@@ -159,6 +180,46 @@ assert.ok(!okb.className.includes('open'), 'bubble collapses after submit');
 
 win.__okBubbleFocus();
 assert.ok(okb.className.includes('open') && input.focused, 'Ctrl+L opens and focuses the bubble');
+
+// --- New Tab: the address bar is open AND focused, and repeated state
+// pushes must not fight the user once they start typing -----------------
+input.blur();
+okb.className = 'okb';
+win.__okBar({ tabs: [{ t: 'New Tab' }], a: 0, u: '', b: false, f: false, m: false });
+assert.ok(okb.className.includes('open'), 'new tab leaves the address bar open');
+assert.ok(input.focused && input.selected, 'new tab focuses the address bar for typing');
+
+// The engine steals focus back as the start page paints; the next push
+// must re-assert focus so typing still lands in the address bar.
+input.blur();
+win.__okBar({ tabs: [{ t: 'New Tab' }], a: 0, u: '', b: false, f: false, m: false });
+assert.ok(input.focused, 'a later push re-asserts focus on an empty tab');
+
+// But once the caret is already in the field, a push must not re-select
+// and clobber what the user has typed.
+input.value = 'githu';
+input.selected = false;
+win.__okBar({ tabs: [{ t: 'New Tab' }], a: 0, u: '', b: false, f: false, m: false });
+assert.strictEqual(input.value, 'githu', 'in-progress typing is preserved');
+assert.ok(!input.selected, 'a push must not re-select text while typing');
+
+// A tab with a real URL must NOT grab focus - that would hijack the page.
+input.blur();
+win.__okBar({ tabs: [{ t: 'Example' }], a: 0, u: 'https://example.com/', b: false, f: false, m: false });
+assert.ok(!input.focused, 'a loaded page must not steal focus into the address bar');
+
+// --- notification permissions are a trusted browser prompt ---------------
+sent.length = 0;
+win.__okBar({ tabs: [{ t: 'Mail' }], a: 0, u: 'https://mail.example/', b: false, f: false, m: false, p: 'notifications', po: 'https://mail.example' });
+const permtoast = shadow.getElementById('permtoast');
+assert.ok(permtoast.classList.contains('show'), 'a notification request must be visible in browser chrome');
+const permPrompt = shadow.getElementById('permtext').textContent;
+assert.ok(permPrompt.includes('https://mail.example'), 'the notification prompt names the requesting origin');
+assert.ok(permPrompt.includes('Background push alerts are unavailable'), 'the prompt must disclose the WebView2 push limitation before consent');
+assert.ok(js.includes('Background push alerts are unavailable in WebView2.'), 'site permissions must disclose the same limitation');
+shadow.getElementById('permallow').dispatch('click', EV); expect({ t: 'ui', a: 'permission-prompt', u: 'allow', n: 'test-shell-token' });
+win.__okBar({ tabs: [{ t: 'Mail' }], a: 0, u: 'https://mail.example/', b: false, f: false, m: false });
+assert.ok(!permtoast.classList.contains('show'), 'the notification prompt clears when the request is resolved');
 
 // --- keyed rendering: pills update in place, only genuinely new ones animate ---
 const pill0 = tz.children[0];

@@ -233,6 +233,18 @@ type iCoreWebView2PermissionRequestedEventArgs struct {
 	vtbl *iCoreWebView2PermissionRequestedEventArgsVtbl
 }
 
+// ICoreWebView2Deferral is returned by a permission request when the host
+// needs to make its decision asynchronously. Complete releases WebView2 to
+// resolve the JavaScript Permission request with the state supplied on args.
+type iCoreWebView2DeferralVtbl struct {
+	_IUnknownVtbl
+	Complete ComProc
+}
+
+type iCoreWebView2Deferral struct {
+	vtbl *iCoreWebView2DeferralVtbl
+}
+
 // ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler
 
 type iCoreWebView2CreateCoreWebView2EnvironmentCompletedHandlerImpl interface {

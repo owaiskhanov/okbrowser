@@ -226,6 +226,18 @@ func (s *store) AddHistory(url, title string) {
 	s.markDirty("history.json")
 }
 
+// HistoryStamp is a cheap change token for the speed-dial tiles: it moves
+// whenever a visit is recorded or history is cleared. The pre-warmed new
+// tab compares it to decide whether its rendered tiles are still current.
+func (s *store) HistoryStamp() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if n := len(s.history); n > 0 {
+		return int64(n)<<20 ^ s.history[n-1].TS
+	}
+	return 0
+}
+
 // SnapshotHistory returns a copy of the history, newest last.
 func (s *store) SnapshotHistory() []histEntry {
 	s.mu.Lock()
@@ -477,6 +489,18 @@ func (s *store) Permission(origin, kind string) string {
 	if byKind := s.permissions[origin]; byKind != nil { return byKind[kind] }
 	return ""
 }
+
+// PermissionStates returns an independent snapshot for one origin. The bar
+// asks for several permission kinds at once, so this turns six individual
+// lock/unlock pairs into one small copy on every state push.
+func (s *store) PermissionStates(origin string) map[string]string {
+	s.mu.Lock(); defer s.mu.Unlock()
+	byKind := s.permissions[origin]
+	out := make(map[string]string, len(byKind))
+	for kind, state := range byKind { out[kind] = state }
+	return out
+}
+
 func (s *store) SetPermission(origin, kind, state string) {
 	if origin == "" { return }
 	s.mu.Lock(); defer s.mu.Unlock()
