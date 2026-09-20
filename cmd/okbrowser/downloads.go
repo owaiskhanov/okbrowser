@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -147,6 +148,26 @@ func (a *app) downloadAction(path, action string) bool {
 }
 
 func sourceHost(raw string) string { u, err := url.Parse(raw); if err != nil || u == nil { return "" }; return u.Hostname() }
+
+// activeDownloadCount reports how many transfers are still running and would
+// be lost if the browser exited now.
+func (a *app) activeDownloadCount() int {
+	n := 0
+	for _, d := range a.downloads {
+		if d.op != nil && d.state == dlInProgress { n++ }
+	}
+	return n
+}
+
+// confirmDiscardDownloads asks before throwing away running transfers.
+func (a *app) confirmDiscardDownloads(n int) bool {
+	noun := "download is"
+	if n > 1 { noun = "downloads are" }
+	text := fmt.Sprintf("%d %s still in progress.\n\nClosing OK Browser now will cancel %s and leave the %s incomplete.\n\nClose anyway?",
+		n, noun, map[bool]string{true: "them", false: "it"}[n > 1], map[bool]string{true: "files", false: "file"}[n > 1])
+	return win.MessageBox(a.hwnd, mustUTF16(text), mustUTF16("Downloads in progress"),
+		win.MB_YESNO|win.MB_ICONWARNING|win.MB_DEFBUTTON2) == win.IDYES
+}
 
 // detachDownloads clears the owner of every download belonging to t, which is
 // about to be destroyed. The transfers themselves continue.

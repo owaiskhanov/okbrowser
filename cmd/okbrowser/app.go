@@ -314,6 +314,14 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 			}
 		}
 		return 0
+	case win.WM_CLOSE:
+		// Closing the window kills the WebView2 processes and with them any
+		// transfer still running, leaving a half-written file behind with no
+		// warning. Give the user a chance to keep waiting.
+		if n := a.activeDownloadCount(); n > 0 && !a.confirmDiscardDownloads(n) {
+			return 0
+		}
+		break // DefWindowProc destroys the window
 	case win.WM_DESTROY:
 		a.saveSession()
 		if a.store != nil {

@@ -1366,8 +1366,39 @@ func isDownloadPath(path string) bool {
 	dir, err1 := filepath.Abs(filepath.Join(home, "Downloads"))
 	p, err2 := filepath.Abs(path)
 	if err1 != nil || err2 != nil { return false }
+
+	// Resolve symlinks and NTFS junctions before comparing. A purely lexical
+	// check accepts C:\Users\me\Downloads\link\...\secret.txt even when
+	// "link" redirects outside Downloads, which would let any web page open,
+	// reveal or DELETE arbitrary files through the bridge.
+	//
+	// The target of a live download does not exist yet, so an unresolvable
+	// leaf is not fatal: resolve the deepest existing ancestor instead and
+	// re-append the remainder, which cannot itself contain a link.
+	dir = resolveLinks(dir)
+	p = resolveLinks(p)
+
 	rel, err := filepath.Rel(dir, p)
-	return err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && rel != ".."
+	if err != nil || rel == "." || rel == ".." { return false }
+	if strings.HasPrefix(rel, ".."+string(os.PathSeparator)) { return false }
+	// filepath.Rel keeps the volume implicit; a different drive yields an
+	// absolute-looking result rather than a "..", so reject that too.
+	return !filepath.IsAbs(rel)
+}
+
+// resolveLinks returns path with every resolvable symlink/junction expanded.
+// Components that do not exist yet are preserved verbatim.
+func resolveLinks(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(resolved)
+	}
+	parent, leaf := filepath.Split(path)
+	parent = strings.TrimRight(parent, `\/`)
+	if parent == "" || leaf == "" || leaf == "." || leaf == ".." {
+		return filepath.Clean(path)
+	}
+	// Only the leaf is missing: resolve the parent and rebuild.
+	return filepath.Join(resolveLinks(parent), leaf)
 }
 
 // onWebMessage receives JSON messages posted by tab t via window.__ok.
@@ -1699,8 +1730,14 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		case "dl-remove": // cancel a partial or delete one downloaded file
 			path := m.U
 			if isDownloadPath(path) {
-				_ = os.Remove(path)
-				a.postTask(func() { a.showInternal(t, "downloads") })
+				// The UI offers this as "Cancel and remove" for a partial
+				// file. Deleting alone left the transfer running, so it just
+				// recreated the file and the row reappeared; stop it first.
+				a.postTask(func() {
+					a.downloadAction(path, "cancel")
+					_ = os.Remove(path)
+					a.showInternal(t, "downloads")
+				})
 			}
 			return
 		case "wdrag", "wtopresize", "wmaxtoggle", "wmin":
