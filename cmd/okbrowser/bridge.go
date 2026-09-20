@@ -808,22 +808,37 @@ const barJS = `
   // --- the address bubble (in the top bar, beside the +) --------------------
   function setOpen(v) { okb.className = v ? 'okb open' : 'okb'; }
 
+  // document.activeElement is the shadow host for a closed shadow root, not
+  // the input inside it. Keep explicit editing state so asynchronous native
+  // state pushes can never replace text while the user is typing.
+  var addressEditing = false;
+  function addressHasFocus() {
+    return addressEditing || root.activeElement === input || document.activeElement === input;
+  }
+  function focusAddress(selectAll) {
+    setOpen(true);
+    input.focus();
+    if (selectAll) input.select();
+  }
+
   okb.addEventListener('mouseenter', function () { hovering = true; setOpen(true); });
   okb.addEventListener('mouseleave', function () {
     hovering = false;
-    if (document.activeElement !== input) setOpen(false);
+    if (!addressHasFocus()) setOpen(false);
   });
-  root.getElementById('lens').addEventListener('click', function () {
-    setOpen(true);
-    input.focus();
-    input.select();
+  root.getElementById('lens').addEventListener('click', function () { focusAddress(true); });
+  // Clicking empty space in the expanded capsule should behave like clicking
+  // a normal address bar. Buttons and the input retain their own actions.
+  okb.addEventListener('click', function (e) {
+    if (e.target === okb) focusAddress(false);
   });
   input.addEventListener('blur', function () {
+    addressEditing = false;
     if (!hovering) setOpen(false);
     if (hideTimer) clearTimeout(hideTimer);
     hideTimer = setTimeout(hideIfIdle, 350);
   });
-  input.addEventListener('focus', function () { setOpen(true); });
+  input.addEventListener('focus', function () { addressEditing = true; setOpen(true); });
 
   function submit(url) {
     var v = url || input.value.trim();
@@ -901,7 +916,7 @@ const barJS = `
   }
   window.__okSuggest = function (list) {
     sugItems = list || [];
-    if (document.activeElement === input && input.value.trim()) {
+    if (addressHasFocus() && input.value.trim()) {
       sugBuild();
     }
   };
@@ -1155,7 +1170,7 @@ const barJS = `
 
   // --- state ----------------------------------------------------------------
   function sync() {
-    if (document.activeElement !== input) input.value = S.u || '';
+    if (!addressHasFocus()) input.value = S.u || '';
   }
 
   document.addEventListener('fullscreenchange', function () {
@@ -1163,9 +1178,10 @@ const barJS = `
   });
 
   window.__okBar = function (s) {
+    var firstState = !stateLive;
     S = s; window.__okSplitActive = !!S.v; render(); sync(); stateLive = true;
     root.getElementById('wclose').title = S.v ? 'Close Split View' : 'Close';
-    if (!S.u) { revealBar(false); setOpen(true); if (!stateLive) { input.focus(); input.select(); } }
+    if (!S.u) { revealBar(false); setOpen(true); if (firstState) focusAddress(true); }
   };
   window.__okProximityReveal = function () { revealBar(true); };
 
@@ -1186,9 +1202,7 @@ const barJS = `
   try { window.addEventListener('resize', function () { render(); }); } catch (e) {}
   window.__okBubbleFocus = function () {
     revealBar(false);
-    setOpen(true);
-    input.focus();
-    input.select();
+    focusAddress(true);
   };
 
   render();

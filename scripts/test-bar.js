@@ -159,6 +159,12 @@ assert.ok(!okb.className.includes('open'), 'bubble collapses after submit');
 
 win.__okBubbleFocus();
 assert.ok(okb.className.includes('open') && input.focused, 'Ctrl+L opens and focuses the bubble');
+input.value = 'user is still typing';
+win.__okBar({ tabs: [{ t: 'A' }], a: 0, u: 'https://stale-native-state.test/', b: false, f: false, m: false });
+assert.strictEqual(input.value, 'user is still typing', 'state pushes must not overwrite address text while editing');
+input.blur();
+win.__okBar({ tabs: [{ t: 'A' }], a: 0, u: 'https://fresh-native-state.test/', b: false, f: false, m: false });
+assert.strictEqual(input.value, 'https://fresh-native-state.test/', 'address updates after editing ends');
 
 // --- keyed rendering: pills update in place, only genuinely new ones animate ---
 const pill0 = tz.children[0];
