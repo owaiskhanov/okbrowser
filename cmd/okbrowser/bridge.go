@@ -1511,6 +1511,12 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		a.navigateTab(t, m.U)
 
 	case "nav": // page reported its URL, title and favicon
+		// The visible error page is browser chrome rendered with
+		// NavigateToString. A late bridge callback from the failed document
+		// must not replace its preserved address with that generated data URI.
+		if t.errPage {
+			return
+		}
 		if !a.inSelfTest && m.U != "" && m.U != "about:blank" && !strings.HasPrefix(m.U, "okbrowser://") {
 			a.store.AddHistory(m.U, m.D)
 		}

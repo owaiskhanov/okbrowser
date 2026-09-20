@@ -8,6 +8,50 @@ import (
 	"github.com/owaiskhanov/okbrowser/internal/nav"
 )
 
+// TestInternalNavigateToStringBoundary prevents a subtle but destructive
+// navigation race: WebView2 represents NavigateToString as a base64 data URL.
+// If a user follows a link before it finishes, its canceled completion is
+// ConnectionAborted. That completion belongs to browser chrome, never to the
+// newly clicked link, and must be consumed independently.
+func TestInternalNavigateToStringBoundary(t *testing.T) {
+	if !isNavigateToStringURI("DATA:text/html;charset=utf-8;base64,PGgxPk9LPC9oMT4=") {
+		t.Fatal("NavigateToString data URI not recognized")
+	}
+	for _, raw := range []string{"https://example.com/", "data:text/plain,hello", "okbrowser://start"} {
+		if isNavigateToStringURI(raw) {
+			t.Errorf("%q must not be treated as an internal HTML navigation", raw)
+		}
+	}
+
+	tb := &tab{internalNavs: 1}
+	if !tb.preserveInternalDocumentState("data:text/html;base64,PGgxPk9LPC9oMT4=") {
+		t.Fatal("a pending New Tab document must not replace the clicked URL")
+	}
+	tb.markInternalNavigation(41)
+	// The freshly clicked link is navigation 42. Its completion must not
+	// consume New Tab's marker merely because it completed first.
+	tb.activeNavID, tb.activeNavKnown = 42, true
+	if tb.completeInternalNavigation(42, true) {
+		t.Fatal("a real completion must not consume an internal-page marker")
+	}
+	if tb.isStaleNavigation(41, true) == false {
+		t.Fatal("the older internal completion must be identified as stale")
+	}
+	if !tb.completeInternalNavigation(41, true) || tb.internalNavs != 0 {
+		t.Fatal("the matching internal completion must be consumed exactly once")
+	}
+	if tb.completeInternalNavigation(42, true) {
+		t.Fatal("a real completion must not be consumed after the internal marker is gone")
+	}
+
+	// Error pages intentionally have no pending marker: their generated
+	// document still must preserve the failed target URL and error state.
+	tb.errPage = true
+	if !tb.preserveInternalDocumentState("data:text/html;charset=utf-8;base64,PGgxPkVycm9yPC9oMT4=") {
+		t.Fatal("an error page must never expose its generated data URI")
+	}
+}
+
 // TestHostErrorIsRetryable pins down which navigation failures earn an
 // apex/www retry. Host-level failures do; page-level ones must not, so a
 // genuinely broken page still reaches the error page immediately.

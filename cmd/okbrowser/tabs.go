@@ -57,6 +57,13 @@ type tab struct {
 	altTried bool // the apex/www alternate was already retried in this chain
 	warmStart   bool // carries a pre-rendered start page (skip re-rendering)
 	warmPainted bool // that start page has already painted (instant reveal)
+	// internalNavs counts NavigateToString documents awaiting completion.
+	// WebView2 exposes these as data:text/html URLs; they must never be
+	// mistaken for failed web navigations when a user clicks a link quickly.
+	internalNavs    int
+	internalNavIDs  map[uint64]struct{}
+	activeNavID     uint64 // newest top-level NavigationStarting event
+	activeNavKnown  bool
 	permissionPrompt *pendingPermission // unresolved notification permission
 	permissionToken  string             // closed-shell capability for permission actions
 	zoom         float64
@@ -84,6 +91,88 @@ func permissionOrigin(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme == "" || u.Host == "" { return "" }
 	return strings.ToLower(u.Scheme + "://" + u.Host)
+}
+
+// isNavigateToStringURI identifies the synthetic data document WebView2 uses
+// for NavigateToString. It is not a network URL and can complete as
+// ConnectionAborted when a user immediately follows a link from the page.
+func isNavigateToStringURI(raw string) bool {
+	return strings.HasPrefix(strings.ToLower(raw), "data:text/html")
+}
+
+// preserveInternalDocumentState reports whether a synthetic WebView2 data
+// navigation belongs to browser chrome rather than the page in the address
+// bar. In particular, errPage protects the failed URL while its error UI is
+// being rendered.
+func (t *tab) preserveInternalDocumentState(raw string) bool {
+	return t != nil && isNavigateToStringURI(raw) && (t.internalNavs > 0 || t.errPage)
+}
+
+// navigateInternal starts a browser-owned document and records its completion
+// separately from web navigation. Without this marker, a canceled New Tab
+// start page could be reported as an aborted click on the next real link.
+func (t *tab) navigateInternal(html string) {
+	if t == nil || t.chromium == nil {
+		return
+	}
+	t.internalNavs++
+	// The matching NavigationStarting event will install this document's ID.
+	// Until then, an older web navigation is no longer current.
+	t.activeNavID, t.activeNavKnown = 0, false
+	t.chromium.NavigateToString(html)
+}
+
+// markInternalNavigation associates the just-started data document with its
+// WebView2 navigation ID. The fallback count remains for runtimes that cannot
+// provide an ID, but current runtimes get exact completion correlation.
+func (t *tab) markInternalNavigation(id uint64) {
+	if t == nil {
+		return
+	}
+	if t.internalNavIDs == nil {
+		t.internalNavIDs = make(map[uint64]struct{})
+	}
+	t.internalNavIDs[id] = struct{}{}
+}
+
+// completeInternalNavigation consumes only the matching browser-owned
+// completion when an ID is available. It deliberately never lets an arbitrary
+// real navigation consume an outstanding internal-page marker.
+func (t *tab) completeInternalNavigation(id uint64, hasID bool) bool {
+	if t == nil || t.internalNavs == 0 {
+		return false
+	}
+	if hasID {
+		if _, ok := t.internalNavIDs[id]; !ok {
+			return false
+		}
+		delete(t.internalNavIDs, id)
+	} else {
+		// Legacy fallback for a runtime that did not expose navigation IDs.
+		// Completion order is WebView2's ordering in that case.
+	}
+	t.internalNavs--
+	return true
+}
+
+// isStaleNavigation reports whether an identifiable completion belongs to an
+// older navigation than the tab's newest real NavigationStarting event.
+func (t *tab) isStaleNavigation(id uint64, hasID bool) bool {
+	return t != nil && hasID && t.activeNavKnown && id != t.activeNavID
+}
+
+// navigateErrorDocument intentionally does not add an internal completion
+// marker. Error/recovery documents already have errPage set, which makes any
+// stale completion harmless; clearing older markers here prevents a canceled
+// New Tab page from stealing the next real navigation after an error.
+func (t *tab) navigateErrorDocument(html string) {
+	if t == nil || t.chromium == nil {
+		return
+	}
+	t.internalNavs = 0
+	t.internalNavIDs = nil
+	t.activeNavID, t.activeNavKnown = 0, false
+	t.chromium.NavigateToString(html)
 }
 
 // active returns the currently displayed tab, or nil.
@@ -306,7 +395,7 @@ func (a *app) takeSpare(secondary bool) *tab {
 	// list. The engine already exists, so this is cheap - it is the
 	// controller creation, not the HTML, that used to cost the delay.
 	if t.warmStart && a.spareStamp != a.store.HistoryStamp() {
-		t.chromium.NavigateToString(StartPageHTML(a.store.MostVisited(12), a.store.Settings().Engine))
+		t.navigateInternal(StartPageHTML(a.store.MostVisited(12), a.store.Settings().Engine))
 		// It still carries the start page (so attachTab must not render a
 		// third time), but that render has not painted yet - so the reveal
 		// waits for first paint as usual instead of showing a blank frame.
@@ -353,7 +442,7 @@ func (a *app) warmSpare() {
 		// frame exists; claiming it here was the remaining flash on Ctrl+T.
 		t.warmStart, t.warmPainted = true, false
 		a.spareStamp = a.store.HistoryStamp()
-		t.chromium.NavigateToString(StartPageHTML(a.store.MostVisited(12), a.store.Settings().Engine))
+		t.navigateInternal(StartPageHTML(a.store.MostVisited(12), a.store.Settings().Engine))
 	}
 }
 
@@ -659,7 +748,7 @@ func (a *app) showInternal(t *tab, page string) {
 		a.syncTitle()
 		a.pushBarState()
 	}
-	t.chromium.NavigateToString(html)
+	t.navigateInternal(html)
 }
 
 // recoverFailedTab reloads an isolated renderer/GPU failure without taking
@@ -680,7 +769,7 @@ func (a *app) recoverFailedTab(t *tab, kind edge.CoreWebView2ProcessFailedKind) 
 	t.errPage = true
 	t.title = "Page crashed"
 	html := `<!doctype html><meta name="viewport" content="width=device-width"><style>body{background:#151519;color:#f2f2f7;font:15px system-ui;display:grid;place-items:center;height:100vh;margin:0}.c{text-align:center;max-width:460px}button{border:0;border-radius:18px;padding:11px 18px;background:#0a84ff;color:white}</style><div class=c><h1>This page keeps crashing</h1><p>OK Browser stopped the reload loop. Your other tabs are safe.</p><button onclick="location.reload()">Try again</button></div>`
-	t.chromium.NavigateToString(html)
+	t.navigateErrorDocument(html)
 	a.pushBarState()
 }
 
@@ -905,6 +994,24 @@ func (a *app) onNavStarting(t *tab, args *edge.ICoreWebView2NavigationStartingEv
 	if err != nil || uri == "" || uri == "about:blank" {
 		return
 	}
+	navID, navIDErr := args.GetNavigationId()
+	// NavigateToString reports a data:text/html URI through the same event
+	// as real links. Keep the already-set internal URL/title/error state;
+	// treating it as a website caused the long base64 data blob in error UI.
+	if t.preserveInternalDocumentState(uri) {
+		if navIDErr == nil && t.internalNavs > 0 {
+			t.markInternalNavigation(navID)
+			t.activeNavID, t.activeNavKnown = navID, true
+		}
+		return
+	}
+	// A completed navigation can arrive after a newer click. Store the ID of
+	// this newest navigation so its predecessor's completion is ignored.
+	if navIDErr == nil {
+		t.activeNavID, t.activeNavKnown = navID, true
+	} else {
+		t.activeNavID, t.activeNavKnown = 0, false
+	}
 	t.url = uri
 	t.isStart = false
 	t.errPage = false
@@ -921,11 +1028,37 @@ func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompleted
 	if t.chromium == nil {
 		return
 	}
-	// A spare is only eligible for the zero-flicker, instant hand-off once
-	// WebView2 confirms its start page has completed. NavigateToString is
-	// asynchronous, so setting this when it is issued is too early.
-	if t.warmStart {
-		t.warmPainted = true
+	// An error/recovery document owns this tab until the user explicitly
+	// retries. Late completions from the failed page must not update its URL
+	// (or run the bridge and report the generated data: document).
+	if t.errPage {
+		return
+	}
+	var navID uint64
+	hasNavID := false
+	if args != nil {
+		var err error
+		navID, err = args.GetNavigationId()
+		hasNavID = err == nil
+	}
+	if t.completeInternalNavigation(navID, hasNavID) {
+		// A spare is only eligible for the zero-flicker, instant hand-off
+		// once WebView2 confirms its start page has completed. This applies
+		// only to the matching internal completion, never a newer real link
+		// that happened to start while the page was being replaced.
+		if t.warmStart {
+			t.warmPainted = true
+		}
+		if a.fading && t.host == a.fadeHost {
+			a.fadeReady = true
+		}
+		return
+	}
+	// Ignore a completion for a superseded navigation. In particular,
+	// ConnectionAborted is normal when clicking a link replaces an unfinished
+	// New Tab/internal document; it must not become an error page for the link.
+	if t.isStaleNavigation(navID, hasNavID) {
+		return
 	}
 	if a.fading && t.host == a.fadeHost {
 		a.fadeReady = true // first paint done - begin the liquid ramp
@@ -1061,7 +1194,7 @@ func (a *app) showErrorPage(t *tab, code uint32) {
 		a.pushBarState()
 	}
 	u, _ := json.Marshal(url)
-	t.chromium.NavigateToString(errorHTML(string(u), name, hint))
+	t.navigateErrorDocument(errorHTML(string(u), name, hint))
 }
 
 // webErrorText maps a COREWEBVIEW2_WEB_ERROR_STATUS to a friendly message.
