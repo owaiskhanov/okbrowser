@@ -489,6 +489,18 @@ func (s *store) Permission(origin, kind string) string {
 	if byKind := s.permissions[origin]; byKind != nil { return byKind[kind] }
 	return ""
 }
+
+// PermissionStates returns an independent snapshot for one origin. The bar
+// asks for several permission kinds at once, so this turns six individual
+// lock/unlock pairs into one small copy on every state push.
+func (s *store) PermissionStates(origin string) map[string]string {
+	s.mu.Lock(); defer s.mu.Unlock()
+	byKind := s.permissions[origin]
+	out := make(map[string]string, len(byKind))
+	for kind, state := range byKind { out[kind] = state }
+	return out
+}
+
 func (s *store) SetPermission(origin, kind, state string) {
 	if origin == "" { return }
 	s.mu.Lock(); defer s.mu.Unlock()

@@ -101,6 +101,21 @@ assert.strictEqual(typeof win.__okBubbleFocus, 'function', 'bubble focus API not
 assert.strictEqual(win.__okShellToken, undefined, 'permission capability must not remain visible to page scripts');
 assert.ok(!shadow.getElementById('strip').classList.contains('open'), 'bar starts hidden (immersive)');
 
+// Ordinary clicks must remain entirely in the page: reporting every pointer
+// through WebView2 only to rediscover the active pane adds needless work.
+sent.length = 0;
+(docListeners.pointerdown || []).forEach(fn => fn({}));
+assert.strictEqual(sent.length, 0, 'a non-split click must not cross the host bridge');
+
+// In Split View only the not-yet-focused pane reports its first click; once
+// native state returns with q=true its later clicks must be local too.
+win.__okBar({ tabs: [{ t: 'A' }, { t: 'B' }], a: 0, u: 'https://example.com/', b: false, f: false, m: false, v: true, q: false });
+(docListeners.pointerdown || []).forEach(fn => fn({}));
+assert.deepStrictEqual(sent.shift(), { t: 'pane-focus' }, 'the other Split View pane must report its first focus click');
+win.__okBar({ tabs: [{ t: 'A' }, { t: 'B' }], a: 0, u: 'https://example.com/', b: false, f: false, m: false, v: true, q: true });
+(docListeners.pointerdown || []).forEach(fn => fn({}));
+assert.strictEqual(sent.length, 0, 'the focused Split View pane must not re-report every click');
+
 // --- tabs in the frameless top bar ---
 win.__okBar({ tabs: [{ t: 'A' }, { t: 'B' }, { t: 'C' }], a: 1, u: 'https://example.com/x', b: true, f: false, m: false });
 const tz = shadow.getElementById('tz');

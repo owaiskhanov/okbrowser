@@ -463,7 +463,20 @@ func DownloadsHTML(files []dlFile) string {
       });
     })(rows[i]);
   }
-  if(document.querySelector('.partial')) setTimeout(function(){post({t:'dl-refresh'})},1500);
+  // Native polling updates these text nodes in place. Keeping this document
+  // mounted preserves scroll position and button handlers while a large file
+  // downloads, instead of navigating the entire page on every progress tick.
+  window.__okDownloadProgress=function(items){
+    var rows=document.querySelectorAll('.row[data-p]');
+    for(var i=0;i<rows.length;i++){
+      var path=rows[i].getAttribute('data-p');
+      for(var j=0;j<(items||[]).length;j++) if(items[j].p===path){
+        var status=rows[i].querySelector('.uu');
+        if(status)status.textContent=items[j].s;
+        break;
+      }
+    }
+  };
 })();
 </script>`)
 	b.WriteString(pageClose)

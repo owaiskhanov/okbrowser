@@ -26,8 +26,17 @@ window.__ok = function (o) {
 };
 (function () {
   if (window.top !== window) {
+    // A top-level document sees its own pointer stream, but it does not see
+    // pointer movement inside an iframe. Keep iframe edge reveal while
+    // throttling it: a complex embedded page can otherwise send hundreds of
+    // bridge messages per second merely by moving a mouse near its top edge.
+    var lastProximity = 0;
     document.addEventListener("mousemove", function (e) {
-      if (e.clientY < 180) window.__ok({ t: "proximity" });
+      var now = Date.now();
+      if (e.clientY < 180 && now-lastProximity >= 120) {
+        lastProximity = now;
+        window.__ok({ t: "proximity" });
+      }
     }, true);
     return;
   }
@@ -469,7 +478,13 @@ const barJS = `
   root.getElementById('sitepanel').setAttribute('aria-label','Site information and permissions');
 
   var post = function (o) { window.__ok(o); };
-  document.addEventListener('pointerdown', function () { post({t:'pane-focus'}); }, true);
+  // In a normal window every click is already in the active pane. Avoid a
+  // needless WebView-to-host message (and full bar-state push) for it. In
+  // Split View only the pane that is not already command-focused reports its
+  // first click; the native reply then updates S.q in both panes.
+  document.addEventListener('pointerdown', function () {
+    if (S.v && !S.q) post({t:'pane-focus'});
+  }, true);
   var tz = root.getElementById('tz');
   var okb = root.getElementById('okb');
   var input = root.getElementById('q');
@@ -1289,8 +1304,9 @@ type barState struct {
 func (a *app) permissionStateFor(t *tab) map[string]string {
 	out := map[string]string{"camera":"default", "microphone":"default", "location":"default", "notifications":"default", "clipboard":"default", "sensors":"default"}
 	if t == nil { return out }
-	origin := permissionOrigin(t.url)
-	for name := range out { if state := a.store.Permission(origin, name); state != "" { out[name] = state } }
+	for name, state := range a.store.PermissionStates(permissionOrigin(t.url)) {
+		if _, known := out[name]; known && state != "" { out[name] = state }
+	}
 	return out
 }
 
@@ -1301,13 +1317,17 @@ func (a *app) pushBarState() {
 	if t == nil || t.chromium == nil {
 		return
 	}
+	// Settings returns a defensive copy (including NeverSleep). Take it once:
+	// this function is on the click/navigation hot path, and cloning that map
+	// per tab made a state push scale needlessly with the tab count.
+	settings := a.store.Settings()
 	tabs := make([]barTab, len(a.tabs))
 	for i, tb := range a.tabs {
 		title := tb.title
 		if title == "" {
 			title = "New Tab"
 		}
-		tabs[i] = barTab{T: title, U: tb.url, F: tb.favicon, P: tb.pinned, S: tb.sleeping, A: tb.audioPlaying, N: a.store.Settings().NeverSleep[permissionOrigin(tb.url)]}
+		tabs[i] = barTab{T: title, U: tb.url, F: tb.favicon, P: tb.pinned, S: tb.sleeping, A: tb.audioPlaying, N: settings.NeverSleep[permissionOrigin(tb.url)]}
 	}
 	push := func(view *tab, idx int) {
 		if view == nil || view.chromium == nil {
@@ -1321,12 +1341,12 @@ func (a *app) pushBarState() {
 			F:    view.chromium.CanGoForward(),
 			M:    a.maximized,
 			K:    view.url != "" && !view.isStart && a.store.IsBookmarked(view.url),
-			E:    a.store.Settings().Engine,
+			E:    settings.Engine,
 			V:    a.splitTab != nil,
 			Pms:  a.permissionStateFor(view),
 			Q:    a.commandTab() == view,
 			L:    view == a.active(),
-			G:    a.store.Settings().LargeControls,
+			G:    settings.LargeControls,
 		}
 		if p := view.permissionPrompt; p != nil {
 			st.P, st.PO = p.kind, p.origin
@@ -1443,7 +1463,13 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		t.dirtyForm = m.A == "1"
 
 	case "pane-focus":
-		if t == a.active() || t == a.splitTab { a.focusedTab = t; a.pushBarState() }
+		// The shell only sends this from an unfocused Split View pane, but
+		// retain the guard here as well: a page must never turn ordinary
+		// pointer activity into repeated cross-process bar work.
+		if (t == a.active() || t == a.splitTab) && a.focusedTab != t {
+			a.focusedTab = t
+			a.pushBarState()
+		}
 
 	case "audio":
 		t.audioPlaying = m.A == "1"
@@ -1756,10 +1782,22 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			if isDownloadPath(m.U) { showInFolder(m.U) }
 			return
 		case "dl-control":
-			if isDownloadPath(m.U) { a.downloadAction(m.U, m.A) }
+			path, action := m.U, m.A
+			if isDownloadPath(path) {
+				// Download operations and page re-rendering must stay out of the
+				// WebView message callback. Refresh once for a control-state
+				// change; byte progress itself is patched in place.
+				a.postTask(func() {
+					if a.downloadAction(path, action) && t == a.active() && t.url == "okbrowser://downloads" {
+						a.showInternal(t, "downloads")
+					}
+				})
+			}
 			return
 		case "dl-refresh":
-			a.postTask(func() { if t == a.active() { a.showInternal(t, "downloads") } })
+			// Older cached Downloads documents can send this. Do not navigate
+			// them: update the live values without losing scroll/focus instead.
+			a.postTask(func() { if t == a.active() { a.pushDownloadProgress(t) } })
 			return
 		case "dl-remove": // cancel a partial or delete one downloaded file
 			path := m.U

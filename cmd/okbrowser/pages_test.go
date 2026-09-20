@@ -95,6 +95,12 @@ func TestDownloadsPageStructure(t *testing.T) {
 	if !strings.Contains(html, `id="toast"`) {
 		t.Fatal("toast mount missing")
 	}
+	if !strings.Contains(html, "window.__okDownloadProgress") {
+		t.Fatal("downloads page must support in-place progress updates")
+	}
+	if strings.Contains(html, "dl-refresh") {
+		t.Fatal("downloads page must not repeatedly navigate itself for progress")
+	}
 }
 
 // TestListDownloads verifies the downloads page data path: files are read
