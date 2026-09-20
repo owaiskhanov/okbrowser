@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/owaiskhanov/okbrowser/internal/nav"
 )
@@ -37,6 +38,29 @@ type histEntry struct {
 	URL   string `json:"u"`
 	Title string `json:"t"`
 	TS    int64  `json:"ts"`
+}
+
+// Pages control the URL, title and icon they report through the bridge, and
+// those strings are persisted. Cap them so a hostile or buggy page cannot
+// grow the on-disk store without limit (a data: icon URL in particular can be
+// megabytes). These bounds are far above anything a real site needs.
+const (
+	maxStoredURL     = 2048
+	maxStoredTitle   = 512
+	maxStoredIcon    = 2048
+	maxStoredFavicons = 1000
+	maxBookmarks     = 5000
+)
+
+// clip shortens s to at most n bytes without splitting a rune.
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // bmEntry is one bookmark.
@@ -214,6 +238,8 @@ func (s *store) AddHistory(url, title string) {
 	if nav.IsSearchURL(url) {
 		return
 	}
+	// The page chooses these strings, so bound them before they are stored.
+	url, title = clip(url, maxStoredURL), clip(title, maxStoredTitle)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if n := len(s.history); n > 0 && s.history[n-1].URL == url {
@@ -287,7 +313,10 @@ func (s *store) ToggleBookmark(url, title string) bool {
 	if title == "" {
 		title = url
 	}
-	s.bookmarks = append(s.bookmarks, bmEntry{URL: url, Title: title, TS: time.Now().UnixMilli()})
+	if len(s.bookmarks) >= maxBookmarks {
+		return false // refuse rather than grow without bound
+	}
+	s.bookmarks = append(s.bookmarks, bmEntry{URL: clip(url, maxStoredURL), Title: clip(title, maxStoredTitle), TS: time.Now().UnixMilli()})
 	s.markDirty("bookmarks.json")
 	return true
 }
@@ -324,8 +353,11 @@ func (s *store) ClearBookmarks() {
 
 func (s *store) SetFavicon(pageURL, icon string) {
 	origin := permissionOrigin(pageURL)
-	if origin == "" || icon == "" { return }
+	// A page may report a huge inline data: icon, so bound the value and the
+	// number of origins we are willing to remember.
+	if origin == "" || icon == "" || len(icon) > maxStoredIcon { return }
 	s.mu.Lock(); defer s.mu.Unlock()
+	if _, known := s.favicons[origin]; !known && len(s.favicons) >= maxStoredFavicons { return }
 	if s.favicons[origin] != icon { s.favicons[origin] = icon; s.markDirty("favicons.json") }
 }
 

@@ -1666,7 +1666,9 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		case "permission":
 			kinds := map[string]edge.CoreWebView2PermissionKind{"camera":edge.CoreWebView2PermissionKindCamera,"microphone":edge.CoreWebView2PermissionKindMicrophone,"location":edge.CoreWebView2PermissionKindGeolocation,"notifications":edge.CoreWebView2PermissionKindNotifications,"clipboard":edge.CoreWebView2PermissionKindClipboardRead,"sensors":edge.CoreWebView2PermissionKindOtherSensors}
 			kind, ok := kinds[m.M]
-			if ok {
+			// Only ever persist one of the three known states: m.U arrives
+			// from the page and must not become an arbitrary stored string.
+			if ok && (m.U == "allow" || m.U == "deny" || m.U == "default" || m.U == "") {
 				state := edge.CoreWebView2PermissionStateDefault
 				if m.U == "allow" { state = edge.CoreWebView2PermissionStateAllow }
 				if m.U == "deny" { state = edge.CoreWebView2PermissionStateDeny }
