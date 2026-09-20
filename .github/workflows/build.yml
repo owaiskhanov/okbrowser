@@ -8,6 +8,10 @@ on:
         description: "Also publish a GitHub release with the built exe"
         type: boolean
         default: false
+      version:
+        description: "Exact version to publish (e.g. 1.14.0.0). Empty = VERSION_BASE.<run number>"
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -15,7 +19,7 @@ permissions:
   attestations: write
 
 env:
-  VERSION_BASE: "1.13.0"
+  VERSION_BASE: "1.14.0"
 
 jobs:
   windows:
@@ -42,6 +46,15 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Gofmt check
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l cmd internal)"
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-formatted:"; echo "$unformatted"; exit 1
+          fi
+          echo "gofmt clean"
+
       - name: Vet
         run: go vet ./...
 
@@ -55,13 +68,14 @@ jobs:
       - name: Stamp automatic build version
         shell: pwsh
         run: |
-          $version = "$env:VERSION_BASE.${{ github.run_number }}"
-          $parts = $env:VERSION_BASE.Split('.')
+          $override = "${{ github.event.inputs.version }}"
+          if ($override) { $version = $override } else { $version = "$env:VERSION_BASE.${{ github.run_number }}" }
+          $parts = $version.Split('.')
           $info = Get-Content res/versioninfo.json -Raw | ConvertFrom-Json
           $info.FixedFileInfo.FileVersion.Major = [int]$parts[0]
           $info.FixedFileInfo.FileVersion.Minor = [int]$parts[1]
           $info.FixedFileInfo.FileVersion.Patch = [int]$parts[2]
-          $info.FixedFileInfo.FileVersion.Build = [int]${{ github.run_number }}
+          $info.FixedFileInfo.FileVersion.Build = [int]$version.Split('.')[3]
           $info.FixedFileInfo.ProductVersion = $info.FixedFileInfo.FileVersion
           $info.StringFileInfo.FileVersion = $version
           $info.StringFileInfo.ProductVersion = $version
@@ -171,7 +185,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="${VERSION_BASE}.${GITHUB_RUN_NUMBER}"
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then VERSION="${VERSION_BASE}.${GITHUB_RUN_NUMBER}"; fi
           TAG="v${VERSION}"
           cat > notes.md <<EOF
           **OK Browser ${VERSION}** — automatically built and verified from commit ${GITHUB_SHA:0:7}.

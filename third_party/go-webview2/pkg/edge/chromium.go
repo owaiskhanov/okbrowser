@@ -48,9 +48,9 @@ type Chromium struct {
 	// Settings
 	DataPath string
 
-	// permissions
-	permissions      map[CoreWebView2PermissionKind]CoreWebView2PermissionState
-	globalPermission *CoreWebView2PermissionState
+	// permissions: per-kind overrides applied by the host's
+	// PermissionRequested callback.
+	permissions map[CoreWebView2PermissionKind]CoreWebView2PermissionState
 
 	// Callbacks
 	MessageCallback              func(string)
@@ -323,10 +323,6 @@ func (e *Chromium) SetPermission(kind CoreWebView2PermissionKind, state CoreWebV
 	e.permissions[kind] = state
 }
 
-func (e *Chromium) SetGlobalPermission(state CoreWebView2PermissionState) {
-	e.globalPermission = &state
-}
-
 func (e *Chromium) PermissionRequested(_ *ICoreWebView2, args *iCoreWebView2PermissionRequestedEventArgs) uintptr {
 	var kind CoreWebView2PermissionKind
 	_, _, _ = args.vtbl.GetPermissionKind.Call(
@@ -340,8 +336,6 @@ func (e *Chromium) PermissionRequested(_ *ICoreWebView2, args *iCoreWebView2Perm
 	var result CoreWebView2PermissionState
 	if e.PermissionRequestedCallback != nil {
 		result = e.PermissionRequestedCallback(uri, kind)
-	} else if e.globalPermission != nil {
-		result = *e.globalPermission
 	} else {
 		var ok bool
 		result, ok = e.permissions[kind]
@@ -401,10 +395,6 @@ func (e *Chromium) AcceleratorKeyPressed(sender *ICoreWebView2Controller, args *
 
 func (e *Chromium) GetSettings() (*ICoreWebViewSettings, error) {
 	return e.webview.GetSettings()
-}
-
-func (e *Chromium) GetController() *ICoreWebView2Controller {
-	return e.controller
 }
 
 func boolToInt(input bool) int {

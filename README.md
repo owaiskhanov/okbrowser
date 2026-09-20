@@ -208,10 +208,17 @@ If you change the icon or version, regenerate the Windows resource file with
 
 OK Browser deliberately trades “features” for **lightness and speed**:
 
-- **Pure Go** (~4k lines including a vendored Win32 binding) — no Electron, no CEF, no .NET
-- The whole UI is **raw Win32**: a toolbar of native controls and a host window. There is no UI framework to load, so the window appears instantly
+- **Pure Go** — no Electron, no CEF, no .NET
+- The native side is **raw Win32**: a borderless host window, hotkeys and tab
+  management. The entire visible UI (tab strip, address bubble, menus) is
+  rendered *inside* the page compositor as a Liquid Glass overlay in a closed
+  shadow root, so there is no UI framework to load
 - Web content is rendered by the **system's** WebView2 runtime — the engine is not shipped in the exe (that's why it's only ~4 MB) and is kept updated/patched by Windows Update
-- **One window per process**: `Ctrl+N` (or a `_blank` link) starts a fresh, tiny process. Windows are isolated; closing one frees everything
+- **Tabs share one engine process** via a shared user-data folder, so a new
+  tab is cheap; `Ctrl+N` starts a separate window process
+- **Popup windows are real popups**: a sized `window.open()` gets its own
+  child WebView2 in the same profile (see `popups.go`), which is what keeps
+  OAuth sign-in flows working
 - Address-bar parsing lives in `internal/nav` and is pure Go with unit tests, so the URL logic is verified on every platform
 
 ```
@@ -220,6 +227,12 @@ cmd/okbrowser/        the browser (Windows-only)
   app.go              window, slim tab bar, layout, hotkeys, message loop
   tabs.go             tab lifecycle + per-tab engine wiring
   bridge.go           page ↔ host bridge (URL/title sync, new-tab requests)
+  popups.go           real popup windows for OAuth-style window.open()
+  pages.go            built-in pages (start, history, bookmarks, settings)
+  store.go            local vault: history, bookmarks, settings, session
+  downloads.go        native WebView2 download handling
+  updater.go          update check + verified self-update
+  selftest.go         end-to-end navigation self test (--selftest)
   winx.go             a few raw Win32 calls lxn/win lacks
   (the UI bar itself lives in bridge.go as injected CSS/JS)
   resource.syso       icon + manifest + version info (compiled resource)
@@ -238,6 +251,12 @@ third_party/          vendored dependencies (see each LICENSE)
 | [lxn/win](https://github.com/lxn/win) | BSD-3 | Win32 API bindings |
 | [golang.org/x/sys](https://github.com/golang/sys) | BSD-3 | Low-level Windows syscalls |
 | Microsoft Edge WebView2 Runtime | Microsoft | System rendering engine (installed with Windows) |
+
+The vendored trees are **pruned to what OK Browser actually links**: upstream
+tests, code-generation scripts, sample programs and unused sub-packages have
+been removed so the repository contains no dead code. Import paths and
+licenses are untouched, so each dependency can still be diffed against
+upstream. If you need a symbol that was pruned, copy it back from upstream.
 
 One small patch is applied to the vendored go-webview2 (marked with an
 `OK Browser patch` comment in `third_party/go-webview2/pkg/edge/chromium.go`):
