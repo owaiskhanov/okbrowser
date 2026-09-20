@@ -4,6 +4,7 @@
 package edge
 
 import (
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -21,6 +22,9 @@ type Chromium struct {
 	webview               *ICoreWebView2
 	inited                uintptr
 	initFailed            uintptr // OK Browser addition: engine creation failed
+	// initDone is invoked once engine creation settles when EmbedAsync was
+	// used. Called on the UI thread from the COM completion handler.
+	initDone func(bool) // OK Browser addition
 	envCompleted          *iCoreWebView2CreateCoreWebView2EnvironmentCompletedHandler
 	controllerCompleted   *iCoreWebView2CreateCoreWebView2ControllerCompletedHandler
 	webMessageReceived    *iCoreWebView2WebMessageReceivedEventHandler
@@ -87,27 +91,12 @@ func NewChromium() *Chromium {
 	return e
 }
 
+// Embed starts the engine and BLOCKS until it is ready, by running a nested
+// message loop. Every caller on the UI thread therefore freezes the whole
+// application for as long as WebView2 takes to create an environment and a
+// controller. Prefer EmbedAsync. (OK Browser note.)
 func (e *Chromium) Embed(hwnd uintptr) bool {
-	e.hwnd = hwnd
-
-	dataPath := e.DataPath
-	if dataPath == "" {
-		currentExePath := make([]uint16, windows.MAX_PATH)
-		_, err := windows.GetModuleFileName(windows.Handle(0), &currentExePath[0], windows.MAX_PATH)
-		if err != nil {
-			// What to do here?
-			return false
-		}
-		currentExeName := filepath.Base(windows.UTF16ToString(currentExePath))
-		dataPath = filepath.Join(os.Getenv("AppData"), currentExeName)
-	}
-
-	res, err := createCoreWebView2EnvironmentWithOptions(nil, windows.StringToUTF16Ptr(dataPath), 0, e.envCompleted)
-	if err != nil {
-		log.Printf("Error calling Webview2Loader: %v", err)
-		return false
-	} else if res != 0 {
-		log.Printf("Result: %08x", res)
+	if !e.startEmbed(hwnd) {
 		return false
 	}
 	var msg w32.Msg
@@ -130,36 +119,130 @@ func (e *Chromium) Embed(hwnd uintptr) bool {
 		_, _, _ = w32.User32TranslateMessage.Call(uintptr(unsafe.Pointer(&msg)))
 		_, _, _ = w32.User32DispatchMessageW.Call(uintptr(unsafe.Pointer(&msg)))
 	}
-	e.Init("window.external={invoke:s=>window.chrome.webview.postMessage(s)}")
 	return true
 }
 
+// EmbedAsync starts the engine WITHOUT blocking. done is invoked later, on
+// this same thread from the application's own message loop, with true once the
+// engine is usable or false if it could not be created. It returns false only
+// when creation could not even be started.
+//
+// This exists because Embed's nested message loop makes opening a tab freeze
+// the UI until WebView2 is ready. (OK Browser addition.)
+func (e *Chromium) EmbedAsync(hwnd uintptr, done func(bool)) bool {
+	e.initDone = done
+	if !e.startEmbed(hwnd) {
+		e.initDone = nil
+		return false
+	}
+	return true
+}
+
+// startEmbed kicks off environment creation and returns immediately.
+func (e *Chromium) startEmbed(hwnd uintptr) bool {
+	e.hwnd = hwnd
+
+	dataPath := e.DataPath
+	if dataPath == "" {
+		currentExePath := make([]uint16, windows.MAX_PATH)
+		_, err := windows.GetModuleFileName(windows.Handle(0), &currentExePath[0], windows.MAX_PATH)
+		if err != nil {
+			// What to do here?
+			return false
+		}
+		currentExeName := filepath.Base(windows.UTF16ToString(currentExePath))
+		dataPath = filepath.Join(os.Getenv("AppData"), currentExeName)
+	}
+
+	dataPathPtr, ok := utf16Ptr(dataPath)
+	if !ok {
+		log.Printf("Invalid WebView2 data path %q", dataPath)
+		return false
+	}
+	res, err := createCoreWebView2EnvironmentWithOptions(nil, dataPathPtr, 0, e.envCompleted)
+	if err != nil {
+		log.Printf("Error calling Webview2Loader: %v", err)
+		return false
+	} else if res != 0 {
+		log.Printf("Result: %08x", res)
+		return false
+	}
+	return true
+}
+
+// utf16Ptr converts s for a COM call. windows.StringToUTF16Ptr PANICS when s
+// contains a NUL, and several of these strings are attacker-controlled (a page
+// can post any URL through the bridge, or set any document.title), so a single
+// embedded NUL would take the whole browser down. Reject the string instead.
+// (OK Browser addition.)
+func utf16Ptr(s string) (*uint16, bool) {
+	p, err := windows.UTF16PtrFromString(s)
+	if err != nil {
+		return nil, false
+	}
+	return p, true
+}
+
+// CoreWebView2 exposes the raw ICoreWebView2 pointer.
+//
+// OK Browser addition: needed to answer a NewWindowRequested event with
+// put_NewWindow, which is the only way the opener script keeps a live handle
+// to the window it opened.
+func (e *Chromium) CoreWebView2() *ICoreWebView2 {
+	return e.webview
+}
+
 func (e *Chromium) Navigate(url string) {
+	if e.webview == nil { // OK Browser addition: engine not ready yet
+		return
+	}
+	p, ok := utf16Ptr(url)
+	if !ok {
+		return
+	}
 	_, _, _ = e.webview.vtbl.Navigate.Call(
 		uintptr(unsafe.Pointer(e.webview)),
-		uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(url))),
+		uintptr(unsafe.Pointer(p)),
 	)
 }
 
 func (e *Chromium) NavigateToString(htmlContent string) {
+	if e.webview == nil { // OK Browser addition: engine not ready yet
+		return
+	}
+	p, ok := utf16Ptr(htmlContent)
+	if !ok {
+		return
+	}
 	_, _, _ = e.webview.vtbl.NavigateToString.Call(
 		uintptr(unsafe.Pointer(e.webview)),
-		uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(htmlContent))),
+		uintptr(unsafe.Pointer(p)),
 	)
 }
 
 func (e *Chromium) Init(script string) {
+	if e.webview == nil { // OK Browser addition: engine not ready yet
+		return
+	}
+	p, ok := utf16Ptr(script)
+	if !ok {
+		return
+	}
 	_, _, _ = e.webview.vtbl.AddScriptToExecuteOnDocumentCreated.Call(
 		uintptr(unsafe.Pointer(e.webview)),
-		uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(script))),
+		uintptr(unsafe.Pointer(p)),
 		0,
 	)
 }
 
 func (e *Chromium) Eval(script string) {
-	_script, err := windows.UTF16PtrFromString(script)
-	if err != nil {
-		log.Fatal(err)
+	// Never log.Fatal here: this is reachable with page-derived content.
+	if e.webview == nil { // OK Browser addition: engine not ready yet
+		return
+	}
+	_script, ok := utf16Ptr(script)
+	if !ok {
+		return
 	}
 
 	_, _, _ = e.webview.vtbl.ExecuteScript.Call(
@@ -170,10 +253,16 @@ func (e *Chromium) Eval(script string) {
 }
 
 func (e *Chromium) Show() error {
+	if e.controller == nil { // OK Browser addition: engine not ready yet
+		return nil
+	}
 	return e.controller.PutIsVisible(true)
 }
 
 func (e *Chromium) Hide() error {
+	if e.controller == nil { // OK Browser addition: engine not ready yet
+		return nil
+	}
 	return e.controller.PutIsVisible(false)
 }
 
@@ -190,8 +279,18 @@ func (e *Chromium) Release() uintptr {
 }
 
 func (e *Chromium) EnvironmentCompleted(res uintptr, env *ICoreWebView2Environment) uintptr {
-	if int64(res) < 0 {
-		log.Fatalf("Creating environment failed with %08x", res)
+	// OK Browser addition: mirror CreateCoreWebView2ControllerCompleted and
+	// unblock Embed with a failure instead of log.Fatalf, which killed the
+	// process with a console message no GUI user ever sees. The host then
+	// shows the "WebView2 runtime missing" dialog.
+	if int64(res) < 0 || env == nil {
+		log.Printf("Creating environment failed with %08x", res)
+		atomic.StoreUintptr(&e.initFailed, 1)
+		if d := e.initDone; d != nil { // OK Browser addition
+			e.initDone = nil
+			d(false)
+		}
+		return 1
 	}
 	_, _, _ = env.vtbl.AddRef.Call(uintptr(unsafe.Pointer(env)))
 	e.environment = env
@@ -212,6 +311,10 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 	if int64(res) < 0 || controller == nil {
 		log.Printf("Creating controller failed with %08x", res)
 		atomic.StoreUintptr(&e.initFailed, 1)
+		if d := e.initDone; d != nil { // OK Browser addition
+			e.initDone = nil
+			d(false)
+		}
 		return 1
 	}
 	_, _, _ = controller.vtbl.AddRef.Call(uintptr(unsafe.Pointer(controller)))
@@ -267,10 +370,18 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 
 	_ = e.controller.AddAcceleratorKeyPressed(e.acceleratorKeyPressed, &token)
 
+	// Previously installed by Embed after its nested loop returned; it must
+	// happen here so the async path gets it too.
+	e.Init("window.external={invoke:s=>window.chrome.webview.postMessage(s)}")
+
 	atomic.StoreUintptr(&e.inited, 1)
 
 	if e.focusOnInit {
 		e.Focus()
+	}
+	if d := e.initDone; d != nil { // OK Browser addition
+		e.initDone = nil
+		d(true)
 	}
 
 	return 0
@@ -331,9 +442,12 @@ func (e *Chromium) PermissionRequested(_ *ICoreWebView2, args *iCoreWebView2Perm
 }
 
 func (e *Chromium) WebResourceRequested(sender *ICoreWebView2, args *ICoreWebView2WebResourceRequestedEventArgs) uintptr {
+	// OK Browser addition: a failed request lookup is not worth killing the
+	// browser over (this used to be log.Fatal).
 	req, err := args.GetRequest()
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("WebResourceRequested: %v", err)
+		return 0
 	}
 	if e.WebResourceRequestedCallback != nil {
 		e.WebResourceRequestedCallback(req, args)
@@ -342,9 +456,9 @@ func (e *Chromium) WebResourceRequested(sender *ICoreWebView2, args *ICoreWebVie
 }
 
 func (e *Chromium) AddWebResourceRequestedFilter(filter string, ctx COREWEBVIEW2_WEB_RESOURCE_CONTEXT) {
-	err := e.webview.AddWebResourceRequestedFilter(filter, ctx)
-	if err != nil {
-		log.Fatal(err)
+	// OK Browser addition: report instead of terminating the process.
+	if err := e.webview.AddWebResourceRequestedFilter(filter, ctx); err != nil {
+		log.Printf("AddWebResourceRequestedFilter(%q): %v", filter, err)
 	}
 }
 
@@ -374,6 +488,9 @@ func (e *Chromium) AcceleratorKeyPressed(sender *ICoreWebView2Controller, args *
 }
 
 func (e *Chromium) GetSettings() (*ICoreWebViewSettings, error) {
+	if e.webview == nil { // OK Browser addition: engine not ready yet
+		return nil, errors.New("webview not ready")
+	}
 	return e.webview.GetSettings()
 }
 

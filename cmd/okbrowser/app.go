@@ -86,6 +86,10 @@ type app struct {
 	// lastSpawn throttles popup storms from web pages.
 	lastSpawn time.Time
 
+	// spare is a pre-warmed, already-painted tab adopted by the next new
+	// tab so opening one costs no engine startup (WM_TIMER id 6).
+	spare *tab
+
 	// closedTabs remembers recently closed tab URLs for Ctrl+Shift+T.
 	closedTabs []string
 	downloads []*managedDownload // native WebView2 download operations
@@ -93,20 +97,11 @@ type app struct {
 	// store is the local data vault: history, bookmarks, settings, session.
 	store *store
 
-	// deferred self-test click (WM_TIMER id 3): waits out the new-tab fade.
+	// deferred self-test click (WM_TIMER id 3).
 	stClickTab   *tab
 	stClickX     float64
 	stClickY     float64
 	stClickTicks int
-
-	// new-tab cross-fade state (WM_TIMER id 2).
-	fading      bool
-	fadeRamping bool
-	fadeReady   bool
-	fadeHost    win.HWND
-	fadePrev    win.HWND
-	fadeAlpha   int
-	fadeTicks   int
 
 	// taskMu + taskQueue: work posted from engine callbacks, executed in
 	// the normal window-proc context via WM_APP. Engine callbacks must not
@@ -216,8 +211,7 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 			// Windowed: keep the resize frame on the sides and bottom
 			// (native resize borders + DWM shadow), but pull the client
 			// up to the window's top edge so the glass bar is flush.
-			fx := int32(win.GetSystemMetrics(win.SM_CXFRAME) + win.GetSystemMetrics(smCXPaddedBorder))
-			fy := int32(win.GetSystemMetrics(win.SM_CYFRAME) + win.GetSystemMetrics(smCXPaddedBorder))
+			fx, fy := a.resizeBand()
 			r := p.Rc0
 			p.Rc0 = win.RECT{Left: r.Left + fx, Top: r.Top, Right: r.Right - fx, Bottom: r.Bottom - fy}
 			return 0
@@ -241,29 +235,9 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 			if !win.GetWindowRect(hwnd, &wr) {
 				break
 			}
-			bx := int32(win.GetSystemMetrics(win.SM_CXFRAME) + win.GetSystemMetrics(smCXPaddedBorder))
-			by := int32(win.GetSystemMetrics(win.SM_CYFRAME) + win.GetSystemMetrics(smCXPaddedBorder))
-			left := x < wr.Left+bx
-			right := x >= wr.Right-bx
-			top := y < wr.Top+by
-			bottom := y >= wr.Bottom-by
-			switch {
-			case left && top:
-				return win.HTTOPLEFT
-			case right && top:
-				return win.HTTOPRIGHT
-			case left && bottom:
-				return win.HTBOTTOMLEFT
-			case right && bottom:
-				return win.HTBOTTOMRIGHT
-			case left:
-				return win.HTLEFT
-			case right:
-				return win.HTRIGHT
-			case top:
-				return win.HTTOP
-			case bottom:
-				return win.HTBOTTOM
+			bx, by := a.resizeBand()
+			if ht := frameHitTest(x, y, wr, bx, by); ht != 0 {
+				return ht
 			}
 		}
 		break // client area: DefWindowProc
@@ -277,14 +251,12 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 				a.execActive("window.__okBubbleFocus&&window.__okBubbleFocus()")
 			}
 		}
-		if wp == 2 {
-			a.fadeTick() // new-tab cross-fade
-		}
 		if wp == 3 {
 			a.selftestClickTick()
 		}
 		if wp == 4 { a.sleepInactiveTabs() }
 		if wp == 5 { a.pollDownloads() }
+		if wp == 6 { a.warmSpare() }
 		return 0
 
 	case win.WM_DPICHANGED:
@@ -314,7 +286,17 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 			}
 		}
 		return 0
+	case win.WM_CLOSE:
+		// Closing the window kills the WebView2 processes and with them any
+		// transfer still running, leaving a half-written file behind with no
+		// warning. Give the user a chance to keep waiting.
+		if n := a.activeDownloadCount(); n > 0 && !a.confirmDiscardDownloads(n) {
+			return 0
+		}
+		break // DefWindowProc destroys the window
 	case win.WM_DESTROY:
+		a.discardSpare()
+		closePopups() // sign-in windows must not outlive the browser
 		a.saveSession()
 		if a.store != nil {
 			a.store.Flush()
@@ -340,6 +322,9 @@ func NewApp(startURL string) (*app, bool) {
 	cursor := win.LoadCursor(0, win.MAKEINTRESOURCE(win.IDC_ARROW))
 
 	if !a.registerClass(mainClassName, windows.NewCallback(wndProc), icon, cursor) {
+		return nil, false
+	}
+	if !a.registerClass(popupClassName, windows.NewCallback(popupProc), icon, cursor) {
 		return nil, false
 	}
 	if !a.registerClass(tabHostClassName, windows.NewCallback(defTabHostProc), icon, cursor) {
@@ -382,7 +367,7 @@ func NewApp(startURL string) (*app, bool) {
 	// Restore the last session when the user wants it and no URL was
 	// passed on the command line.
 	var sess *sessionData
-	if startURL == "" && !selfTestMode && a.store.Settings().RestoreSession {
+	if startURL == "" && !selfTestMode && a.store.SettingsView().RestoreSession {
 		sess = a.store.LoadSession()
 	}
 	if sess != nil && sess.Rect != [4]int32{} {
@@ -467,6 +452,28 @@ func (a *app) saveSession() {
 		sd.Rect = [4]int32{r.Left, r.Top, r.Right, r.Bottom}
 	}
 	a.store.SaveSession(sd)
+}
+
+// resizeBand is the width of the window's resize border, in physical pixels.
+//
+// The system metrics alone give roughly 4-8px, which is narrower than what
+// Windows really offers on a normal window: DWM extends an invisible grab
+// margin beyond the visible border. More importantly, the band must be part
+// of the NON-CLIENT area - the tab host child window covers the whole client
+// area and a child swallows the mouse, so any "resize band" left inside the
+// client is simply never hit-tested by the parent.
+//
+// WM_NCCALCSIZE and WM_NCHITTEST must therefore agree on this exact value.
+func (a *app) resizeBand() (int32, int32) {
+	bx := int32(win.GetSystemMetrics(win.SM_CXFRAME) + win.GetSystemMetrics(smCXPaddedBorder))
+	by := int32(win.GetSystemMetrics(win.SM_CYFRAME) + win.GetSystemMetrics(smCXPaddedBorder))
+	if min := a.scaled(8); bx < min {
+		bx = min
+	}
+	if min := a.scaled(8); by < min {
+		by = min
+	}
+	return bx, by
 }
 
 // registerClass registers a window class for the main window or tab hosts.
@@ -591,38 +598,101 @@ func (a *app) layout() {
 	if w <= 0 || h <= 0 {
 		return
 	}
+	// Show the tabs that should be visible BEFORE hiding the rest. Hiding
+	// first left a frame in which no tab host was mapped at all, and the
+	// parent then painted its own background through the gap - the flash
+	// seen on every tab switch. Ordering it this way means a visible
+	// surface is on screen at all times.
 	for i, t := range a.tabs {
 		isSplit := a.splitTab != nil && t == a.splitTab
-		if i == a.activeIdx || isSplit {
-			x, width := int32(0), w
-			if a.splitTab != nil {
-				gap := a.scaled(5)
-				ratio := a.splitRatio
-				if ratio < .28 || ratio > .72 { ratio = .5 }
-				left := int32(float64(w-gap) * ratio)
-				if isSplit { x, width = left + gap, w - left - gap } else { width = left }
-			}
+		if i != a.activeIdx && !isSplit {
+			continue
+		}
+		x, width := int32(0), w
+		if a.splitTab != nil {
+			gap := a.scaled(5)
+			ratio := a.splitRatio
+			if ratio < .28 || ratio > .72 { ratio = .5 }
+			left := int32(float64(w-gap) * ratio)
+			if isSplit { x, width = left + gap, w - left - gap } else { width = left }
+		}
 
-			if a.fading && t.host == a.fadeHost && !a.fadeRamping {
-				// Pending reveal: the new tab stays hidden until its first
-				// content has painted - the previous tab shows meanwhile.
-			} else {
-				win.MoveWindow(t.host, x, 0, width, h, false)
-				win.ShowWindow(t.host, win.SW_SHOW)
-				if t.chromium != nil {
-					t.chromium.Show()
-					t.chromium.Resize()
-				}
+		// Skip redundant work. layout() runs on every WM_SIZE, so a window
+		// drag-resize called MoveWindow plus a full engine Resize for each
+		// tab on every frame even when nothing about it had changed.
+		moved := t.bx != x || t.by != 0 || t.bw != width || t.bh != h
+		if moved {
+			t.bx, t.by, t.bw, t.bh = x, 0, width, h
+			win.MoveWindow(t.host, x, 0, width, h, false)
+		}
+		if !t.shown {
+			t.shown = true
+			win.ShowWindow(t.host, win.SW_SHOW)
+		}
+		if t.chromium != nil {
+			if !t.engineShown {
+				t.engineShown = true
+				t.chromium.Show()
 			}
-		} else if !a.fading || t.host != a.fadePrev {
-			// During a new-tab cross-fade the previous tab stays visible
-			// beneath the translucent new one.
-			win.ShowWindow(t.host, win.SW_HIDE)
-			if t.chromium != nil {
-				t.chromium.Hide()
+			if moved {
+				t.chromium.Resize()
 			}
 		}
 	}
+	for i, t := range a.tabs {
+		isSplit := a.splitTab != nil && t == a.splitTab
+		if i == a.activeIdx || isSplit {
+			continue
+		}
+		if t.shown {
+			t.shown = false
+			win.ShowWindow(t.host, win.SW_HIDE)
+		}
+		if t.chromium != nil && t.engineShown {
+			t.engineShown = false
+			t.chromium.Hide()
+		}
+	}
+}
+
+// frameHitTest reports which resize border the point (x,y) falls in, or 0 for
+// the client area. It is pure so the geometry can be unit tested.
+//
+// bx/by come from resizeBand and MUST match the inset WM_NCCALCSIZE reserved:
+// only non-client pixels ever reach this handler. Corners use a square twice
+// the edge width on both axes, otherwise diagonal resize is almost unhittable.
+func frameHitTest(x, y int32, wr win.RECT, bx, by int32) uintptr {
+	cx, cy := bx*2, by*2
+
+	left := x < wr.Left+bx
+	right := x >= wr.Right-bx
+	top := y < wr.Top+by
+	bottom := y >= wr.Bottom-by
+
+	cleft := x < wr.Left+cx
+	cright := x >= wr.Right-cx
+	ctop := y < wr.Top+cy
+	cbottom := y >= wr.Bottom-cy
+
+	switch {
+	case cleft && ctop:
+		return win.HTTOPLEFT
+	case cright && ctop:
+		return win.HTTOPRIGHT
+	case cleft && cbottom:
+		return win.HTBOTTOMLEFT
+	case cright && cbottom:
+		return win.HTBOTTOMRIGHT
+	case left:
+		return win.HTLEFT
+	case right:
+		return win.HTRIGHT
+	case top:
+		return win.HTTOP
+	case bottom:
+		return win.HTBOTTOM
+	}
+	return 0
 }
 
 // postTask schedules f to run in the normal window-proc context. Engine

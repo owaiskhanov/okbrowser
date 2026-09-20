@@ -160,16 +160,16 @@ assert.ok(!okb.className.includes('open'), 'bubble collapses after submit');
 win.__okBubbleFocus();
 assert.ok(okb.className.includes('open') && input.focused, 'Ctrl+L opens and focuses the bubble');
 
-// --- keyed rendering: pills update in place, only genuinely new ones animate ---
+// --- keyed rendering: pills update in place ---
 const pill0 = tz.children[0];
 win.__okBar({ tabs: [{ t: 'A2' }, { t: 'B' }], a: 0, u: '', b: false, f: false, m: false });
 assert.strictEqual(tz.children[0], pill0, 'pills must be reused, not rebuilt');
 assert.strictEqual(tz.children[0].children[1]._text, 'A2', 'title updates in place');
 assert.strictEqual(tz.children.length, 2, 'removed pill is dropped');
 win.__okBar({ tabs: [{ t: 'A2' }, { t: 'B' }, { t: 'C' }], a: 2, u: '', b: false, f: false, m: false });
-assert.ok(tz.children[2].classList.contains('in'), 'new pill gets the subtle enter animation');
-tz.children[2].dispatch('animationend', {});
-assert.ok(!tz.children[2].classList.contains('in'), 'animation class removed after it ends');
+// A new pill must appear immediately. It used to scale in over .24s, which
+// delayed visible feedback on the one action that has to feel instant.
+assert.ok(!tz.children[2].classList.contains('in'), 'new pill must not carry an enter animation');
 assert.ok(tz.children[2].classList.contains('on'), 'active pill marked via classList');
 
 // --- find in page ---
@@ -241,7 +241,30 @@ assert.ok(sug.classList.contains('open'), 'suggestion list opens');
 assert.strictEqual(sug.children.length, 2, 'search row + one suggestion row');
 input.dispatch('keydown', { key: 'ArrowDown', preventDefault() {} });
 input.dispatch('keydown', { key: 'Enter', preventDefault() {} });
-expect({ t: 'go', u: 'https://example.com' }); // Enter on the selected suggestion
+expect({ t: 'go', u: 'https://example.com', n: false }); // Enter on the selected suggestion
+
+// --- Alt/Ctrl+Enter opens the result in a new tab (Chrome's behaviour) ---
+sent.length = 0;
+input.focus();
+input.dispatch('keydown', { key: 'Escape', preventDefault() {} }); // close the dropdown
+sent.length = 0;
+input.focus();
+input.value = 'example.com';
+input.dispatch('keydown', { key: 'Enter', altKey: true, preventDefault() {} });
+expect({ t: 'go', u: 'example.com', n: true });
+
+sent.length = 0;
+input.focus();
+input.value = 'example.com';
+input.dispatch('keydown', { key: 'Enter', ctrlKey: true, preventDefault() {} });
+expect({ t: 'go', u: 'example.com', n: true });
+
+// Plain Enter must still navigate the current tab.
+sent.length = 0;
+input.focus();
+input.value = 'example.com';
+input.dispatch('keydown', { key: 'Enter', preventDefault() {} });
+expect({ t: 'go', u: 'example.com', n: false });
 
 // --- favicons, auto-collapse, pin, drag reorder, context menu, loading line ---
 sent.length = 0;
@@ -398,27 +421,30 @@ assert.ok(strip, 'strip element exists');
 assert.ok(shadow.getElementById('edge'), 'top-edge tripwire exists');
 assert.ok(shadow.getElementById('wcap'), 'always-visible window capsule exists');
 
-// the bar may be open from the tests above; retire it first
+// --- the bar is a permanent surface ---
+// It used to retract whenever the pointer left the top of the window, which
+// took the address field, its suggestions and the tab strip with it. It must
+// now survive every path that previously retired it.
 input.blur();
 strip.dispatch('mouseleave', {});
 setTimeout(() => {
-  assert.ok(!strip.classList.contains('open'), 'bar hides when the mouse leaves and nothing is focused');
+  assert.ok(strip.classList.contains('open'), 'bar stays visible when the mouse leaves');
+  assert.ok(!shadow.getElementById('wcap').classList.contains('hid'), 'the window capsule stays visible too');
 
   (docListeners['mousemove'] || []).forEach(f => f({ clientY: 2 }));
-  assert.ok(strip.classList.contains('open'), 'mouse at the top edge reveals the bar');
-  assert.ok(!shadow.getElementById('wcap').classList.contains('hid'), 'the capsule returns with the bar');
+  assert.ok(strip.classList.contains('open'), 'bar still visible at the top edge');
   strip.dispatch('mouseenter', {});
   win.__okBar({ tabs: [{ t: 'A' }, { t: 'B' }, { t: 'C' }, { t: 'D' }], a: 3, u: 'https://example.com/d', b: false, f: false, m: false });
   assert.ok(strip.classList.contains('open'), 'tab switch keeps the bar visible');
-  assert.ok(tz.children[3].classList.contains('in'), 'the new tab pill animates in');
+  assert.ok(!tz.children[3].classList.contains('in'), 'the new tab pill appears with no enter animation');
 
   win.__okBubbleFocus();
-  assert.ok(strip.classList.contains('open'), 'Ctrl+L reveals the bar');
+  assert.ok(strip.classList.contains('open'), 'Ctrl+L keeps the bar visible');
   input.blur();
   strip.dispatch('mouseleave', {});
   setTimeout(() => {
-    assert.ok(!strip.classList.contains('open'), 'bar hides again after the mouse leaves');
-    assert.ok(shadow.getElementById('wcap').classList.contains('hid'), 'the capsule hides with the bar');
+    assert.ok(strip.classList.contains('open'), 'bar still visible after the mouse leaves again');
+    assert.ok(!shadow.getElementById('wcap').classList.contains('hid'), 'the capsule is still visible');
 
     // the bar must never retire while the mouse is INSIDE the menu
     (docListeners['mousemove'] || []).forEach(f => f({ clientY: 2 })); // reveal
@@ -431,9 +457,25 @@ setTimeout(() => {
       assert.ok(menu.classList.contains('open'), 'menu stays open while hovered');
       menu.dispatch('mouseleave', {});  // leaving the menu retires both
       setTimeout(() => {
-        assert.ok(!menu.classList.contains('open'), 'menu closes once the bar retires');
-        assert.ok(!strip.classList.contains('open'), 'bar retires after leaving the menu');
-        console.log('shell UI logic tests: ALL PASSED');
+        assert.ok(!menu.classList.contains('open'), 'menu closes after the mouse leaves it');
+        assert.ok(strip.classList.contains('open'), 'the bar itself stays visible');
+        
+// --- speed: no entry animation may gate the new-tab path ---
+// The tab pill used to scale in over .24s and the progress bar ran a scripted
+// 5s crawl. Both delayed visible feedback on the actions that must feel
+// instant, so assert the CSS cannot regress.
+{
+  // The shell CSS lives in bridge.go as Go string literals, so assert on the
+  // source directly rather than the extracted JS.
+  assert.ok(!/\.tab\.in\{animation/.test(src),
+    'the new-tab pill must not have an enter animation');
+  assert.ok(!/@keyframes okload/.test(src),
+    'the fake 5s load-bar crawl must stay removed');
+  assert.ok(!/classList\.add\('in'\)/.test(js),
+    'new pills must not be tagged for an enter animation');
+}
+
+console.log('shell UI logic tests: ALL PASSED');
       }, 600);
     }, 600);
   }, 550);

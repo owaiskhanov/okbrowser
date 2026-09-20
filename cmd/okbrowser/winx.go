@@ -80,12 +80,8 @@ func darkBrush() win.HBRUSH {
 	return win.HBRUSH(c)
 }
 
-// procSetLayeredWindowAttributes and procIsWindow cover two user32 calls
-// lxn/win does not expose (whole-window alpha and window liveness).
-var (
-	procSetLayeredWindowAttributes = syscall.NewLazyDLL("user32.dll").NewProc("SetLayeredWindowAttributes")
-	procIsWindow                   = syscall.NewLazyDLL("user32.dll").NewProc("IsWindow")
-)
+// procIsWindow covers a user32 call lxn/win does not expose (window liveness).
+var procIsWindow = syscall.NewLazyDLL("user32.dll").NewProc("IsWindow")
 
 // isWnd reports whether the window handle is still a live window.
 func isWnd(h win.HWND) bool {
@@ -94,22 +90,6 @@ func isWnd(h win.HWND) bool {
 	}
 	r, _, _ := procIsWindow.Call(uintptr(h))
 	return r != 0
-}
-
-// setLayeredAlpha sets the whole-window alpha of a layered window
-// (LWA_ALPHA). Returns false when the platform refuses (fade unsupported).
-func setLayeredAlpha(hwnd win.HWND, alpha byte) bool {
-	r, _, _ := procSetLayeredWindowAttributes.Call(uintptr(hwnd), 0, uintptr(alpha), 2 /*LWA_ALPHA*/)
-	return r != 0
-}
-
-// unlayered removes the layered style so the window renders at full speed.
-func unlayered(hwnd win.HWND) {
-	if ex := win.GetWindowLong(hwnd, win.GWL_EXSTYLE); ex&win.WS_EX_LAYERED != 0 {
-		win.SetWindowLong(hwnd, win.GWL_EXSTYLE, ex&^win.WS_EX_LAYERED)
-		win.SetWindowPos(hwnd, 0, 0, 0, 0, 0,
-			win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_NOZORDER|win.SWP_NOACTIVATE|win.SWP_FRAMECHANGED)
-	}
 }
 
 // keyDown reports whether the virtual key is currently pressed. Used to read

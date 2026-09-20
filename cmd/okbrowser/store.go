@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/owaiskhanov/okbrowser/internal/nav"
 )
@@ -30,6 +31,25 @@ type store struct {
 
 	dirty      map[string]bool
 	flushTimer *time.Timer
+
+	// rev increments whenever data shown on the start page changes, so a
+	// pre-rendered start page can tell it has gone stale.
+	rev uint64
+
+	// Memoised MostVisited result. Building it aggregates and sorts the whole
+	// history, which is pure waste when nothing has changed between two new
+	// tabs. Valid while tilesRev == rev.
+	tiles    []Tile
+	tilesN   int
+	tilesRev uint64
+	tilesOK  bool
+}
+
+// Rev reports the start-page data revision.
+func (s *store) Rev() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rev
 }
 
 // histEntry is one visited page.
@@ -37,6 +57,44 @@ type histEntry struct {
 	URL   string `json:"u"`
 	Title string `json:"t"`
 	TS    int64  `json:"ts"`
+
+	// lowURL/lowTitle cache the folded forms used by Suggest. Address-bar
+	// matching is case-insensitive, and lowercasing both fields of every
+	// entry on every keystroke allocated two throwaway strings per entry -
+	// by far the most garbage the browser produced during typing. Not
+	// serialised: the on-disk format is unchanged and these are rebuilt on
+	// load.
+	lowURL   string `json:"-"`
+	lowTitle string `json:"-"`
+}
+
+// fold fills the cached lowercase fields.
+func (e *histEntry) fold() {
+	e.lowURL = strings.ToLower(e.URL)
+	e.lowTitle = strings.ToLower(e.Title)
+}
+
+// Pages control the URL, title and icon they report through the bridge, and
+// those strings are persisted. Cap them so a hostile or buggy page cannot
+// grow the on-disk store without limit (a data: icon URL in particular can be
+// megabytes). These bounds are far above anything a real site needs.
+const (
+	maxStoredURL     = 2048
+	maxStoredTitle   = 512
+	maxStoredIcon    = 2048
+	maxStoredFavicons = 1000
+	maxBookmarks     = 5000
+)
+
+// clip shortens s to at most n bytes without splitting a rune.
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // bmEntry is one bookmark.
@@ -109,6 +167,9 @@ func newStore() *store {
 		dirty: map[string]bool{},
 	}
 	s.load("history.json", &s.history)
+	for i := range s.history { // build the Suggest match cache once, at startup
+		s.history[i].fold()
+	}
 	s.load("bookmarks.json", &s.bookmarks)
 	s.load("settings.json", &s.settings)
 	s.load("permissions.json", &s.permissions)
@@ -145,6 +206,7 @@ func (s *store) load(name string, v interface{}) {
 // markDirty schedules a debounced flush (2s after the first change).
 func (s *store) markDirty(name string) {
 	s.dirty[name] = true
+	s.rev++
 	if s.flushTimer == nil {
 		s.flushTimer = time.AfterFunc(2*time.Second, func() {
 			s.mu.Lock()
@@ -214,12 +276,16 @@ func (s *store) AddHistory(url, title string) {
 	if nav.IsSearchURL(url) {
 		return
 	}
+	// The page chooses these strings, so bound them before they are stored.
+	url, title = clip(url, maxStoredURL), clip(title, maxStoredTitle)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if n := len(s.history); n > 0 && s.history[n-1].URL == url {
 		return
 	}
-	s.history = append(s.history, histEntry{URL: url, Title: title, TS: time.Now().UnixMilli()})
+	e := histEntry{URL: url, Title: title, TS: time.Now().UnixMilli()}
+	e.fold()
+	s.history = append(s.history, e)
 	if len(s.history) > 2000 {
 		s.history = s.history[len(s.history)-2000:]
 	}
@@ -287,7 +353,10 @@ func (s *store) ToggleBookmark(url, title string) bool {
 	if title == "" {
 		title = url
 	}
-	s.bookmarks = append(s.bookmarks, bmEntry{URL: url, Title: title, TS: time.Now().UnixMilli()})
+	if len(s.bookmarks) >= maxBookmarks {
+		return false // refuse rather than grow without bound
+	}
+	s.bookmarks = append(s.bookmarks, bmEntry{URL: clip(url, maxStoredURL), Title: clip(title, maxStoredTitle), TS: time.Now().UnixMilli()})
 	s.markDirty("bookmarks.json")
 	return true
 }
@@ -324,8 +393,11 @@ func (s *store) ClearBookmarks() {
 
 func (s *store) SetFavicon(pageURL, icon string) {
 	origin := permissionOrigin(pageURL)
-	if origin == "" || icon == "" { return }
+	// A page may report a huge inline data: icon, so bound the value and the
+	// number of origins we are willing to remember.
+	if origin == "" || icon == "" || len(icon) > maxStoredIcon { return }
 	s.mu.Lock(); defer s.mu.Unlock()
+	if _, known := s.favicons[origin]; !known && len(s.favicons) >= maxStoredFavicons { return }
 	if s.favicons[origin] != icon { s.favicons[origin] = icon; s.markDirty("favicons.json") }
 }
 
@@ -339,9 +411,26 @@ type Tile struct {
 }
 
 // MostVisited aggregates history into the top n most-visited sites.
+//
+// The result is memoised against the store revision: opening several tabs
+// without browsing in between recomputed an identical answer every time, and
+// this runs on the UI thread while the user waits for the new tab.
 func (s *store) MostVisited(n int) []Tile {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.tilesOK && s.tilesRev == s.rev && s.tilesN == n {
+		out := make([]Tile, len(s.tiles))
+		copy(out, s.tiles)
+		return out
+	}
+	out := s.mostVisitedLocked(n)
+	s.tiles = make([]Tile, len(out))
+	copy(s.tiles, out)
+	s.tilesN, s.tilesRev, s.tilesOK = n, s.rev, true
+	return out
+}
+
+func (s *store) mostVisitedLocked(n int) []Tile {
 	type agg struct {
 		title string
 		count int64
@@ -426,24 +515,39 @@ func (s *store) Suggest(q string, n int) []suggestion {
 			cands = append(cands, cand{suggestion{URL: b.URL, Title: t, Source: "b"}, 1_000_000 + b.TS/1_000_000})
 		}
 	}
+	// Aggregate matching history by URL. This used to build a
+	// map[string]*hagg, which heap-allocated one struct per unique URL and
+	// grew a map sized by the number of matches - the dominant cost of a
+	// keystroke, far more than the string matching itself. Values are stored
+	// inline in a slice instead, with the map holding only an index, so a
+	// query that matches everything allocates a handful of slice growths
+	// rather than thousands of small objects.
 	type hagg struct {
+		url   string
 		title string
 		count int64
 		last  int64
 	}
-	m := map[string]*hagg{}
-	for _, e := range s.history {
+	aggs := make([]hagg, 0, 32)
+	at := make(map[string]int, 64)
+	for i := range s.history {
+		e := &s.history[i]
+		// Match BEFORE the bookmark-dedup lookup: most entries fail the
+		// substring test, and strings.Contains is much cheaper than hashing
+		// a URL for a map probe.
+		if !strings.Contains(e.lowURL, q) && !strings.Contains(e.lowTitle, q) {
+			continue
+		}
 		if seen[e.URL] {
 			continue
 		}
-		if !strings.Contains(strings.ToLower(e.URL), q) && !strings.Contains(strings.ToLower(e.Title), q) {
-			continue
+		idx, ok := at[e.URL]
+		if !ok {
+			idx = len(aggs)
+			aggs = append(aggs, hagg{url: e.URL})
+			at[e.URL] = idx
 		}
-		a := m[e.URL]
-		if a == nil {
-			a = &hagg{}
-			m[e.URL] = a
-		}
+		a := &aggs[idx]
 		if e.Title != "" {
 			a.title = e.Title
 		}
@@ -452,12 +556,13 @@ func (s *store) Suggest(q string, n int) []suggestion {
 			a.last = e.TS
 		}
 	}
-	for u, a := range m {
+	for i := range aggs {
+		a := &aggs[i]
 		t := a.title
 		if t == "" {
-			t = u
+			t = a.url
 		}
-		cands = append(cands, cand{suggestion{URL: u, Title: t, Source: "h"}, a.count*1000 + a.last/86_400_000})
+		cands = append(cands, cand{suggestion{URL: a.url, Title: t, Source: "h"}, a.count*1000 + a.last/86_400_000})
 	}
 	s.mu.Unlock()
 	sort.SliceStable(cands, func(i, j int) bool { return cands[i].rank > cands[j].rank })
@@ -491,7 +596,9 @@ func (s *store) ClearPermissions(origin string) {
 
 // ---- settings + session -----------------------------------------------------
 
-// Settings returns a copy of the current settings.
+// Settings returns a deep copy of the current settings, safe for the caller
+// to mutate. The NeverSleep copy is the expensive part, so read-only callers
+// on hot paths should prefer SettingsView.
 func (s *store) Settings() Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -499,6 +606,26 @@ func (s *store) Settings() Settings {
 	out.NeverSleep = make(map[string]bool, len(s.settings.NeverSleep))
 	for origin, value := range s.settings.NeverSleep { out.NeverSleep[origin] = value }
 	return out
+}
+
+// SettingsView returns the settings WITHOUT copying the NeverSleep map, for
+// callers that only read. The returned NeverSleep aliases store state and
+// must never be written to or retained past the call.
+//
+// Almost every caller only wants a scalar (Engine, Autofill, SleepMinutes),
+// and the map copy dominated the cost of reading one.
+func (s *store) SettingsView() Settings {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.settings
+}
+
+// NeverSleepFor reports the per-origin never-sleep flag without copying the
+// map, for the per-tab loops that previously paid a full copy per tab.
+func (s *store) NeverSleepFor(origin string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.settings.NeverSleep[origin]
 }
 
 // SetSettings saves the settings.

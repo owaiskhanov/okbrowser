@@ -37,19 +37,24 @@ type iDownloadOperationVtbl struct {
 	RemoveStateChanged ComProc
 	// Keep this exact COM/IDL order. Calling a method through the wrong slot
 	// invokes an unrelated function pointer and crashes the host process.
-	GetCanResume ComProc
+	//
+	// This is vtable layout, so it MUST follow the declaration order in
+	// WebView2.idl (ICoreWebView2DownloadOperation), NOT the alphabetical
+	// order used by the "Summary" table in the published documentation.
+	// TestDownloadOperationVtblOrder locks this order in.
+	GetUri ComProc
 	GetContentDisposition ComProc
-	GetEstimatedEndTime ComProc
-	GetInterruptReason ComProc
 	GetMimeType ComProc
+	GetTotalBytesToReceive ComProc
+	GetBytesReceived ComProc
+	GetEstimatedEndTime ComProc
 	GetResultFilePath ComProc
 	GetState ComProc
-	GetTotalBytesToReceive ComProc
-	GetUri ComProc
-	GetBytesReceived ComProc
+	GetInterruptReason ComProc
 	Cancel ComProc
 	Pause ComProc
 	Resume ComProc
+	GetCanResume ComProc
 }
 type ICoreWebView2DownloadOperation struct { vtbl *iDownloadOperationVtbl }
 func (o *ICoreWebView2DownloadOperation) AddRef() { o.vtbl.AddRef.Call(uintptr(unsafe.Pointer(o))) }

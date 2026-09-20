@@ -71,8 +71,6 @@ transition:opacity .22s,transform .22s;z-index:99}
 box-shadow:0 8px 28px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.09),
 inset 0 0 0 .5px rgba(255,255,255,.07)}}
 input{-webkit-user-select:text}
-.fade{animation:fade .3s ease}
-@keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 </style></head><body>`
 
 // pageScriptClose ends every built-in page.
@@ -135,7 +133,7 @@ func StartPageHTML(tiles []Tile, engine string) string {
 	var b strings.Builder
 	b.WriteString(pageBase)
 	b.WriteString(toastMount)
-	b.WriteString(`<div class="wrap fade" style="text-align:center">`)
+	b.WriteString(`<div class="wrap" style="text-align:center">`)
 	b.WriteString(`<div style="width:64px;height:64px;margin:8vh auto 22px;border-radius:20px;display:grid;place-items:center;font-size:24px;font-weight:800;color:#0a84ff;background:rgba(255,255,255,.6);backdrop-filter:blur(24px) saturate(1.8);-webkit-backdrop-filter:blur(24px) saturate(1.8);box-shadow:0 14px 40px rgba(10,132,255,.18),inset 0 1px 0 rgba(255,255,255,.8),inset 0 0 0 .5px rgba(255,255,255,.4)">OK</div>`)
 	b.WriteString(`<div class="card" style="display:flex;align-items:center;gap:10px;padding:6px 8px 6px 18px;margin-bottom:34px">`)
 	b.WriteString(`<input id="q" placeholder="Search with ` + htmlEsc(engine) + ` or enter address" spellcheck="false" autocomplete="off" style="all:unset;flex:1;font-size:15px;padding:12px 0;cursor:text">`)
@@ -183,7 +181,7 @@ func BookmarksHTML(items []bmEntry) string {
 	var b strings.Builder
 	b.WriteString(pageBase)
 	b.WriteString(toastMount)
-	b.WriteString(`<div class="wrap fade"><h1>Bookmarks</h1><div class="card" id="list">`)
+	b.WriteString(`<div class="wrap"><h1>Bookmarks</h1><div class="card" id="list">`)
 	if len(items) == 0 {
 		b.WriteString(`<div class="row"><div class="meta"><div class="tt">No bookmarks yet</div><div class="uu">Tap the ★ in the address bar to save a page</div></div></div>`)
 	}
@@ -216,7 +214,7 @@ func HistoryHTML(items []histEntry) string {
 	var b strings.Builder
 	b.WriteString(pageBase)
 	b.WriteString(toastMount)
-	b.WriteString(`<div class="wrap fade"><h1>History</h1>`)
+	b.WriteString(`<div class="wrap"><h1>History</h1>`)
 	b.WriteString(`<div class="card" style="display:flex;align-items:center;gap:10px;padding:6px 16px;margin-bottom:14px">`)
 	b.WriteString(`<input id="f" placeholder="Search history" spellcheck="false" style="all:unset;flex:1;font-size:13.5px;padding:10px 0;cursor:text">`)
 	b.WriteString(`<div id="clear" style="flex:0 0 auto;font-size:12.5px;font-weight:550;color:#e0111b;cursor:pointer;padding:8px 10px;border-radius:10px" onmouseover="this.style.background='rgba(224,17,27,.10)'" onmouseout="this.style.background=''">Clear all</div>`)
@@ -268,7 +266,7 @@ func SettingsHTML(s Settings, version string) string {
 	var b strings.Builder
 	b.WriteString(pageBase)
 	b.WriteString(toastMount)
-	b.WriteString(`<div class="wrap fade"><h1>Settings</h1>`)
+	b.WriteString(`<div class="wrap"><h1>Settings</h1>`)
 
 	// Search engine
 	b.WriteString(`<div style="font-size:12px;font-weight:650;opacity:.5;margin:22px 4px 8px;text-transform:uppercase;letter-spacing:.06em">Search engine</div>`)
@@ -415,7 +413,7 @@ func DownloadsHTML(files []dlFile) string {
 	b.WriteString(pageBase)
 	b.WriteString(toastMount)
 	b.WriteString(`<style>.acts{display:flex;gap:5px}.db{padding:7px 10px;border-radius:12px;background:rgba(120,128,138,.12);font-size:11px;font-weight:650}.db:hover{background:rgba(10,132,255,.17)}.del:hover{background:rgba(232,17,35,.18);color:#d70015}.warn{color:#d97706}.live{color:#0a84ff}.dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;margin-right:5px;animation:pulse 1.2s infinite}@keyframes pulse{50%{opacity:.25}}</style>`)
-	b.WriteString(`<div class="wrap fade"><h1>Downloads</h1><div style="font-size:12px;opacity:.55;margin:-12px 2px 16px">Live files from your Downloads folder</div>`)
+	b.WriteString(`<div class="wrap"><h1>Downloads</h1><div style="font-size:12px;opacity:.55;margin:-12px 2px 16px">Live files from your Downloads folder</div>`)
 	if len(files) == 0 {
 		b.WriteString(`<div class="card"><div class="row"><div class="meta"><div class="tt">No downloads yet</div><div class="uu">Files you download appear here</div></div></div></div>`)
 	}

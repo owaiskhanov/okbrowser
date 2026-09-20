@@ -148,10 +148,7 @@ const barJS = `
     "background:rgba(250,250,252,.52);",
     "backdrop-filter:blur(26px) saturate(1.7);-webkit-backdrop-filter:blur(26px) saturate(1.7);",
     "box-shadow:0 1px 12px rgba(0,0,0,.08),inset 0 -.5px 0 rgba(0,0,0,.07);",
-    "transform:translateY(calc(-100% + (100% * var(--ok-proximity,0))));",
-    "opacity:calc(.18 + (.82 * var(--ok-proximity,0)));",
-    "transition:transform .10s ease-out,opacity .10s ease-out}",
-    ".strip.open{transform:translateY(0);opacity:1}",
+    "transform:none;opacity:1}",
     ".strip.paneactive{box-shadow:inset 0 -2px 0 #0a84ff,0 1px 12px rgba(0,0,0,.12)}",
     "@media (prefers-color-scheme:dark){.strip{background:rgba(24,24,28,.55);",
     "box-shadow:0 1px 12px rgba(0,0,0,.32),inset 0 -.5px 0 rgba(255,255,255,.06)}}",
@@ -164,7 +161,6 @@ const barJS = `
     "box-shadow:0 1px 6px rgba(0,0,0,.08),inset 0 1px 0 rgba(255,255,255,.42),",
     "inset 0 0 0 .5px rgba(255,255,255,.20);",
     "transition:background .16s ease,transform .16s ease,flex-basis .22s ease,width .22s ease}",
-    ".tab.in{animation:okin .24s cubic-bezier(.2,.8,.3,1)}",
     ".tab.sleep{opacity:.62}.tab.sleep .ic{filter:saturate(.35)}",
     ".ic{flex:0 0 auto;width:16px;height:16px;border-radius:5px;display:grid;place-items:center;",
     "font-size:10px;font-weight:700;color:#5f6368;overflow:hidden}",
@@ -176,9 +172,8 @@ const barJS = `
     ".prog{position:fixed;top:0;left:0;height:2.5px;width:0;z-index:2147483644;pointer-events:none;",
     "background:linear-gradient(90deg,#0a84ff,#5ac8fa);border-radius:0 2px 2px 0;opacity:0;",
     "transition:opacity .25s}",
-    ".prog.on{opacity:1;animation:okload 5s ease-out forwards}",
+    ".prog.on{opacity:1;width:86%;transition:width 2.2s ease-out,opacity .2s}",
     ".prog.done{width:100% !important;opacity:0;transition:width .2s,opacity .35s}",
-    "@keyframes okload{0%{width:8%}25%{width:38%}55%{width:62%}85%{width:78%}100%{width:86%}}",
     "@keyframes okin{from{transform:scale(.72);opacity:0}to{transform:scale(1);opacity:1}}",
     ".tab:hover{background:rgba(250,250,252,.48)}",
     ".tab:active{transform:scale(.95)}",
@@ -222,9 +217,7 @@ const barJS = `
     "@media (prefers-color-scheme:dark){.wcap{background:rgba(28,28,32,.55);",
     "box-shadow:0 2px 12px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.09),",
     "inset 0 0 0 .5px rgba(255,255,255,.08)}}",
-    ".wcap.hid{transform:translateY(calc(-160% + (160% * var(--ok-proximity,0))));",
-    "opacity:var(--ok-proximity,0);pointer-events:none}",
-    ".wcap.hid.near{pointer-events:auto}",
+    ".wcap.hid{transform:none;opacity:1;pointer-events:auto}",
     ".wbtn{width:40px;height:22px;border-radius:11px;display:grid;place-items:center;color:#3c4043;",
     "cursor:default;transition:background .12s,opacity .12s}",
     ".sitepanel{position:fixed;top:40px;left:8px;width:290px;padding:12px;border-radius:18px;z-index:2147483647;",
@@ -379,7 +372,7 @@ const barJS = `
     '<div class="sr" id="live" role="status" aria-live="polite"></div>' +
     '<div class="prog" id="prog"></div>' +
     '<div class="edge" id="edge"></div>' +
-    '<div class="strip" id="strip">' +
+    '<div class="strip open" id="strip">' +
       '<div class="tz" id="tz"></div>' +
       '<div class="plus" id="plus">' + I_PLUS + '</div>' +
       '<div class="okb" id="okb">' +
@@ -475,29 +468,17 @@ const barJS = `
   var hideTimer = 0;
   var briefTimer = 0;
 
-  function hideBar() {
-    strip.classList.remove('open');
-    var wc = root.getElementById('wcap');
-    if (wc) wc.classList.add('hid'); // the capsule hides with the bar
-    closeMenu();
-    closeCtx();
-    strip.style['--ok-proximity'] = '0';
-    var cap = root.getElementById('wcap');
-    if (cap) { cap.style['--ok-proximity'] = '0'; cap.classList.remove('near'); }
-  }
+  // The bar is a permanent surface: it is always on screen, like Chrome's.
+  // It used to retract whenever the pointer left the top of the window, which
+  // hid the address field and its suggestions and meant the tab strip was not
+  // there when you reached for it. hideBar is kept as a no-op so the existing
+  // idle/blur paths stay harmless.
+  function hideBar() {}
   function uiOpen(id) {
     var el = root.getElementById(id);
     return !!el && el.classList.contains('open');
   }
-  function hideIfIdle() {
-    // New Tab is a persistent command surface: its tabs and URL field never
-    // retreat, even when the pointer leaves the top of the window.
-    if (!S.u || barPinned || document.activeElement === input) return;
-    // Popovers anchored to the bar (menu, tab menu, suggestions, find)
-    // are part of it: the bar must never retire while one is open.
-    if (uiOpen('menu') || uiOpen('ctx') || uiOpen('sug') || uiOpen('find') || uiOpen('sitepanel')) return;
-    hideBar();
-  }
+  function hideIfIdle() {} // the bar never retires
   function revealBar(brief) {
     strip.classList.add('open');
     var wc = root.getElementById('wcap');
@@ -666,7 +647,6 @@ const barJS = `
     el.addEventListener('auxclick', function (ev) {
       if (ev.button === 1) { ev.preventDefault(); post({ t: 'ui', a: 'close', i: el.__idx }); }
     });
-    el.addEventListener('animationend', function () { el.classList.remove('in'); });
     // Drag & drop reordering.
     el.addEventListener('dragstart', function (e) {
       dragFrom = el.__idx;
@@ -765,7 +745,6 @@ const barJS = `
       var el = tabEls[i];
       if (!el) {
         el = buildTab();
-        el.classList.add('in');
         tabEls[i] = el;
         tz.appendChild(el);
         if (stateLive) revealBar(true); // show the new tab appearing
@@ -825,9 +804,11 @@ const barJS = `
   });
   input.addEventListener('focus', function () { setOpen(true); });
 
-  function submit(url) {
+  // newTab: open the result in a new tab instead of replacing this page,
+  // matching Chrome's Alt+Enter / Ctrl+Enter on the address bar.
+  function submit(url, newTab) {
     var v = url || input.value.trim();
-    if (v) post({ t: 'go', u: v });
+    if (v) post({ t: 'go', u: v, n: !!newTab });
     input.blur();
     post({ t: 'ui', a: 'refocus' });
   }
@@ -891,7 +872,7 @@ const barJS = `
         r.appendChild(meta);
         tt.textContent = it.t || it.u;
         uu.textContent = it.u;
-        r.addEventListener('mousedown', function (e) { e.preventDefault(); submit(it.u); });
+        r.addEventListener('mousedown', function (e) { e.preventDefault(); submit(it.u, e.button === 1 || e.altKey || e.ctrlKey || e.metaKey); });
         r.addEventListener('mouseenter', function () { sugSel = idx; sugPaint(); });
         sug.appendChild(r);
       })(sugItems[i], i);
@@ -920,10 +901,12 @@ const barJS = `
   input.addEventListener('keydown', function (e) {
     if (e.key === 'Enter') {
       e.preventDefault();
+      // Alt+Enter and Ctrl+Enter open the result in a new tab.
+      var inNew = !!(e.altKey || e.ctrlKey || e.metaKey);
       if (sug.classList.contains('open') && sugSel >= 0 && sugItems[sugSel]) {
-        submit(sugItems[sugSel].u);
+        submit(sugItems[sugSel].u, inNew);
       } else {
-        submit();
+        submit(null, inNew);
       }
     } else if (e.key === 'ArrowDown' && sug.classList.contains('open')) {
       e.preventDefault();
@@ -1040,14 +1023,27 @@ const barJS = `
 
   // The very top of the window (the bar's own backdrop) is a resize grip:
   // like any native window, drag it to resize from the top edge.
+  // The top edge is the one border Windows cannot hit-test for us: the client
+  // area is pulled up flush to the window top so the glass bar sits there, so
+  // those pixels belong to the page, not to the frame. Forward them by hand.
+  // 6px matches the side/bottom band closely enough to feel the same, and the
+  // cursor has to be set explicitly or the edge gives no affordance at all.
+  var TOP_GRIP = 6;
+  var docEl = document.documentElement;
+  document.addEventListener('mousemove', function (e) {
+    if (document.fullscreenElement) return;
+    if (e.clientY < TOP_GRIP) {
+      if (docEl && docEl.style.cursor !== 'ns-resize') { docEl.style.cursor = 'ns-resize'; }
+    } else if (docEl && docEl.style.cursor === 'ns-resize') {
+      docEl.style.cursor = '';
+    }
+  }, true);
   document.addEventListener('mousedown', function (e) {
-    if (e.button === 0 && !document.fullscreenElement) {
-      var open = strip.classList.contains('open');
-      if (e.clientY < (open ? 3 : 6)) {
-        e.preventDefault();
-        e.stopPropagation();
-        post({ t: 'ui', a: 'wtopresize' });
-      }
+    if (e.button === 0 && !document.fullscreenElement && e.clientY < TOP_GRIP) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (docEl) docEl.style.cursor = '';
+      post({ t: 'ui', a: 'wtopresize' });
     }
   }, true);
 
@@ -1265,13 +1261,20 @@ func (a *app) pushBarState() {
 	if t == nil || t.chromium == nil {
 		return
 	}
+	// Read settings ONCE. store.Settings() takes the store lock and deep-copies
+	// the whole NeverSleep map on every call, so calling it per tab (plus twice
+	// more below) turned a three-field read into one allocation per tab. This
+	// runs on the UI thread from ~30 call sites - every navigation, tab switch
+	// and title change - so the garbage added up fast.
+	settings := a.store.SettingsView()
+
 	tabs := make([]barTab, len(a.tabs))
 	for i, tb := range a.tabs {
 		title := tb.title
 		if title == "" {
 			title = "New Tab"
 		}
-		tabs[i] = barTab{T: title, U: tb.url, F: tb.favicon, P: tb.pinned, S: tb.sleeping, A: tb.audioPlaying, N: a.store.Settings().NeverSleep[permissionOrigin(tb.url)]}
+		tabs[i] = barTab{T: title, U: tb.url, F: tb.favicon, P: tb.pinned, S: tb.sleeping, A: tb.audioPlaying, N: settings.NeverSleep[permissionOrigin(tb.url)]}
 	}
 	push := func(view *tab, idx int) {
 		if view == nil || view.chromium == nil {
@@ -1285,12 +1288,12 @@ func (a *app) pushBarState() {
 			F:    view.chromium.CanGoForward(),
 			M:    a.maximized,
 			K:    view.url != "" && !view.isStart && a.store.IsBookmarked(view.url),
-			E:    a.store.Settings().Engine,
+			E:    settings.Engine,
 			V:    a.splitTab != nil,
 			Pms:  a.permissionStateFor(view),
 			Q:    a.commandTab() == view,
 			L:    view == a.active(),
-			G:    a.store.Settings().LargeControls,
+			G:    settings.LargeControls,
 		}
 		b, err := json.Marshal(st)
 		if err == nil {
@@ -1366,8 +1369,39 @@ func isDownloadPath(path string) bool {
 	dir, err1 := filepath.Abs(filepath.Join(home, "Downloads"))
 	p, err2 := filepath.Abs(path)
 	if err1 != nil || err2 != nil { return false }
+
+	// Resolve symlinks and NTFS junctions before comparing. A purely lexical
+	// check accepts C:\Users\me\Downloads\link\...\secret.txt even when
+	// "link" redirects outside Downloads, which would let any web page open,
+	// reveal or DELETE arbitrary files through the bridge.
+	//
+	// The target of a live download does not exist yet, so an unresolvable
+	// leaf is not fatal: resolve the deepest existing ancestor instead and
+	// re-append the remainder, which cannot itself contain a link.
+	dir = resolveLinks(dir)
+	p = resolveLinks(p)
+
 	rel, err := filepath.Rel(dir, p)
-	return err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && rel != ".."
+	if err != nil || rel == "." || rel == ".." { return false }
+	if strings.HasPrefix(rel, ".."+string(os.PathSeparator)) { return false }
+	// filepath.Rel keeps the volume implicit; a different drive yields an
+	// absolute-looking result rather than a "..", so reject that too.
+	return !filepath.IsAbs(rel)
+}
+
+// resolveLinks returns path with every resolvable symlink/junction expanded.
+// Components that do not exist yet are preserved verbatim.
+func resolveLinks(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(resolved)
+	}
+	parent, leaf := filepath.Split(path)
+	parent = strings.TrimRight(parent, `\/`)
+	if parent == "" || leaf == "" || leaf == "." || leaf == ".." {
+		return filepath.Clean(path)
+	}
+	// Only the leaf is missing: resolve the parent and rebuild.
+	return filepath.Join(resolveLinks(parent), leaf)
 }
 
 // onWebMessage receives JSON messages posted by tab t via window.__ok.
@@ -1384,6 +1418,7 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		X  float64 `json:"x"`
 		Y  float64 `json:"y"`
 		Ts int64   `json:"ts"`
+		N  bool    `json:"n"` // "go": open in a new tab (Alt/Ctrl+Enter)
 	}
 	if err := json.Unmarshal([]byte(msg), &m); err != nil {
 		return
@@ -1442,6 +1477,12 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		}
 
 	case "go": // address bubble, start page or built-in pages
+		if m.N {
+			// Alt/Ctrl+Enter (or a modifier-click on a suggestion): keep the
+			// current page and open the result alongside it, like Chrome.
+			a.newTab(m.U, true)
+			break
+		}
 		a.navigateTab(t, m.U)
 
 	case "nav": // page reported its URL, title and favicon
@@ -1635,7 +1676,9 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		case "permission":
 			kinds := map[string]edge.CoreWebView2PermissionKind{"camera":edge.CoreWebView2PermissionKindCamera,"microphone":edge.CoreWebView2PermissionKindMicrophone,"location":edge.CoreWebView2PermissionKindGeolocation,"notifications":edge.CoreWebView2PermissionKindNotifications,"clipboard":edge.CoreWebView2PermissionKindClipboardRead,"sensors":edge.CoreWebView2PermissionKindOtherSensors}
 			kind, ok := kinds[m.M]
-			if ok {
+			// Only ever persist one of the three known states: m.U arrives
+			// from the page and must not become an arbitrary stored string.
+			if ok && (m.U == "allow" || m.U == "deny" || m.U == "default" || m.U == "") {
 				state := edge.CoreWebView2PermissionStateDefault
 				if m.U == "allow" { state = edge.CoreWebView2PermissionStateAllow }
 				if m.U == "deny" { state = edge.CoreWebView2PermissionStateDeny }
@@ -1699,8 +1742,14 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		case "dl-remove": // cancel a partial or delete one downloaded file
 			path := m.U
 			if isDownloadPath(path) {
-				_ = os.Remove(path)
-				a.postTask(func() { a.showInternal(t, "downloads") })
+				// The UI offers this as "Cancel and remove" for a partial
+				// file. Deleting alone left the transfer running, so it just
+				// recreated the file and the row reappeared; stop it first.
+				a.postTask(func() {
+					a.downloadAction(path, "cancel")
+					_ = os.Remove(path)
+					a.showInternal(t, "downloads")
+				})
 			}
 			return
 		case "wdrag", "wtopresize", "wmaxtoggle", "wmin":
