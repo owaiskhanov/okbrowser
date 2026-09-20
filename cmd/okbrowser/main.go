@@ -48,8 +48,9 @@ var incognitoMode bool
 
 func main() {
 	setAppIdentity()
-	// The stable Windows app identity allows notification-capable sites such
-	// as WhatsApp Web to register with the system notification platform.
+	// Keep a stable Windows shell identity for the app's surfaces. WebView2
+	// can show non-persistent notifications from an open page, but its Push API
+	// is unavailable, so this must not be presented as background site alerts.
 	// The WebView2 Runtime ships with Windows 11 and up-to-date Windows 10.
 	// If it is missing we offer to open the official download page.
 	if v, err := webviewloader.GetInstalledVersion(); err != nil || v == "" {

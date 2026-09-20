@@ -249,8 +249,9 @@ const barJS = `
     ".siteorigin{font-size:11px;opacity:.58;margin:0 4px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
     ".permrow{display:flex;align-items:center;justify-content:space-between;padding:7px 4px;border-top:1px solid rgba(120,128,138,.14)}",
     ".permrow select{border:0;border-radius:9px;padding:4px 6px;background:rgba(120,128,138,.13);color:inherit}",
+    ".permhint{margin:-2px 4px 7px;font-size:10px;line-height:1.3;opacity:.62}",
     "@media(prefers-color-scheme:dark){.sitepanel{background:rgba(28,28,32,.9);color:#f2f2f7}}",
-    ".permtoast{position:fixed;top:44px;right:12px;z-index:2147483647;display:none;align-items:center;gap:9px;max-width:370px;padding:9px 10px 9px 13px;border-radius:15px;pointer-events:auto;font:12px -apple-system,'Segoe UI',sans-serif;color:#202124;background:rgba(250,250,252,.90);backdrop-filter:blur(28px) saturate(1.8);box-shadow:0 14px 42px rgba(0,0,0,.25)}",
+    ".permtoast{position:fixed;top:44px;right:12px;z-index:2147483647;display:none;align-items:center;gap:9px;max-width:420px;padding:9px 10px 9px 13px;border-radius:15px;pointer-events:auto;font:12px -apple-system,'Segoe UI',sans-serif;color:#202124;background:rgba(250,250,252,.90);backdrop-filter:blur(28px) saturate(1.8);box-shadow:0 14px 42px rgba(0,0,0,.25)}",
     ".permtoast.show{display:flex;animation:okin .16s ease}.permtext{line-height:1.3;flex:1}.permbtn{border:0;border-radius:10px;padding:6px 9px;cursor:default;font:600 12px inherit;color:#fff;background:#0a84ff}.permbtn.deny{color:#3c4043;background:rgba(120,128,138,.17)}",
     "@media(prefers-color-scheme:dark){.permtoast{color:#f2f2f7;background:rgba(28,28,32,.92)}.permbtn.deny{color:#e8eaed;background:rgba(255,255,255,.14)}}",
     ".menu,.ctx{position:fixed;top:34px;right:6px;width:224px;padding:6px;border-radius:16px;",
@@ -425,6 +426,7 @@ const barJS = `
       '<div class="permrow">Microphone<select data-perm="microphone"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div>' +
       '<div class="permrow">Location<select data-perm="location"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div>' +
       '<div class="permrow">Notifications<select data-perm="notifications"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div>' +
+      '<div class="permhint">Works while this page is open. Background push alerts are unavailable in WebView2.</div>' +
       '<div class="permrow">Clipboard<select data-perm="clipboard"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div>' +
       '<div class="permrow">Sensors<select data-perm="sensors"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div>' +
       '<div class="permrow"><div class="mrow" id="clear-perms">Reset permissions</div><div class="mrow" id="clear-site">Clear site data</div></div></div>' +
@@ -833,12 +835,14 @@ const barJS = `
   // Notifications do not get WebView2's stock permission dialog. This is
   // browser chrome, not page content, so the requesting site cannot spoof
   // it. The same choice is also available from the lock/site icon above.
+  // WebView2 supports only non-persistent page notifications; state that
+  // limit before the user consents rather than implying background push works.
   var permtoast = root.getElementById('permtoast');
   var permtext = root.getElementById('permtext');
   function renderPermissionPrompt() {
     var asked = S.p === 'notifications';
     permtoast.classList.toggle('show', asked);
-    if (asked) permtext.textContent = (S.po || 'This site') + ' wants to send notifications';
+    if (asked) permtext.textContent = (S.po || 'This site') + ' wants to show notifications while this page is open. Background push alerts are unavailable.';
   }
   root.getElementById('permallow').addEventListener('click', function () { post({t:'ui',a:'permission-prompt',u:'allow',n:shellToken}); });
   root.getElementById('permdeny').addEventListener('click', function () { post({t:'ui',a:'permission-prompt',u:'deny',n:shellToken}); });

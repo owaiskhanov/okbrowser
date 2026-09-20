@@ -84,9 +84,10 @@ just content:
   for camera, microphone, location, notifications, clipboard and sensors;
   choices persist by origin, with one-click permission reset and per-site
   cookie/storage clearing
-- **Web notifications**: a stable Windows application identity lets WebView2
-  register notifications from WhatsApp Web and other permitted sites with the
-  native Windows notification platform; permissions remain controllable per site
+- **Web notifications**: permitted sites can show non-persistent notifications
+  while their page is open; permissions remain controllable per site. WebView2
+  does not implement Web Push, so background alerts from WhatsApp Web, mail,
+  chat, and similar services are unavailable in this browser
 - **Windows-protected autofill**: password saving, passkeys, addresses and
   payment autofill are delegated directly to the WebView2 profile; OK Browser
   never reads or stores credential values itself
