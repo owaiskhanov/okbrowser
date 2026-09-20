@@ -160,16 +160,16 @@ assert.ok(!okb.className.includes('open'), 'bubble collapses after submit');
 win.__okBubbleFocus();
 assert.ok(okb.className.includes('open') && input.focused, 'Ctrl+L opens and focuses the bubble');
 
-// --- keyed rendering: pills update in place, only genuinely new ones animate ---
+// --- keyed rendering: pills update in place ---
 const pill0 = tz.children[0];
 win.__okBar({ tabs: [{ t: 'A2' }, { t: 'B' }], a: 0, u: '', b: false, f: false, m: false });
 assert.strictEqual(tz.children[0], pill0, 'pills must be reused, not rebuilt');
 assert.strictEqual(tz.children[0].children[1]._text, 'A2', 'title updates in place');
 assert.strictEqual(tz.children.length, 2, 'removed pill is dropped');
 win.__okBar({ tabs: [{ t: 'A2' }, { t: 'B' }, { t: 'C' }], a: 2, u: '', b: false, f: false, m: false });
-assert.ok(tz.children[2].classList.contains('in'), 'new pill gets the subtle enter animation');
-tz.children[2].dispatch('animationend', {});
-assert.ok(!tz.children[2].classList.contains('in'), 'animation class removed after it ends');
+// A new pill must appear immediately. It used to scale in over .24s, which
+// delayed visible feedback on the one action that has to feel instant.
+assert.ok(!tz.children[2].classList.contains('in'), 'new pill must not carry an enter animation');
 assert.ok(tz.children[2].classList.contains('on'), 'active pill marked via classList');
 
 // --- find in page ---
@@ -410,7 +410,7 @@ setTimeout(() => {
   strip.dispatch('mouseenter', {});
   win.__okBar({ tabs: [{ t: 'A' }, { t: 'B' }, { t: 'C' }, { t: 'D' }], a: 3, u: 'https://example.com/d', b: false, f: false, m: false });
   assert.ok(strip.classList.contains('open'), 'tab switch keeps the bar visible');
-  assert.ok(tz.children[3].classList.contains('in'), 'the new tab pill animates in');
+  assert.ok(!tz.children[3].classList.contains('in'), 'the new tab pill appears with no enter animation');
 
   win.__okBubbleFocus();
   assert.ok(strip.classList.contains('open'), 'Ctrl+L reveals the bar');
@@ -433,7 +433,23 @@ setTimeout(() => {
       setTimeout(() => {
         assert.ok(!menu.classList.contains('open'), 'menu closes once the bar retires');
         assert.ok(!strip.classList.contains('open'), 'bar retires after leaving the menu');
-        console.log('shell UI logic tests: ALL PASSED');
+        
+// --- speed: no entry animation may gate the new-tab path ---
+// The tab pill used to scale in over .24s and the progress bar ran a scripted
+// 5s crawl. Both delayed visible feedback on the actions that must feel
+// instant, so assert the CSS cannot regress.
+{
+  // The shell CSS lives in bridge.go as Go string literals, so assert on the
+  // source directly rather than the extracted JS.
+  assert.ok(!/\.tab\.in\{animation/.test(src),
+    'the new-tab pill must not have an enter animation');
+  assert.ok(!/@keyframes okload/.test(src),
+    'the fake 5s load-bar crawl must stay removed');
+  assert.ok(!/classList\.add\('in'\)/.test(js),
+    'new pills must not be tagged for an enter animation');
+}
+
+console.log('shell UI logic tests: ALL PASSED');
       }, 600);
     }, 600);
   }, 550);

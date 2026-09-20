@@ -164,7 +164,6 @@ const barJS = `
     "box-shadow:0 1px 6px rgba(0,0,0,.08),inset 0 1px 0 rgba(255,255,255,.42),",
     "inset 0 0 0 .5px rgba(255,255,255,.20);",
     "transition:background .16s ease,transform .16s ease,flex-basis .22s ease,width .22s ease}",
-    ".tab.in{animation:okin .24s cubic-bezier(.2,.8,.3,1)}",
     ".tab.sleep{opacity:.62}.tab.sleep .ic{filter:saturate(.35)}",
     ".ic{flex:0 0 auto;width:16px;height:16px;border-radius:5px;display:grid;place-items:center;",
     "font-size:10px;font-weight:700;color:#5f6368;overflow:hidden}",
@@ -176,9 +175,8 @@ const barJS = `
     ".prog{position:fixed;top:0;left:0;height:2.5px;width:0;z-index:2147483644;pointer-events:none;",
     "background:linear-gradient(90deg,#0a84ff,#5ac8fa);border-radius:0 2px 2px 0;opacity:0;",
     "transition:opacity .25s}",
-    ".prog.on{opacity:1;animation:okload 5s ease-out forwards}",
+    ".prog.on{opacity:1;width:86%;transition:width 2.2s ease-out,opacity .2s}",
     ".prog.done{width:100% !important;opacity:0;transition:width .2s,opacity .35s}",
-    "@keyframes okload{0%{width:8%}25%{width:38%}55%{width:62%}85%{width:78%}100%{width:86%}}",
     "@keyframes okin{from{transform:scale(.72);opacity:0}to{transform:scale(1);opacity:1}}",
     ".tab:hover{background:rgba(250,250,252,.48)}",
     ".tab:active{transform:scale(.95)}",
@@ -666,7 +664,6 @@ const barJS = `
     el.addEventListener('auxclick', function (ev) {
       if (ev.button === 1) { ev.preventDefault(); post({ t: 'ui', a: 'close', i: el.__idx }); }
     });
-    el.addEventListener('animationend', function () { el.classList.remove('in'); });
     // Drag & drop reordering.
     el.addEventListener('dragstart', function (e) {
       dragFrom = el.__idx;
@@ -765,7 +762,6 @@ const barJS = `
       var el = tabEls[i];
       if (!el) {
         el = buildTab();
-        el.classList.add('in');
         tabEls[i] = el;
         tz.appendChild(el);
         if (stateLive) revealBar(true); // show the new tab appearing

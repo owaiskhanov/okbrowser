@@ -258,14 +258,12 @@ func (a *app) attachTab(t *tab, url string, activate bool) {
 	a.tabs = append(a.tabs, t)
 	win.SetTimer(a.hwnd, 4, 30000, 0) // periodic inactive-tab memory trim
 	if activate || len(a.tabs) == 1 {
-		// The fade state MUST be armed BEFORE the tab is shown: layout()
-		// keeps a pending fade host hidden until its first paint. Setting
-		// it afterwards (the old order) let layout() show the unpainted
-		// host for one full-opacity frame - the white flash.
-		prev := a.active()
-		if prev != nil && prev != t && isWnd(prev.host) {
-			a.beginTabFade(t, prev.host)
-		}
+		// Shown immediately. There used to be a cross-fade here that kept
+		// the new tab hidden until its first paint (or a 700ms fallback)
+		// and then ramped its alpha for another ~240ms, which is pure
+		// added latency on the one action that must feel instant. The tab
+		// host class paints a dark background, so revealing it at once
+		// cannot flash white.
 		a.switchToTab(len(a.tabs) - 1)
 	} else {
 		a.pushBarState() // update the visible tab strip
@@ -280,10 +278,6 @@ func (a *app) attachTab(t *tab, url string, activate bool) {
 			// Browsing happened since this page was warmed, so its
 			// most-visited tiles are out of date.
 			a.showStartPage(t)
-		} else if a.fading && t.host == a.fadeHost {
-			// Nothing will load, so no NavigationCompleted will arrive to
-			// release the cross-fade. Reveal it now - this is the instant path.
-			a.fadeReady = true
 		}
 	}
 	a.scheduleBarPush(false)
@@ -311,9 +305,6 @@ func (a *app) dropTab(t *tab) {
 	}
 	if a.focusedTab == t {
 		a.focusedTab = nil
-	}
-	if a.fading && a.fadeHost == t.host {
-		a.endTabFade()
 	}
 	t.chromium = nil
 	if isWnd(t.host) {
@@ -668,85 +659,10 @@ func (a *app) sleepInactiveTabs() {
 	a.pushBarState()
 }
 
-// beginTabFade starts the liquid cross-fade for a newly opened tab.
-//
-// Two-phase, so nothing ever flashes: while the new tab's engine starts
-// and renders its first page, its host window stays completely HIDDEN -
-// the user keeps seeing the previous tab (an uninitialized layered
-// surface shows black, and the engine's default background is white, so
-// showing it early is exactly what flashed). Only once the first content
-// has painted does the host appear as a soft translucent veil over the
-// old tab and liquidly ramp to full opacity.
-func (a *app) beginTabFade(t *tab, prevHost win.HWND) {
-	a.fading = true
-	a.fadeRamping = false
-	a.fadeReady = false
-	a.fadeHost = t.host
-	a.fadePrev = prevHost
-	a.fadeAlpha = 60
-	a.fadeTicks = 0
-	win.SetTimer(a.hwnd, 2, 16, 0)
-}
-
-// tabByHost finds the tab owned by a host window.
-func (a *app) tabByHost(h win.HWND) *tab {
-	for _, t := range a.tabs {
-		if t.host == h {
-			return t
-		}
-	}
-	return nil
-}
-
-// fadeTick advances the new-tab cross-fade (WM_TIMER id 2).
-func (a *app) fadeTick() {
-	if !a.fading {
-		win.KillTimer(a.hwnd, 2)
-		return
-	}
-	a.fadeTicks++
-	if !isWnd(a.fadeHost) {
-		a.endTabFade()
-		return
-	}
-	// The user switched away mid-fade: settle instantly.
-	if cur := a.active(); cur == nil || cur.host != a.fadeHost {
-		a.endTabFade()
-		return
-	}
-	if !a.fadeRamping {
-		// Pending phase: stay hidden until the first content has painted
-		// (fadeReady) or the ~700ms fallback fires - the previous tab
-		// keeps showing the whole time.
-		if !a.fadeReady && a.fadeTicks <= 45 {
-			return
-		}
-		ex := win.GetWindowLong(a.fadeHost, win.GWL_EXSTYLE)
-		win.SetWindowLong(a.fadeHost, win.GWL_EXSTYLE, ex|win.WS_EX_LAYERED)
-		if !setLayeredAlpha(a.fadeHost, byte(a.fadeAlpha)) {
-			unlayered(a.fadeHost) // layered children unsupported: show at once
-			a.endTabFade()
-			return
-		}
-		win.ShowWindow(a.fadeHost, win.SW_SHOW)
-		if t := a.tabByHost(a.fadeHost); t != nil && t.chromium != nil {
-			t.chromium.Show()
-			t.chromium.Resize()
-		}
-		a.fadeRamping = true // revealed - the liquid ramp begins next tick
-		return
-	}
-	a.fadeAlpha += 13 // gentle ~250ms ramp
-	if a.fadeAlpha >= 255 {
-		a.endTabFade()
-		return
-	}
-	setLayeredAlpha(a.fadeHost, byte(a.fadeAlpha))
-}
-
-// selftestClickTick dispatches the deferred trusted click once the
-// cross-fade has fully settled (Chromium ignores synthesized input for
-// hidden widgets - dispatching during the pending phase was a race).
+// selftestClickTick dispatches the deferred trusted click once the target tab
+// is actually usable. Chromium ignores synthesized input aimed at a widget
+// that is not showing yet, and tab engines now start asynchronously, so wait
+// for readiness (previously this waited for the cross-fade to settle).
 func (a *app) selftestClickTick() {
 	t := a.stClickTab
 	if t == nil || t.chromium == nil {
@@ -754,7 +670,7 @@ func (a *app) selftestClickTick() {
 		return
 	}
 	a.stClickTicks++
-	if a.fading && a.stClickTicks < 80 { // up to ~4s
+	if !t.ready && a.stClickTicks < 80 { // up to ~4s
 		return
 	}
 	win.KillTimer(a.hwnd, 3)
@@ -764,23 +680,6 @@ func (a *app) selftestClickTick() {
 	t.chromium.CallDevToolsProtocol("Input.dispatchMouseEvent",
 		fmt.Sprintf(`{"type":"mouseReleased","x":%.1f,"y":%.1f,"button":"left","clickCount":1}`, a.stClickX, a.stClickY))
 	a.stClickTab = nil
-}
-
-// endTabFade finishes the cross-fade: full opacity, previous view retired.
-func (a *app) endTabFade() {
-	win.KillTimer(a.hwnd, 2)
-	if isWnd(a.fadeHost) {
-		setLayeredAlpha(a.fadeHost, 255)
-		unlayered(a.fadeHost)
-	}
-	prev := a.fadePrev
-	a.fading = false
-	a.fadeHost = 0
-	a.fadePrev = 0
-	if isWnd(prev) {
-		win.ShowWindow(prev, win.SW_HIDE)
-	}
-	a.layout()
 }
 
 // reorderTab moves the tab at index from to index to.
@@ -867,9 +766,6 @@ func (a *app) onNavStarting(t *tab, args *edge.ICoreWebView2NavigationStartingEv
 func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompletedEventArgs) {
 	if t.chromium == nil {
 		return
-	}
-	if a.fading && t.host == a.fadeHost {
-		a.fadeReady = true // first paint done - begin the liquid ramp
 	}
 	if a.isActive(t) {
 		a.execActive("window.__okLoad&&window.__okLoad(false)")
