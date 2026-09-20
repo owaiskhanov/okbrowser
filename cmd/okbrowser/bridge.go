@@ -1261,13 +1261,20 @@ func (a *app) pushBarState() {
 	if t == nil || t.chromium == nil {
 		return
 	}
+	// Read settings ONCE. store.Settings() takes the store lock and deep-copies
+	// the whole NeverSleep map on every call, so calling it per tab (plus twice
+	// more below) turned a three-field read into one allocation per tab. This
+	// runs on the UI thread from ~30 call sites - every navigation, tab switch
+	// and title change - so the garbage added up fast.
+	settings := a.store.SettingsView()
+
 	tabs := make([]barTab, len(a.tabs))
 	for i, tb := range a.tabs {
 		title := tb.title
 		if title == "" {
 			title = "New Tab"
 		}
-		tabs[i] = barTab{T: title, U: tb.url, F: tb.favicon, P: tb.pinned, S: tb.sleeping, A: tb.audioPlaying, N: a.store.Settings().NeverSleep[permissionOrigin(tb.url)]}
+		tabs[i] = barTab{T: title, U: tb.url, F: tb.favicon, P: tb.pinned, S: tb.sleeping, A: tb.audioPlaying, N: settings.NeverSleep[permissionOrigin(tb.url)]}
 	}
 	push := func(view *tab, idx int) {
 		if view == nil || view.chromium == nil {
@@ -1281,12 +1288,12 @@ func (a *app) pushBarState() {
 			F:    view.chromium.CanGoForward(),
 			M:    a.maximized,
 			K:    view.url != "" && !view.isStart && a.store.IsBookmarked(view.url),
-			E:    a.store.Settings().Engine,
+			E:    settings.Engine,
 			V:    a.splitTab != nil,
 			Pms:  a.permissionStateFor(view),
 			Q:    a.commandTab() == view,
 			L:    view == a.active(),
-			G:    a.store.Settings().LargeControls,
+			G:    settings.LargeControls,
 		}
 		b, err := json.Marshal(st)
 		if err == nil {

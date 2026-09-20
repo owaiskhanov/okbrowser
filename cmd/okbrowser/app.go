@@ -384,7 +384,7 @@ func NewApp(startURL string) (*app, bool) {
 	// Restore the last session when the user wants it and no URL was
 	// passed on the command line.
 	var sess *sessionData
-	if startURL == "" && !selfTestMode && a.store.Settings().RestoreSession {
+	if startURL == "" && !selfTestMode && a.store.SettingsView().RestoreSession {
 		sess = a.store.LoadSession()
 	}
 	if sess != nil && sess.Rect != [4]int32{} {

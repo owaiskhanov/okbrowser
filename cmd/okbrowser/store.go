@@ -49,6 +49,21 @@ type histEntry struct {
 	URL   string `json:"u"`
 	Title string `json:"t"`
 	TS    int64  `json:"ts"`
+
+	// lowURL/lowTitle cache the folded forms used by Suggest. Address-bar
+	// matching is case-insensitive, and lowercasing both fields of every
+	// entry on every keystroke allocated two throwaway strings per entry -
+	// by far the most garbage the browser produced during typing. Not
+	// serialised: the on-disk format is unchanged and these are rebuilt on
+	// load.
+	lowURL   string `json:"-"`
+	lowTitle string `json:"-"`
+}
+
+// fold fills the cached lowercase fields.
+func (e *histEntry) fold() {
+	e.lowURL = strings.ToLower(e.URL)
+	e.lowTitle = strings.ToLower(e.Title)
 }
 
 // Pages control the URL, title and icon they report through the bridge, and
@@ -144,6 +159,9 @@ func newStore() *store {
 		dirty: map[string]bool{},
 	}
 	s.load("history.json", &s.history)
+	for i := range s.history { // build the Suggest match cache once, at startup
+		s.history[i].fold()
+	}
 	s.load("bookmarks.json", &s.bookmarks)
 	s.load("settings.json", &s.settings)
 	s.load("permissions.json", &s.permissions)
@@ -257,7 +275,9 @@ func (s *store) AddHistory(url, title string) {
 	if n := len(s.history); n > 0 && s.history[n-1].URL == url {
 		return
 	}
-	s.history = append(s.history, histEntry{URL: url, Title: title, TS: time.Now().UnixMilli()})
+	e := histEntry{URL: url, Title: title, TS: time.Now().UnixMilli()}
+	e.fold()
+	s.history = append(s.history, e)
 	if len(s.history) > 2000 {
 		s.history = s.history[len(s.history)-2000:]
 	}
@@ -470,24 +490,39 @@ func (s *store) Suggest(q string, n int) []suggestion {
 			cands = append(cands, cand{suggestion{URL: b.URL, Title: t, Source: "b"}, 1_000_000 + b.TS/1_000_000})
 		}
 	}
+	// Aggregate matching history by URL. This used to build a
+	// map[string]*hagg, which heap-allocated one struct per unique URL and
+	// grew a map sized by the number of matches - the dominant cost of a
+	// keystroke, far more than the string matching itself. Values are stored
+	// inline in a slice instead, with the map holding only an index, so a
+	// query that matches everything allocates a handful of slice growths
+	// rather than thousands of small objects.
 	type hagg struct {
+		url   string
 		title string
 		count int64
 		last  int64
 	}
-	m := map[string]*hagg{}
-	for _, e := range s.history {
+	aggs := make([]hagg, 0, 32)
+	at := make(map[string]int, 64)
+	for i := range s.history {
+		e := &s.history[i]
+		// Match BEFORE the bookmark-dedup lookup: most entries fail the
+		// substring test, and strings.Contains is much cheaper than hashing
+		// a URL for a map probe.
+		if !strings.Contains(e.lowURL, q) && !strings.Contains(e.lowTitle, q) {
+			continue
+		}
 		if seen[e.URL] {
 			continue
 		}
-		if !strings.Contains(strings.ToLower(e.URL), q) && !strings.Contains(strings.ToLower(e.Title), q) {
-			continue
+		idx, ok := at[e.URL]
+		if !ok {
+			idx = len(aggs)
+			aggs = append(aggs, hagg{url: e.URL})
+			at[e.URL] = idx
 		}
-		a := m[e.URL]
-		if a == nil {
-			a = &hagg{}
-			m[e.URL] = a
-		}
+		a := &aggs[idx]
 		if e.Title != "" {
 			a.title = e.Title
 		}
@@ -496,12 +531,13 @@ func (s *store) Suggest(q string, n int) []suggestion {
 			a.last = e.TS
 		}
 	}
-	for u, a := range m {
+	for i := range aggs {
+		a := &aggs[i]
 		t := a.title
 		if t == "" {
-			t = u
+			t = a.url
 		}
-		cands = append(cands, cand{suggestion{URL: u, Title: t, Source: "h"}, a.count*1000 + a.last/86_400_000})
+		cands = append(cands, cand{suggestion{URL: a.url, Title: t, Source: "h"}, a.count*1000 + a.last/86_400_000})
 	}
 	s.mu.Unlock()
 	sort.SliceStable(cands, func(i, j int) bool { return cands[i].rank > cands[j].rank })
@@ -535,7 +571,9 @@ func (s *store) ClearPermissions(origin string) {
 
 // ---- settings + session -----------------------------------------------------
 
-// Settings returns a copy of the current settings.
+// Settings returns a deep copy of the current settings, safe for the caller
+// to mutate. The NeverSleep copy is the expensive part, so read-only callers
+// on hot paths should prefer SettingsView.
 func (s *store) Settings() Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -543,6 +581,26 @@ func (s *store) Settings() Settings {
 	out.NeverSleep = make(map[string]bool, len(s.settings.NeverSleep))
 	for origin, value := range s.settings.NeverSleep { out.NeverSleep[origin] = value }
 	return out
+}
+
+// SettingsView returns the settings WITHOUT copying the NeverSleep map, for
+// callers that only read. The returned NeverSleep aliases store state and
+// must never be written to or retained past the call.
+//
+// Almost every caller only wants a scalar (Engine, Autofill, SleepMinutes),
+// and the map copy dominated the cost of reading one.
+func (s *store) SettingsView() Settings {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.settings
+}
+
+// NeverSleepFor reports the per-origin never-sleep flag without copying the
+// map, for the per-tab loops that previously paid a full copy per tab.
+func (s *store) NeverSleepFor(origin string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.settings.NeverSleep[origin]
 }
 
 // SetSettings saves the settings.

@@ -228,8 +228,9 @@ func (a *app) onEngineReady(t *tab, ok bool) {
 		_ = st.PutIsZoomControlEnabled(true)
 		// Passwords, passkeys and profile autofill stay inside WebView2's
 		// Windows-protected profile; the browser host never sees the values.
-		_ = st.PutIsPasswordAutosaveEnabled(a.store.Settings().Autofill && !incognitoMode)
-		_ = st.PutIsGeneralAutofillEnabled(a.store.Settings().Autofill && !incognitoMode)
+		autofill := a.store.SettingsView().Autofill && !incognitoMode
+		_ = st.PutIsPasswordAutosaveEnabled(autofill)
+		_ = st.PutIsGeneralAutofillEnabled(autofill)
 	}
 	// Document-created scripts must be registered before the first
 	// navigation, which is why the navigation waits for this point.
@@ -561,7 +562,7 @@ func (a *app) navigateTab(t *tab, raw string) {
 		a.showInternal(t, strings.TrimPrefix(low, "okbrowser://"))
 		return
 	}
-	u := nav.ParseWithEngine(s, a.store.Settings().Engine)
+	u := nav.ParseWithEngine(s, a.store.SettingsView().Engine)
 	if u == "" {
 		return
 	}
@@ -589,7 +590,7 @@ func (a *app) showInternal(t *tab, page string) {
 	case "downloads":
 		html, title = DownloadsHTML(a.downloadFiles()), "Downloads"
 	default: // start
-		html, title = StartPageHTML(a.store.MostVisited(12), a.store.Settings().Engine), "New Tab"
+		html, title = StartPageHTML(a.store.MostVisited(12), a.store.SettingsView().Engine), "New Tab"
 		page, isStart = "start", true
 	}
 	t.isStart = isStart
@@ -644,7 +645,8 @@ func (a *app) setTabSleeping(i int, sleep bool) {
 // tabs and either Split View pane stay live. WebView2 keeps page state in memory
 // and resumes it instantly when selected.
 func (a *app) sleepInactiveTabs() {
-	settings := a.store.Settings()
+	// Read-only: no NeverSleep copy needed.
+	settings := a.store.SettingsView()
 	minutes := settings.SleepMinutes
 	pressure := systemMemoryLoad() >= 88
 	if minutes <= 0 && !pressure { return }
