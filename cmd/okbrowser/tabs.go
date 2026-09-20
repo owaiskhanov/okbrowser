@@ -39,6 +39,12 @@ type tab struct {
 	dirtyForm    bool
 	crashCount   int
 	lastCrash    time.Time
+
+	// downloadAt is when this tab last turned a navigation into a download.
+	// A link that downloads (GitHub release assets, WhatsApp Web media)
+	// reports NavigationCompleted with IsSuccess=FALSE, so without this the
+	// page the user was on would be replaced by our error page.
+	downloadAt time.Time
 }
 
 func permissionName(kind edge.CoreWebView2PermissionKind) string {
@@ -340,6 +346,10 @@ func (a *app) closeTab(i int) {
 			a.closedTabs = a.closedTabs[len(a.closedTabs)-16:]
 		}
 	}
+	// The tab is going away, but its downloads keep running and are still
+	// listed on the Downloads page. Detach them so they never point at a
+	// freed tab.
+	a.detachDownloads(t)
 	t.chromium.Close()
 	win.DestroyWindow(t.host)
 	a.tabs = append(a.tabs[:i], a.tabs[i+1:]...)
@@ -678,6 +688,14 @@ func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompleted
 	if args != nil && !t.errPage {
 		if ok, err := args.GetIsSuccess(); err == nil && !ok {
 			code, _ := args.GetWebErrorStatus()
+			// A navigation that turned into a download always completes
+			// "unsuccessfully" (typically 9 = ConnectionAborted) because no
+			// document was loaded. The download itself is fine, so keep the
+			// current page instead of blowing it away with an error page.
+			if !t.downloadAt.IsZero() && time.Since(t.downloadAt) < 5*time.Second {
+				t.downloadAt = time.Time{}
+				return
+			}
 			// 14 = OperationCanceled (user stopped or replaced the
 			// navigation) - not an error worth showing.
 			if code != 0 && code != 14 && t.url != "" {
