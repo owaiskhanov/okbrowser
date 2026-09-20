@@ -149,3 +149,90 @@ func TestSuggestRanksFrequentPagesFirst(t *testing.T) {
 		t.Errorf("most-visited page did not rank first; got %q", got[0].URL)
 	}
 }
+
+// MostVisited aggregates and sorts the entire history to pick a handful of
+// tiles, and it runs on the UI thread every time a start page is rendered.
+// The result is memoised against the store revision, so these tests pin the
+// two things a cache must get right: it must return the same answer as a
+// fresh computation, and it must not go stale.
+
+// TestMostVisitedCacheInvalidatesOnNewHistory is the one that matters. A stale
+// cache would silently freeze the new-tab tiles at whatever they were when the
+// browser started.
+func TestMostVisitedCacheInvalidatesOnNewHistory(t *testing.T) {
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	s := newStore()
+
+	s.AddHistory("https://first.example.com/page", "First")
+	before := s.MostVisited(12)
+	if len(before) != 1 || before[0].URL != "https://first.example.com/page" {
+		t.Fatalf("unexpected initial tiles: %+v", before)
+	}
+
+	// Repeat calls must be consistent (this is the cached path).
+	if again := s.MostVisited(12); len(again) != 1 || again[0].URL != before[0].URL {
+		t.Fatalf("cached call disagreed with the first: %+v", again)
+	}
+
+	// New browsing must be reflected.
+	s.AddHistory("https://second.example.com/page", "Second")
+	after := s.MostVisited(12)
+	if len(after) != 2 {
+		t.Fatalf("new history not reflected in tiles: got %d tiles, want 2", len(after))
+	}
+
+	// A bookmark is also start-page input.
+	s.ToggleBookmark("https://third.example.com/page", "Third")
+	if got := s.MostVisited(12); len(got) != 3 {
+		t.Errorf("new bookmark not reflected in tiles: got %d tiles, want 3", len(got))
+	}
+
+	// Clearing history must not leave tiles behind.
+	s.ClearHistory()
+	for _, tile := range s.MostVisited(12) {
+		if strings.Contains(tile.URL, "first.example.com") {
+			t.Error("cleared history still appears in the start-page tiles")
+		}
+	}
+}
+
+// TestMostVisitedCacheRespectsCount guards the subtle failure: asking for a
+// different number of tiles must not be served from a cache built for another.
+func TestMostVisitedCacheRespectsCount(t *testing.T) {
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	s := newStore()
+	for i := 0; i < 6; i++ {
+		s.AddHistory("https://site"+string(rune('a'+i))+".example.com/p", "Site")
+	}
+
+	if got := s.MostVisited(6); len(got) != 6 {
+		t.Fatalf("want 6 tiles, got %d", len(got))
+	}
+	if got := s.MostVisited(2); len(got) != 2 {
+		t.Errorf("want 2 tiles, got %d - a cache built for a different count was reused", len(got))
+	}
+	if got := s.MostVisited(6); len(got) != 6 {
+		t.Errorf("want 6 tiles again, got %d", len(got))
+	}
+}
+
+// TestMostVisitedReturnsIndependentCopies: callers must not be able to mutate
+// the cached slice and corrupt what every later new tab shows.
+func TestMostVisitedReturnsIndependentCopies(t *testing.T) {
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	s := newStore()
+	s.AddHistory("https://example.com/page", "Example")
+
+	if len(s.MostVisited(12)) == 0 {
+		t.Fatal("no tiles")
+	}
+	// Mutate a result served FROM the cache (the second call onwards). The
+	// first call returns a freshly built slice, so mutating that one would
+	// pass even if the cache were handed out by reference.
+	cached := s.MostVisited(12)
+	cached[0].Title = "MUTATED"
+
+	if third := s.MostVisited(12); third[0].Title == "MUTATED" {
+		t.Error("caller mutation leaked into the cached tiles")
+	}
+}

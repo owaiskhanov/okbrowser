@@ -593,29 +593,59 @@ func (a *app) layout() {
 	if w <= 0 || h <= 0 {
 		return
 	}
+	// Show the tabs that should be visible BEFORE hiding the rest. Hiding
+	// first left a frame in which no tab host was mapped at all, and the
+	// parent then painted its own background through the gap - the flash
+	// seen on every tab switch. Ordering it this way means a visible
+	// surface is on screen at all times.
+	for i, t := range a.tabs {
+		isSplit := a.splitTab != nil && t == a.splitTab
+		if i != a.activeIdx && !isSplit {
+			continue
+		}
+		x, width := int32(0), w
+		if a.splitTab != nil {
+			gap := a.scaled(5)
+			ratio := a.splitRatio
+			if ratio < .28 || ratio > .72 { ratio = .5 }
+			left := int32(float64(w-gap) * ratio)
+			if isSplit { x, width = left + gap, w - left - gap } else { width = left }
+		}
+
+		// Skip redundant work. layout() runs on every WM_SIZE, so a window
+		// drag-resize called MoveWindow plus a full engine Resize for each
+		// tab on every frame even when nothing about it had changed.
+		moved := t.bx != x || t.by != 0 || t.bw != width || t.bh != h
+		if moved {
+			t.bx, t.by, t.bw, t.bh = x, 0, width, h
+			win.MoveWindow(t.host, x, 0, width, h, false)
+		}
+		if !t.shown {
+			t.shown = true
+			win.ShowWindow(t.host, win.SW_SHOW)
+		}
+		if t.chromium != nil {
+			if !t.engineShown {
+				t.engineShown = true
+				t.chromium.Show()
+			}
+			if moved {
+				t.chromium.Resize()
+			}
+		}
+	}
 	for i, t := range a.tabs {
 		isSplit := a.splitTab != nil && t == a.splitTab
 		if i == a.activeIdx || isSplit {
-			x, width := int32(0), w
-			if a.splitTab != nil {
-				gap := a.scaled(5)
-				ratio := a.splitRatio
-				if ratio < .28 || ratio > .72 { ratio = .5 }
-				left := int32(float64(w-gap) * ratio)
-				if isSplit { x, width = left + gap, w - left - gap } else { width = left }
-			}
-
-			win.MoveWindow(t.host, x, 0, width, h, false)
-			win.ShowWindow(t.host, win.SW_SHOW)
-			if t.chromium != nil {
-				t.chromium.Show()
-				t.chromium.Resize()
-			}
-		} else {
+			continue
+		}
+		if t.shown {
+			t.shown = false
 			win.ShowWindow(t.host, win.SW_HIDE)
-			if t.chromium != nil {
-				t.chromium.Hide()
-			}
+		}
+		if t.chromium != nil && t.engineShown {
+			t.engineShown = false
+			t.chromium.Hide()
 		}
 	}
 }

@@ -35,6 +35,14 @@ type store struct {
 	// rev increments whenever data shown on the start page changes, so a
 	// pre-rendered start page can tell it has gone stale.
 	rev uint64
+
+	// Memoised MostVisited result. Building it aggregates and sorts the whole
+	// history, which is pure waste when nothing has changed between two new
+	// tabs. Valid while tilesRev == rev.
+	tiles    []Tile
+	tilesN   int
+	tilesRev uint64
+	tilesOK  bool
 }
 
 // Rev reports the start-page data revision.
@@ -403,9 +411,26 @@ type Tile struct {
 }
 
 // MostVisited aggregates history into the top n most-visited sites.
+//
+// The result is memoised against the store revision: opening several tabs
+// without browsing in between recomputed an identical answer every time, and
+// this runs on the UI thread while the user waits for the new tab.
 func (s *store) MostVisited(n int) []Tile {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.tilesOK && s.tilesRev == s.rev && s.tilesN == n {
+		out := make([]Tile, len(s.tiles))
+		copy(out, s.tiles)
+		return out
+	}
+	out := s.mostVisitedLocked(n)
+	s.tiles = make([]Tile, len(out))
+	copy(s.tiles, out)
+	s.tilesN, s.tilesRev, s.tilesOK = n, s.rev, true
+	return out
+}
+
+func (s *store) mostVisitedLocked(n int) []Tile {
 	type agg struct {
 		title string
 		count int64

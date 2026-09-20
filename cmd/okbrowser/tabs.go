@@ -51,6 +51,13 @@ type tab struct {
 	// from, so a warmed page can be refreshed if it went stale.
 	startRev uint64
 
+	// Cached host geometry and visibility, so layout() can skip Win32 and
+	// engine calls that would not change anything. layout() runs on every
+	// WM_SIZE, i.e. every frame of a window drag-resize.
+	bx, by, bw, bh int32
+	shown          bool
+	engineShown    bool
+
 	// downloadAt is when this tab last turned a navigation into a download.
 	// A link that downloads (GitHub release assets, WhatsApp Web media)
 	// reports NavigationCompleted with IsSuccess=FALSE, so without this the
@@ -480,9 +487,11 @@ func (a *app) switchToTab(i int) {
 	// Selecting either pane promotes it to a normal full-width tab.
 	a.splitTab = nil
 	if cur := a.active(); cur != nil {
+		// Mark it inactive but do NOT hide it here. layout() below shows the
+		// incoming tab first and only then hides this one, so the screen is
+		// never left without a mapped tab host (which flashed the parent
+		// window's background on every switch).
 		cur.inactiveSince = time.Now()
-		win.ShowWindow(cur.host, win.SW_HIDE)
-		cur.chromium.Hide()
 	}
 	a.activeIdx = i
 	t := a.tabs[i]
@@ -651,14 +660,21 @@ func (a *app) sleepInactiveTabs() {
 	pressure := systemMemoryLoad() >= 88
 	if minutes <= 0 && !pressure { return }
 	now := time.Now()
+	froze := false
 	for _, t := range a.tabs {
 		if t == a.active() || t == a.splitTab || t.pinned || t.audioPlaying || t.dirtyForm || a.hasActiveDownload(t) || t.sleeping || t.inactiveSince.IsZero() { continue }
 		if settings.NeverSleep[permissionOrigin(t.url)] { continue }
 		if !pressure && now.Sub(t.inactiveSince) < time.Duration(minutes)*time.Minute { continue }
 		t.chromium.CallDevToolsProtocol("Page.setWebLifecycleState", `{"state":"frozen"}`)
 		t.sleeping = true
+		froze = true
 	}
-	a.pushBarState()
+	// Only touch the shell when something actually changed. This sweep runs
+	// every 30 seconds for the life of the process, and it used to serialise
+	// and evaluate a full bar state each time even when nothing was frozen.
+	if froze {
+		a.pushBarState()
+	}
 }
 
 // selftestClickTick dispatches the deferred trusted click once the target tab
