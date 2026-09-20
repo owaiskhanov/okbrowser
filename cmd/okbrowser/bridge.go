@@ -18,8 +18,9 @@ import (
 // It provides:
 //
 //   - window.__ok(obj):  post a JSON message to the host application
-//   - target=_blank links, middle-clicks and window.open() forwarded to the
-//     host so they can open as a new tab
+//   - target=_blank links and middle-clicks forwarded to the host so they
+//     can open as a new tab (window.open() is left native, so the engine
+//     raises NewWindowRequested and real popups stay real popups)
 const bridgeJS = `
 window.__ok = function (o) {
   try { window.chrome.webview.postMessage(JSON.stringify(o)); } catch (e) {}
@@ -85,10 +86,11 @@ window.__ok = function (o) {
     if (edgeLink) edgeSignal("end", e);
     edgeLink = "";
   }, true);
-  window.open = function (u) {
-    if (u) window.__ok({ t: "open", u: String(u) });
-    return null;
-  };
+  // window.open is deliberately NOT overridden. Replacing it used to turn
+  // every popup into a plain tab, which severed window.opener and broke
+  // OAuth sign-in popups (Google, Microsoft, GitHub...). The native call is
+  // left intact so the engine raises NewWindowRequested, where the host
+  // either builds a real popup window (features given) or opens a tab.
 })();
 `
 
@@ -1249,14 +1251,14 @@ type barTab struct {
 
 // barState is the full state pushed to the active tab's shell UI.
 type barState struct {
-	Tabs []barTab `json:"tabs"`
-	A    int      `json:"a"`
-	U    string   `json:"u"`
-	B    bool     `json:"b"`
-	F    bool     `json:"f"`
-	M    bool     `json:"m"` // window maximized
-	K    bool     `json:"k"` // current page bookmarked
-	E    string   `json:"e"` // search engine name
+	Tabs []barTab          `json:"tabs"`
+	A    int               `json:"a"`
+	U    string            `json:"u"`
+	B    bool              `json:"b"`
+	F    bool              `json:"f"`
+	M    bool              `json:"m"` // window maximized
+	K    bool              `json:"k"` // current page bookmarked
+	E    string            `json:"e"` // search engine name
 	V    bool              `json:"v"` // split view is active
 	Pms  map[string]string `json:"pms,omitempty"`
 	Q    bool              `json:"q"` // this is the focused split pane
@@ -1265,10 +1267,16 @@ type barState struct {
 }
 
 func (a *app) permissionStateFor(t *tab) map[string]string {
-	out := map[string]string{"camera":"default", "microphone":"default", "location":"default", "notifications":"default", "clipboard":"default", "sensors":"default"}
-	if t == nil { return out }
+	out := map[string]string{"camera": "default", "microphone": "default", "location": "default", "notifications": "default", "clipboard": "default", "sensors": "default"}
+	if t == nil {
+		return out
+	}
 	origin := permissionOrigin(t.url)
-	for name := range out { if state := a.store.Permission(origin, name); state != "" { out[name] = state } }
+	for name := range out {
+		if state := a.store.Permission(origin, name); state != "" {
+			out[name] = state
+		}
+	}
 	return out
 }
 
@@ -1376,10 +1384,14 @@ func (a *app) allowSpawn() bool {
 // path merely because it arrived through the built-in downloads UI.
 func isDownloadPath(path string) bool {
 	home := os.Getenv("USERPROFILE")
-	if home == "" || path == "" { return false }
+	if home == "" || path == "" {
+		return false
+	}
 	dir, err1 := filepath.Abs(filepath.Join(home, "Downloads"))
 	p, err2 := filepath.Abs(path)
-	if err1 != nil || err2 != nil { return false }
+	if err1 != nil || err2 != nil {
+		return false
+	}
 	rel, err := filepath.Rel(dir, p)
 	return err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && rel != ".."
 }
@@ -1417,14 +1429,19 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		t.dirtyForm = m.A == "1"
 
 	case "pane-focus":
-		if t == a.active() || t == a.splitTab { a.focusedTab = t; a.pushBarState() }
+		if t == a.active() || t == a.splitTab {
+			a.focusedTab = t
+			a.pushBarState()
+		}
 
 	case "audio":
 		t.audioPlaying = m.A == "1"
 		a.pushBarState()
 
 	case "proximity":
-		if t == a.active() { a.execActive("window.__okProximityReveal&&window.__okProximityReveal()") }
+		if t == a.active() {
+			a.execActive("window.__okProximityReveal&&window.__okProximityReveal()")
+		}
 
 	case "edge-link": // a dragged link committed at a window edge
 		if m.U != "" {
@@ -1517,7 +1534,9 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		case "large":
 			st.LargeControls = m.U == "1"
 		case "sleep":
-			if n, err := strconv.Atoi(m.U); err == nil && n >= 0 && n <= 120 { st.SleepMinutes = n }
+			if n, err := strconv.Atoi(m.U); err == nil && n >= 0 && n <= 120 {
+				st.SleepMinutes = n
+			}
 		}
 		a.store.SetSettings(st)
 		if m.M == "autofill" {
@@ -1613,16 +1632,27 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			return
 		case "sleep":
 			i := m.I
-			a.postTask(func() { if i >= 0 && i < len(a.tabs) { a.setTabSleeping(i, !a.tabs[i].sleeping) } })
+			a.postTask(func() {
+				if i >= 0 && i < len(a.tabs) {
+					a.setTabSleeping(i, !a.tabs[i].sleeping)
+				}
+			})
 			return
 		case "never-sleep":
 			i := m.I
 			a.postTask(func() {
 				if i >= 0 && i < len(a.tabs) {
-					st := a.store.Settings(); origin := permissionOrigin(a.tabs[i].url)
-					if st.NeverSleep == nil { st.NeverSleep = make(map[string]bool) }
-					st.NeverSleep[origin] = !st.NeverSleep[origin]; if !st.NeverSleep[origin] { delete(st.NeverSleep, origin) }
-					a.store.SetSettings(st); a.pushBarState()
+					st := a.store.Settings()
+					origin := permissionOrigin(a.tabs[i].url)
+					if st.NeverSleep == nil {
+						st.NeverSleep = make(map[string]bool)
+					}
+					st.NeverSleep[origin] = !st.NeverSleep[origin]
+					if !st.NeverSleep[origin] {
+						delete(st.NeverSleep, origin)
+					}
+					a.store.SetSettings(st)
+					a.pushBarState()
 				}
 			})
 			return
@@ -1634,7 +1664,11 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			i := m.I
 			a.postTask(func() {
 				if a.splitTab == nil && i >= 0 && i < len(a.tabs) && i != a.activeIdx {
-					a.splitTab = a.tabs[i]; a.focusedTab = a.splitTab; a.splitRatio = .5; a.layout(); a.pushBarState()
+					a.splitTab = a.tabs[i]
+					a.focusedTab = a.splitTab
+					a.splitRatio = .5
+					a.layout()
+					a.pushBarState()
 				}
 			})
 			return
@@ -1647,12 +1681,16 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			a.postTask(func() { a.reorderTab(from, to) })
 			return
 		case "permission":
-			kinds := map[string]edge.CoreWebView2PermissionKind{"camera":edge.CoreWebView2PermissionKindCamera,"microphone":edge.CoreWebView2PermissionKindMicrophone,"location":edge.CoreWebView2PermissionKindGeolocation,"notifications":edge.CoreWebView2PermissionKindNotifications,"clipboard":edge.CoreWebView2PermissionKindClipboardRead,"sensors":edge.CoreWebView2PermissionKindOtherSensors}
+			kinds := map[string]edge.CoreWebView2PermissionKind{"camera": edge.CoreWebView2PermissionKindCamera, "microphone": edge.CoreWebView2PermissionKindMicrophone, "location": edge.CoreWebView2PermissionKindGeolocation, "notifications": edge.CoreWebView2PermissionKindNotifications, "clipboard": edge.CoreWebView2PermissionKindClipboardRead, "sensors": edge.CoreWebView2PermissionKindOtherSensors}
 			kind, ok := kinds[m.M]
 			if ok {
 				state := edge.CoreWebView2PermissionStateDefault
-				if m.U == "allow" { state = edge.CoreWebView2PermissionStateAllow }
-				if m.U == "deny" { state = edge.CoreWebView2PermissionStateDeny }
+				if m.U == "allow" {
+					state = edge.CoreWebView2PermissionStateAllow
+				}
+				if m.U == "deny" {
+					state = edge.CoreWebView2PermissionStateDeny
+				}
 				origin := permissionOrigin(t.url)
 				a.store.SetPermission(origin, m.M, m.U)
 				t.chromium.SetPermission(kind, state)
@@ -1662,13 +1700,15 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		case "clear-permissions":
 			origin := permissionOrigin(t.url)
 			a.store.ClearPermissions(origin)
-			for _, kind := range []edge.CoreWebView2PermissionKind{edge.CoreWebView2PermissionKindCamera,edge.CoreWebView2PermissionKindMicrophone,edge.CoreWebView2PermissionKindGeolocation,edge.CoreWebView2PermissionKindNotifications,edge.CoreWebView2PermissionKindClipboardRead,edge.CoreWebView2PermissionKindOtherSensors} { t.chromium.SetPermission(kind, edge.CoreWebView2PermissionStateDefault) }
+			for _, kind := range []edge.CoreWebView2PermissionKind{edge.CoreWebView2PermissionKindCamera, edge.CoreWebView2PermissionKindMicrophone, edge.CoreWebView2PermissionKindGeolocation, edge.CoreWebView2PermissionKindNotifications, edge.CoreWebView2PermissionKindClipboardRead, edge.CoreWebView2PermissionKindOtherSensors} {
+				t.chromium.SetPermission(kind, edge.CoreWebView2PermissionStateDefault)
+			}
 			a.pushBarState()
 			return
 		case "clear-site-data":
 			origin := permissionOrigin(t.url)
 			if origin != "" {
-				params, _ := json.Marshal(map[string]string{"origin":origin,"storageTypes":"all"})
+				params, _ := json.Marshal(map[string]string{"origin": origin, "storageTypes": "all"})
 				t.chromium.CallDevToolsProtocol("Storage.clearDataForOrigin", string(params))
 				a.store.ClearPermissions(origin)
 				t.chromium.Reload()
@@ -1684,7 +1724,12 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			a.postTask(func() { a.promoteSplit() })
 			return
 		case "resize-split-start":
-			a.postTask(func() { if a.splitTab != nil { a.splitResizing = true; win.SetCapture(a.hwnd) } })
+			a.postTask(func() {
+				if a.splitTab != nil {
+					a.splitResizing = true
+					win.SetCapture(a.hwnd)
+				}
+			})
 			return
 		case "wclose":
 			// In Split View the familiar close control dismisses the second
@@ -1695,20 +1740,30 @@ func (a *app) onWebMessage(t *tab, msg string) {
 				a.postTask(func() { a.windowAction("wclose") })
 			}
 			return
-			case "updates":
+		case "updates":
 			a.checkForUpdates()
 			return
 		case "dl-open": // downloads page: open a validated file
-			if isDownloadPath(m.U) { openPath(m.U) }
+			if isDownloadPath(m.U) {
+				openPath(m.U)
+			}
 			return
 		case "dl-show": // downloads page: reveal a validated file in Explorer
-			if isDownloadPath(m.U) { showInFolder(m.U) }
+			if isDownloadPath(m.U) {
+				showInFolder(m.U)
+			}
 			return
 		case "dl-control":
-			if isDownloadPath(m.U) { a.downloadAction(m.U, m.A) }
+			if isDownloadPath(m.U) {
+				a.downloadAction(m.U, m.A)
+			}
 			return
 		case "dl-refresh":
-			a.postTask(func() { if t == a.active() { a.showInternal(t, "downloads") } })
+			a.postTask(func() {
+				if t == a.active() {
+					a.showInternal(t, "downloads")
+				}
+			})
 			return
 		case "dl-remove": // cancel a partial or delete one downloaded file
 			path := m.U

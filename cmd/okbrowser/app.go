@@ -58,7 +58,7 @@ const (
 
 // appVersion is shown in the settings page. Release CI overrides it with
 // -ldflags so every verified executable carries its automatic build version.
-var appVersion = "1.12.2-dev"
+var appVersion = "1.14.0-dev"
 
 // app is the browser window. The entire UI - the Liquid Glass bar with tabs,
 // address field and buttons - is rendered inside the web engine as a frosted
@@ -69,12 +69,12 @@ type app struct {
 	instance win.HINSTANCE
 	accel    win.HACCEL
 
-	tabs      []*tab
-	activeIdx int
-	splitTab   *tab // optional right-hand WebView opened by a link-edge drop
-	focusedTab *tab // pane receiving keyboard commands while split
-	splitRatio float64 // width of the left pane, 0.28..0.72
-	splitResizing bool   // native mouse capture keeps divider drag continuous
+	tabs          []*tab
+	activeIdx     int
+	splitTab      *tab    // optional right-hand WebView opened by a link-edge drop
+	focusedTab    *tab    // pane receiving keyboard commands while split
+	splitRatio    float64 // width of the left pane, 0.28..0.72
+	splitResizing bool    // native mouse capture keeps divider drag continuous
 
 	scale float64 // DPI scale factor (1.0 = 96 DPI)
 
@@ -88,7 +88,11 @@ type app struct {
 
 	// closedTabs remembers recently closed tab URLs for Ctrl+Shift+T.
 	closedTabs []string
-	downloads []*managedDownload // native WebView2 download operations
+	downloads  []*managedDownload // native WebView2 download operations
+
+	// popups are real child windows created for window.open() requests
+	// that carry size/position features (the OAuth sign-in flow).
+	popups []*popup
 
 	// store is the local data vault: history, bookmarks, settings, session.
 	store *store
@@ -157,14 +161,23 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 			if win.GetClientRect(a.hwnd, &rc) && rc.Right > 0 {
 				x := win.GET_X_LPARAM(uintptr(lp))
 				a.splitRatio = float64(x) / float64(rc.Right)
-				if a.splitRatio < .28 { a.splitRatio = .28 }
-				if a.splitRatio > .72 { a.splitRatio = .72 }
+				if a.splitRatio < .28 {
+					a.splitRatio = .28
+				}
+				if a.splitRatio > .72 {
+					a.splitRatio = .72
+				}
 				a.layout()
 			}
 			return 0
 		}
 	case win.WM_LBUTTONUP:
-		if a.splitResizing { a.splitResizing = false; win.ReleaseCapture(); a.saveSession(); return 0 }
+		if a.splitResizing {
+			a.splitResizing = false
+			win.ReleaseCapture()
+			a.saveSession()
+			return 0
+		}
 
 	case win.WM_COMMAND:
 		// Hotkeys arrive here (all buttons live in the glass bar).
@@ -283,8 +296,15 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		if wp == 3 {
 			a.selftestClickTick()
 		}
-		if wp == 4 { a.sleepInactiveTabs() }
-		if wp == 5 { a.pollDownloads() }
+		if wp == 4 {
+			a.sleepInactiveTabs()
+		}
+		if wp == 5 {
+			a.pollDownloads()
+		}
+		if wp == 6 {
+			a.selftestPopupTick()
+		}
 		return 0
 
 	case win.WM_DPICHANGED:
@@ -315,6 +335,7 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		}
 		return 0
 	case win.WM_DESTROY:
+		a.closeAllPopups()
 		a.saveSession()
 		if a.store != nil {
 			a.store.Flush()
@@ -343,6 +364,11 @@ func NewApp(startURL string) (*app, bool) {
 		return nil, false
 	}
 	if !a.registerClass(tabHostClassName, windows.NewCallback(defTabHostProc), icon, cursor) {
+		return nil, false
+	}
+	// Popup windows (window.open with features) get their own class so
+	// they can size their WebView2 and honor window.close().
+	if !a.registerClass(popupClassName, windows.NewCallback(popupWndProc), icon, cursor) {
 		return nil, false
 	}
 
@@ -431,7 +457,9 @@ func NewApp(startURL string) (*app, bool) {
 		if sess.SplitRatio > 0 && sess.Split >= 0 && sess.Split < len(a.tabs) && sess.Split != active {
 			a.splitTab = a.tabs[sess.Split]
 			a.splitRatio = sess.SplitRatio
-			if a.splitRatio < .28 || a.splitRatio > .72 { a.splitRatio = .5 }
+			if a.splitRatio < .28 || a.splitRatio > .72 {
+				a.splitRatio = .5
+			}
 			a.layout()
 		}
 		a.scheduleBarPush(false)
@@ -449,7 +477,12 @@ func (a *app) saveSession() {
 		return
 	}
 	sd := &sessionData{Active: a.activeIdx, Maximized: a.maximized, Split: -1, SplitRatio: a.splitRatio}
-	for i, t := range a.tabs { if t == a.splitTab { sd.Split = i; break } }
+	for i, t := range a.tabs {
+		if t == a.splitTab {
+			sd.Split = i
+			break
+		}
+	}
 	for _, t := range a.tabs {
 		u := t.url
 		if strings.HasPrefix(u, "okbrowser://") {
@@ -598,9 +631,15 @@ func (a *app) layout() {
 			if a.splitTab != nil {
 				gap := a.scaled(5)
 				ratio := a.splitRatio
-				if ratio < .28 || ratio > .72 { ratio = .5 }
+				if ratio < .28 || ratio > .72 {
+					ratio = .5
+				}
 				left := int32(float64(w-gap) * ratio)
-				if isSplit { x, width = left + gap, w - left - gap } else { width = left }
+				if isSplit {
+					x, width = left+gap, w-left-gap
+				} else {
+					width = left
+				}
 			}
 
 			if a.fading && t.host == a.fadeHost && !a.fadeRamping {
@@ -793,7 +832,9 @@ func (a *app) onCommand(id int) {
 	// Ctrl+1..8 are consecutive command IDs. A Go switch case matches one
 	// value, not the whole numeric range, so dispatch the range explicitly.
 	if id >= cmdSelectTab && id < cmdSelectTab+8 {
-		if n := id - cmdSelectTab; n < len(a.tabs) { a.switchToTab(n) }
+		if n := id - cmdSelectTab; n < len(a.tabs) {
+			a.switchToTab(n)
+		}
 		return
 	}
 	switch id {

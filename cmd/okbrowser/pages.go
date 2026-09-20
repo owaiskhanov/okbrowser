@@ -123,9 +123,13 @@ func avHTML(u string) string {
 }
 
 func tileFavicon(t Tile) string {
-	if t.Favicon != "" { return t.Favicon }
+	if t.Favicon != "" {
+		return t.Favicon
+	}
 	u, err := url.Parse(t.URL)
-	if err == nil && u.Scheme != "" && u.Host != "" { return u.Scheme + "://" + u.Host + "/favicon.ico" }
+	if err == nil && u.Scheme != "" && u.Host != "" {
+		return u.Scheme + "://" + u.Host + "/favicon.ico"
+	}
 	return ""
 }
 
@@ -151,7 +155,12 @@ func StartPageHTML(tiles []Tile, engine string) string {
 		icon := tileFavicon(t)
 		b.WriteString(`<div class="tile" data-u="` + htmlEsc(t.URL) + `" title="` + htmlEsc(title) + `" style="padding:14px 4px;border-radius:16px;cursor:pointer;background:rgba(255,255,255,.5);backdrop-filter:blur(20px) saturate(1.7);-webkit-backdrop-filter:blur(20px) saturate(1.7);box-shadow:0 6px 20px rgba(0,0,0,.08),inset 0 1px 0 rgba(255,255,255,.6),inset 0 0 0 .5px rgba(255,255,255,.3);transition:transform .16s,background .16s">` +
 			`<div class="tileicon" style="margin:0 auto;width:44px;height:44px;border-radius:14px;display:grid;place-items:center;font-size:19px;font-weight:600;color:#3c4043;background:rgba(120,128,138,.14);overflow:hidden">` +
-			`<span>` + htmlEsc(avChar(t.URL)) + `</span>` + func() string { if icon == "" { return "" }; return `<img src="`+htmlEsc(icon)+`" alt="" style="width:28px;height:28px;object-fit:contain" onerror="this.remove()">` }() + `</div></div>`)
+			`<span>` + htmlEsc(avChar(t.URL)) + `</span>` + func() string {
+			if icon == "" {
+				return ""
+			}
+			return `<img src="` + htmlEsc(icon) + `" alt="" style="width:28px;height:28px;object-fit:contain" onerror="this.remove()">`
+		}() + `</div></div>`)
 	}
 	b.WriteString(`</div>`)
 	b.WriteString(`<style>.tileicon>*{grid-area:1/1}.tileicon img{position:relative;z-index:1;background:inherit}@media (prefers-color-scheme:dark){.tile{background:rgba(38,38,42,.5) !important;box-shadow:0 6px 20px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.07),inset 0 0 0 .5px rgba(255,255,255,.06) !important}}</style>`)
@@ -303,13 +312,19 @@ func SettingsHTML(s Settings, version string) string {
 	// Performance and autofill
 	b.WriteString(`<div style="font-size:12px;font-weight:650;opacity:.5;margin:22px 4px 8px;text-transform:uppercase;letter-spacing:.06em">Performance & autofill</div><div class="card">`)
 	checked := ""
-	if s.Autofill { checked = " checked" }
+	if s.Autofill {
+		checked = " checked"
+	}
 	b.WriteString(`<div class="row"><div class="meta"><div class="tt">Password and address autofill</div><div class="uu">Protected by WebView2; OK Browser cannot read saved values</div></div><input id="autofill" type="checkbox"` + checked + `></div>`)
 	b.WriteString(`<div class="row"><div class="meta"><div class="tt">Sleep background tabs</div><div class="uu">Pinned and Split View tabs stay active</div></div><select id="sleep">`)
 	for _, n := range []int{0, 5, 15, 30, 60} {
 		label, selected := fmt.Sprintf("%d min", n), ""
-		if n == 0 { label = "Never" }
-		if s.SleepMinutes == n { selected = " selected" }
+		if n == 0 {
+			label = "Never"
+		}
+		if s.SleepMinutes == n {
+			selected = " selected"
+		}
 		b.WriteString(`<option value="` + strconv.Itoa(n) + `"` + selected + `>` + label + `</option>`)
 	}
 	b.WriteString(`</select></div></div>`)
@@ -317,7 +332,9 @@ func SettingsHTML(s Settings, version string) string {
 	// Accessibility
 	b.WriteString(`<div style="font-size:12px;font-weight:650;opacity:.5;margin:22px 4px 8px;text-transform:uppercase;letter-spacing:.06em">Accessibility</div><div class="card">`)
 	large := ""
-	if s.LargeControls { large = " checked" }
+	if s.LargeControls {
+		large = " checked"
+	}
 	b.WriteString(`<div class="row"><div class="meta"><div class="tt">Larger browser controls</div><div class="uu">Increases tabs, window buttons and the address field</div></div><input id="large" type="checkbox"` + large + `></div>`)
 	b.WriteString(`<div class="row"><div class="meta"><div class="tt">System accessibility</div><div class="uu">Reduced motion, high contrast and keyboard focus are followed automatically</div></div></div></div>`)
 
@@ -342,20 +359,20 @@ func SettingsHTML(s Settings, version string) string {
 
 // dlFile is one entry of the Downloads page.
 type dlFile struct {
-	Name string
-	Path string
-	Size int64
-	Mod      int64 // unix millis
-	Partial  bool
-	Risky    bool
-	Source   string
-	Mime     string
-	Speed    int64
-	Total    int64
+	Name        string
+	Path        string
+	Size        int64
+	Mod         int64 // unix millis
+	Partial     bool
+	Risky       bool
+	Source      string
+	Mime        string
+	Speed       int64
+	Total       int64
 	NativeState uint32 // 0 active, 1 interrupted, 2 complete
-	Interrupt uint32
-	CanResume bool
-	Paused bool
+	Interrupt   uint32
+	CanResume   bool
+	Paused      bool
 }
 
 // listDownloads returns the newest files in the user's Downloads folder.
@@ -379,12 +396,12 @@ func listDownloads() []dlFile {
 		lower := strings.ToLower(name)
 		ext := strings.ToLower(filepath.Ext(strings.TrimSuffix(lower, ".crdownload")))
 		out = append(out, dlFile{
-			Name: name,
-			Path: filepath.Join(dir, name),
-			Size: info.Size(),
-			Mod: info.ModTime().UnixMilli(),
+			Name:    name,
+			Path:    filepath.Join(dir, name),
+			Size:    info.Size(),
+			Mod:     info.ModTime().UnixMilli(),
 			Partial: strings.HasSuffix(lower, ".crdownload") || strings.HasSuffix(lower, ".tmp"),
-			Risky: ext == ".exe" || ext == ".msi" || ext == ".bat" || ext == ".cmd" || ext == ".ps1" || ext == ".scr",
+			Risky:   ext == ".exe" || ext == ".msi" || ext == ".bat" || ext == ".cmd" || ext == ".ps1" || ext == ".scr",
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Mod > out[j].Mod })
@@ -425,19 +442,41 @@ func DownloadsHTML(files []dlFile) string {
 		class := ""
 		if f.Partial {
 			pct := ""
-			if f.Total > 0 { pct = fmt.Sprintf(" · %.0f%%", 100*float64(f.Size)/float64(f.Total)) }
+			if f.Total > 0 {
+				pct = fmt.Sprintf(" · %.0f%%", 100*float64(f.Size)/float64(f.Total))
+			}
 			status = `<span class="live"><i class="dot"></i>Downloading</span>` + pct + ` · ` + humanSize(f.Size)
-			if f.Speed > 0 { status += ` · ` + humanSize(f.Speed) + `/s` }
+			if f.Speed > 0 {
+				status += ` · ` + humanSize(f.Speed) + `/s`
+			}
 			class = " partial"
-		} else if f.NativeState == 1 { status = `<span class="warn">Interrupted</span>`; if f.CanResume { status += ` · can resume` } }
-		if host := sourceHost(f.Source); host != "" { status += ` · ` + htmlEsc(host) }
-		if f.Risky && !f.Partial { status += ` · <span class="warn">Executable — verify before opening</span>` }
+		} else if f.NativeState == 1 {
+			status = `<span class="warn">Interrupted</span>`
+			if f.CanResume {
+				status += ` · can resume`
+			}
+		}
+		if host := sourceHost(f.Source); host != "" {
+			status += ` · ` + htmlEsc(host)
+		}
+		if f.Risky && !f.Partial {
+			status += ` · <span class="warn">Executable — verify before opening</span>`
+		}
 		openLabel := "Open"
-		if f.Partial { openLabel = "Cancel" }
+		if f.Partial {
+			openLabel = "Cancel"
+		}
 		extra := ""
-		if f.Partial && !f.Paused { extra = `<div class="db pause">Pause</div>` }
-		if f.Partial && f.Paused { extra = `<div class="db resume">Resume</div>`; status = `<span class="warn">Paused</span> · ` + humanSize(f.Size) }
-		if f.NativeState == 1 && f.CanResume { extra = `<div class="db resume">Resume</div>` }
+		if f.Partial && !f.Paused {
+			extra = `<div class="db pause">Pause</div>`
+		}
+		if f.Partial && f.Paused {
+			extra = `<div class="db resume">Resume</div>`
+			status = `<span class="warn">Paused</span> · ` + humanSize(f.Size)
+		}
+		if f.NativeState == 1 && f.CanResume {
+			extra = `<div class="db resume">Resume</div>`
+		}
 		b.WriteString(`<div class="row` + class + `" data-p="` + htmlEsc(f.Path) + `" data-partial="` + strconv.FormatBool(f.Partial) + `">` +
 			`<div class="av">` + htmlEsc(avChar("http://"+f.Name)) + `</div>` +
 			`<div class="meta"><div class="tt">` + htmlEsc(f.Name) + `</div><div class="uu">` + status + `</div></div>` +
