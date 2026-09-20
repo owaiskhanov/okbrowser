@@ -40,6 +40,17 @@ type tab struct {
 	crashCount   int
 	lastCrash    time.Time
 
+	// ready is set once the engine exists. Until then the tab has a host
+	// window but no usable controller, so engine calls must be deferred.
+	ready bool
+	// pendingURL is the navigation requested before the engine was ready.
+	pendingURL string
+	// secondary marks a Split View pane (it gets an extra init script).
+	secondary bool
+	// startRev is the store revision the rendered start page was built
+	// from, so a warmed page can be refreshed if it went stale.
+	startRev uint64
+
 	// downloadAt is when this tab last turned a navigation into a download.
 	// A link that downloads (GitHub release assets, WhatsApp Web media)
 	// reports NavigationCompleted with IsSuccess=FALSE, so without this the
@@ -89,6 +100,29 @@ func (a *app) newTab(url string, activate bool) *tab {
 }
 
 func (a *app) newTabMode(url string, activate, secondary bool) *tab {
+	// A spare engine was warmed in the background: adopting it makes the
+	// tab appear with its start page already painted, with no engine
+	// startup on the critical path at all.
+	if t := a.takeSpare(secondary); t != nil {
+		a.attachTab(t, url, activate)
+		a.warmSpareLater()
+		return t
+	}
+	t := a.createTab(secondary)
+	if t == nil {
+		a.engineStartFailed()
+		return nil
+	}
+	t.pendingURL = url
+	a.attachTab(t, url, activate)
+	a.warmSpareLater()
+	return t
+}
+
+// createTab builds the host window and starts the engine WITHOUT waiting for
+// it. The engine reports readiness later through onEngineReady, so opening a
+// tab never blocks the UI thread.
+func (a *app) createTab(secondary bool) *tab {
 	tn, _ := syscall.UTF16PtrFromString(tabHostClassName)
 	a.hostSeq++
 	h := win.CreateWindowEx(0, tn, nil, win.WS_CHILD,
@@ -100,7 +134,7 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 		return nil
 	}
 
-	t := &tab{host: h, title: "New Tab", zoom: 1.0}
+	t := &tab{host: h, title: "New Tab", zoom: 1.0, secondary: secondary}
 
 	c := edge.NewChromium()
 	c.DataPath = dataPath()
@@ -149,20 +183,42 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 	}
 	t.chromium = c
 
-	if !c.Embed(uintptr(h)) {
+	if !c.EmbedAsync(uintptr(h), func(ok bool) { a.onEngineReady(t, ok) }) {
 		win.DestroyWindow(h)
-		if selfTestMode {
-			selfTestFileInit(fmt.Sprintf("[selftest] FAIL: web engine failed to start for tab %d (profile locked or runtime missing)\n", a.hostSeq))
-			os.Exit(1)
-		}
-		showRuntimeMissingDialog()
 		return nil
+	}
+	return t
+}
+
+// onEngineReady runs once the engine for t exists. It applies every setting
+// that needs a live controller and then performs the navigation that was
+// requested while the engine was still starting.
+func (a *app) onEngineReady(t *tab, ok bool) {
+	if !ok {
+		// This runs inside WebView2's own completion handler. Destroying the
+		// host window or opening a modal dialog here would re-enter the
+		// engine while it is still unwinding, so defer it to the message
+		// loop. A background spare that fails stays silent: the user never
+		// asked for it, and a real tab will report the problem itself.
+		wasSpare := t == a.spare
+		a.postTask(func() {
+			a.dropTab(t)
+			if !wasSpare {
+				a.engineStartFailed()
+			}
+		})
+		return
+	}
+	t.ready = true
+	c := t.chromium
+	if c == nil {
+		return
 	}
 
 	// Dark engine background: what the engine paints before the page's own
 	// CSS applies - WebView2 defaults to white, which flashed on every new
-	// tab and every navigation in dark mode. Must run AFTER Embed: the
-	// controller only exists once the engine has been created.
+	// tab and every navigation in dark mode. Needs the controller, so it
+	// cannot run before the engine is ready.
 	c.SetDefaultBackgroundColor(edge.COREWEBVIEW2_COLOR{A: 255, R: 28, G: 28, B: 30})
 
 	if st, err := c.GetSettings(); err == nil {
@@ -175,10 +231,30 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 		_ = st.PutIsPasswordAutosaveEnabled(a.store.Settings().Autofill && !incognitoMode)
 		_ = st.PutIsGeneralAutofillEnabled(a.store.Settings().Autofill && !incognitoMode)
 	}
+	// Document-created scripts must be registered before the first
+	// navigation, which is why the navigation waits for this point.
 	c.Init(bridgeJS)
-	if secondary { c.Init("window.__okSecondary=true;") }
+	if t.secondary { c.Init("window.__okSecondary=true;") }
 	c.Init(barJS)
 
+	if t.pendingURL != "" {
+		url := t.pendingURL
+		t.pendingURL = ""
+		a.navigateTab(t, url)
+	} else {
+		a.showStartPage(t)
+	}
+	if a.isActive(t) {
+		c.Resize()
+		c.Show()
+		c.Focus()
+	}
+	a.scheduleBarPush(false)
+}
+
+// attachTab puts an already-created tab into the tab strip and, when asked,
+// makes it the visible one.
+func (a *app) attachTab(t *tab, url string, activate bool) {
 	a.tabs = append(a.tabs, t)
 	win.SetTimer(a.hwnd, 4, 30000, 0) // periodic inactive-tab memory trim
 	if activate || len(a.tabs) == 1 {
@@ -195,16 +271,122 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 		a.pushBarState() // update the visible tab strip
 	}
 
-	if url != "" {
-		a.navigateTab(t, url)
-	} else {
-		a.showStartPage(t)
+	// A warmed spare is already showing its start page; only navigate when
+	// the caller actually asked for a URL.
+	if t.ready {
+		if url != "" {
+			a.navigateTab(t, url)
+		} else if t.isStart && t.startRev != a.store.Rev() {
+			// Browsing happened since this page was warmed, so its
+			// most-visited tiles are out of date.
+			a.showStartPage(t)
+		} else if a.fading && t.host == a.fadeHost {
+			// Nothing will load, so no NavigationCompleted will arrive to
+			// release the cross-fade. Reveal it now - this is the instant path.
+			a.fadeReady = true
+		}
 	}
 	a.scheduleBarPush(false)
 	if a.inSelfTest {
 		a.stlog("[selftest] tab %d created (url=%s)", len(a.tabs), url)
 	}
+}
+
+// dropTab removes a tab whose engine never started.
+func (a *app) dropTab(t *tab) {
+	for i, x := range a.tabs {
+		if x == t {
+			a.tabs = append(a.tabs[:i], a.tabs[i+1:]...)
+			if a.activeIdx >= len(a.tabs) {
+				a.activeIdx = len(a.tabs) - 1
+			}
+			break
+		}
+	}
+	if a.spare == t {
+		a.spare = nil
+	}
+	if a.splitTab == t {
+		a.splitTab = nil
+	}
+	if a.focusedTab == t {
+		a.focusedTab = nil
+	}
+	if a.fading && a.fadeHost == t.host {
+		a.endTabFade()
+	}
+	t.chromium = nil
+	if isWnd(t.host) {
+		win.DestroyWindow(t.host)
+	}
+}
+
+// engineStartFailed reports an engine that could not be created at all.
+func (a *app) engineStartFailed() {
+	if selfTestMode {
+		selfTestFileInit(fmt.Sprintf("[selftest] FAIL: web engine failed to start for tab %d (profile locked or runtime missing)\n", a.hostSeq))
+		os.Exit(1)
+	}
+	showRuntimeMissingDialog()
+	if len(a.tabs) == 0 && a.hwnd != 0 {
+		win.DestroyWindow(a.hwnd)
+	}
+}
+
+// ---- spare engine ----------------------------------------------------------
+//
+// Creating a WebView2 engine is the slow part of opening a tab - hundreds of
+// milliseconds of process and profile work. One spare engine is therefore
+// warmed in the background while the browser is idle, with its start page
+// already rendered, so the next Ctrl+T is a window show rather than an engine
+// launch.
+
+// warmSpareLater schedules the spare to be built once the foreground work has
+// settled, so warming never competes with the page the user is waiting for.
+func (a *app) warmSpareLater() {
+	if a.spare != nil || a.hwnd == 0 || a.inSelfTest {
+		return
+	}
+	win.SetTimer(a.hwnd, 6, 1200, 0)
+}
+
+// warmSpare builds the spare engine. Skipped under memory pressure: a spare
+// renderer is not worth pushing a loaded machine into swapping.
+func (a *app) warmSpare() {
+	win.KillTimer(a.hwnd, 6)
+	if a.spare != nil || a.hwnd == 0 || a.inSelfTest {
+		return
+	}
+	if systemMemoryLoad() >= 85 {
+		return
+	}
+	a.spare = a.createTab(false)
+}
+
+// takeSpare returns the warmed tab when one is ready for use. A spare that is
+// still starting is left alone - waiting for it would reintroduce the stall.
+func (a *app) takeSpare(secondary bool) *tab {
+	t := a.spare
+	if t == nil || secondary || !t.ready || t.chromium == nil || !isWnd(t.host) {
+		return nil
+	}
+	a.spare = nil
 	return t
+}
+
+// discardSpare destroys an unused warmed engine (on shutdown).
+func (a *app) discardSpare() {
+	t := a.spare
+	if t == nil {
+		return
+	}
+	a.spare = nil
+	if t.chromium != nil {
+		t.chromium.Close()
+	}
+	if isWnd(t.host) {
+		win.DestroyWindow(t.host)
+	}
 }
 
 // switchToTab displays tab i and syncs title and glass-bar state.
@@ -424,6 +606,7 @@ func (a *app) showInternal(t *tab, page string) {
 	t.title = title
 	if isStart {
 		t.url = ""
+		t.startRev = a.store.Rev()
 	} else {
 		t.url = "okbrowser://" + page
 	}

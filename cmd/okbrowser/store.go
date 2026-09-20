@@ -31,6 +31,17 @@ type store struct {
 
 	dirty      map[string]bool
 	flushTimer *time.Timer
+
+	// rev increments whenever data shown on the start page changes, so a
+	// pre-rendered start page can tell it has gone stale.
+	rev uint64
+}
+
+// Rev reports the start-page data revision.
+func (s *store) Rev() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rev
 }
 
 // histEntry is one visited page.
@@ -169,6 +180,7 @@ func (s *store) load(name string, v interface{}) {
 // markDirty schedules a debounced flush (2s after the first change).
 func (s *store) markDirty(name string) {
 	s.dirty[name] = true
+	s.rev++
 	if s.flushTimer == nil {
 		s.flushTimer = time.AfterFunc(2*time.Second, func() {
 			s.mu.Lock()

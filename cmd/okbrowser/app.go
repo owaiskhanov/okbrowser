@@ -86,6 +86,10 @@ type app struct {
 	// lastSpawn throttles popup storms from web pages.
 	lastSpawn time.Time
 
+	// spare is a pre-warmed, already-painted tab adopted by the next new
+	// tab so opening one costs no engine startup (WM_TIMER id 6).
+	spare *tab
+
 	// closedTabs remembers recently closed tab URLs for Ctrl+Shift+T.
 	closedTabs []string
 	downloads []*managedDownload // native WebView2 download operations
@@ -285,6 +289,7 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		}
 		if wp == 4 { a.sleepInactiveTabs() }
 		if wp == 5 { a.pollDownloads() }
+		if wp == 6 { a.warmSpare() }
 		return 0
 
 	case win.WM_DPICHANGED:
@@ -323,6 +328,7 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		}
 		break // DefWindowProc destroys the window
 	case win.WM_DESTROY:
+		a.discardSpare()
 		a.saveSession()
 		if a.store != nil {
 			a.store.Flush()
