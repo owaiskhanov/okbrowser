@@ -58,7 +58,7 @@ const (
 
 // appVersion is shown in the settings page. Release CI overrides it with
 // -ldflags so every verified executable carries its automatic build version.
-var appVersion = "1.12.2-dev"
+var appVersion = "1.13.0-dev"
 
 // app is the browser window. The entire UI - the Liquid Glass bar with tabs,
 // address field and buttons - is rendered inside the web engine as a frosted
@@ -89,6 +89,10 @@ type app struct {
 	// closedTabs remembers recently closed tab URLs for Ctrl+Shift+T.
 	closedTabs []string
 	downloads []*managedDownload // native WebView2 download operations
+
+	// popups are real child windows created for window.open() requests
+	// that carry size/position features (the OAuth sign-in flow).
+	popups []*popup
 
 	// store is the local data vault: history, bookmarks, settings, session.
 	store *store
@@ -285,6 +289,7 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		}
 		if wp == 4 { a.sleepInactiveTabs() }
 		if wp == 5 { a.pollDownloads() }
+		if wp == 6 { a.selftestPopupTick() }
 		return 0
 
 	case win.WM_DPICHANGED:
@@ -315,6 +320,7 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		}
 		return 0
 	case win.WM_DESTROY:
+		a.closeAllPopups()
 		a.saveSession()
 		if a.store != nil {
 			a.store.Flush()
@@ -343,6 +349,11 @@ func NewApp(startURL string) (*app, bool) {
 		return nil, false
 	}
 	if !a.registerClass(tabHostClassName, windows.NewCallback(defTabHostProc), icon, cursor) {
+		return nil, false
+	}
+	// Popup windows (window.open with features) get their own class so
+	// they can size their WebView2 and honor window.close().
+	if !a.registerClass(popupClassName, windows.NewCallback(popupWndProc), icon, cursor) {
 		return nil, false
 	}
 

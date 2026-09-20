@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/lxn/win"
 )
 
 // Built-in end-to-end navigation self test. Run with:
@@ -19,10 +21,13 @@ import (
 //
 //  1. host-initiated load (typed URL)
 //  2. renderer-initiated same-tab navigation (a plain link click)
-//  3. window.open through the page bridge (the overridden JS entry point)
-//  4. window.open through the ENGINE's NewWindowRequested event (the
-//     safety net - reached by restoring the native window.open)
+//  3. a featureless window.open (native, so it reaches the engine's
+//     NewWindowRequested event and opens a tab)
+//  4. a trusted target=_blank click through the ENGINE's
+//     NewWindowRequested event
 //  5. a target=_blank link click through the bridge's capture listener
+//  6. a sized window.open() -> a REAL popup window with a dedicated child
+//     WebView2 (the Google sign-in path)
 //
 // Every phase must end with the page loaded in the right tab. Progress and
 // the result are written to selftest.txt next to the executable, and the
@@ -89,8 +94,8 @@ func (a *app) selftestNavHook(t *tab) {
 	case a.selfPhase == 1 && strings.Contains(t.url, "iana.org"):
 		a.stlog("[selftest] phase 2 OK: link-click navigation loaded %s", t.url)
 		a.selfPhase = 2
-		// window.open is overridden by the bridge: this goes through the
-		// 'open' host message and must open a new tab.
+		// A featureless window.open stays native and reaches the
+		// engine's NewWindowRequested event, which opens a new tab.
 		t.chromium.Eval(`window.open('https://www.iana.org/about')`)
 
 	case a.selfPhase == 2 && strings.Contains(t.url, "iana.org/about") && len(a.tabs) > 1:
@@ -114,8 +119,28 @@ func (a *app) selftestNavHook(t *tab) {
 
 	case a.selfPhase == 4 && strings.Contains(t.url, "iana.org/help") && len(a.tabs) > 3:
 		a.stlog("[selftest] phase 5 OK: _blank link opened a new tab (now %d tabs)", len(a.tabs))
-		a.stlog("[selftest] PASS: all navigation paths work")
-		_ = a.selfTestFile.Close()
-		os.Exit(0)
+		a.selfPhase = 5
+		// The OAuth shape: window.open WITH features must produce a real
+		// popup window (child WebView2 handed to the engine), not a tab.
+		t.chromium.Eval(`setTimeout(function(){window.open('https://www.iana.org/about','okpopup','width=500,height=600')},500)`)
+		win.SetTimer(a.hwnd, 6, 6000, 0)
 	}
+}
+
+// selftestPopupTick checks the final phase: the sized window.open must have
+// produced a real popup window rather than another tab.
+func (a *app) selftestPopupTick() {
+	if !a.inSelfTest || a.selfPhase != 5 {
+		return
+	}
+	win.KillTimer(a.hwnd, 6)
+	if len(a.popups) == 0 {
+		a.stlog("[selftest] FAIL: sized window.open did not create a popup window")
+		_ = a.selfTestFile.Close()
+		os.Exit(1)
+	}
+	a.stlog("[selftest] phase 6 OK: sized window.open created a real popup window")
+	a.stlog("[selftest] PASS: all navigation paths work")
+	_ = a.selfTestFile.Close()
+	os.Exit(0)
 }

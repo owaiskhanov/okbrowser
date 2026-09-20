@@ -107,28 +107,15 @@ func (a *app) newTabMode(url string, activate, secondary bool) *tab {
 		if saved == "deny" { return edge.CoreWebView2PermissionStateDeny }
 		return edge.CoreWebView2PermissionStateDefault
 	}
-	// The engine-level safety net for new windows (target=_blank,
-	// window.open) - covers cases the page-side bridge cannot see (e.g.
-	// links inside closed shadow DOMs).
+	// Engine-level new-window handling. Requests that carry window
+	// features (window.open('...','...','width=..,height=..')) become
+	// REAL popup windows backed by a dedicated child WebView2 in this
+	// same profile, so window.opener, the shared session, the callback
+	// postMessage and window.close() all keep working - that is what
+	// Google's OAuth sign-in popup requires. Plain requests still open as
+	// ordinary tabs. See popups.go.
 	c.NewWindowRequestedCallback = func(args *edge.ICoreWebView2NewWindowRequestedEventArgs) {
-		uri, _ := args.GetUri()
-		user, _ := args.GetIsUserInitiated()
-		if a.inSelfTest {
-			a.stlog("[selftest] engine NewWindowRequested: uri=%s user=%v", uri, user)
-		}
-		_ = args.PutHandled(true)
-		if uri == "" {
-			return
-		}
-		if user {
-			// A trusted user gesture (a real click on a _blank link) must
-			// always open its tab - never eat a user action.
-			a.postTask(func() { a.newTab(uri, true) })
-			return
-		}
-		if a.allowSpawn() {
-			a.postTask(func() { a.newTab(uri, true) })
-		}
+		a.onNewWindowRequested(t, args)
 	}
 	c.DownloadStartingCallback = func(args *edge.ICoreWebView2DownloadStartingEventArgs) { a.onDownloadStarting(t, args) }
 	c.ProcessFailedCallback = func(kind edge.CoreWebView2ProcessFailedKind) {

@@ -32,6 +32,12 @@ type Chromium struct {
 	newWindowRequested    *ICoreWebView2NewWindowRequestedEventHandler // OK Browser addition
 	processFailed         *iCoreWebView2ProcessFailedEventHandler       // OK Browser addition
 	downloadStarting      *iDownloadStartingHandler                      // OK Browser addition
+	windowCloseRequested  *iCoreWebView2WindowCloseRequestedEventHandler // OK Browser addition
+
+	// OK Browser addition: asynchronous creation (used for popup child
+	// views). When set, Embed-style creation does not pump messages and
+	// the callback fires once the controller is ready (or has failed).
+	readyCallback func(ok bool)
 
 	// OK Browser addition: keeps per-call DevTools handlers referenced so
 	// the GC cannot collect them while native code still holds a pointer.
@@ -55,6 +61,7 @@ type Chromium struct {
 	PermissionRequestedCallback  func(uri string, kind CoreWebView2PermissionKind) CoreWebView2PermissionState // OK Browser addition
 	ProcessFailedCallback         func(kind CoreWebView2ProcessFailedKind)                              // OK Browser addition
 	DownloadStartingCallback      func(args *ICoreWebView2DownloadStartingEventArgs)                    // OK Browser addition
+	WindowCloseRequestedCallback  func()                                                                // OK Browser addition
 	AcceleratorKeyCallback       func(uint) bool
 }
 
@@ -82,6 +89,7 @@ func NewChromium() *Chromium {
 	e.newWindowRequested = newICoreWebView2NewWindowRequestedEventHandler(e) // OK Browser addition
 	e.processFailed = newICoreWebView2ProcessFailedEventHandler(e)           // OK Browser addition
 	e.downloadStarting = newDownloadStartingHandler(e)                        // OK Browser addition
+	e.windowCloseRequested = newICoreWebView2WindowCloseRequestedEventHandler(e) // OK Browser addition
 	e.permissions = make(map[CoreWebView2PermissionKind]CoreWebView2PermissionState)
 
 	return e
@@ -212,6 +220,10 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 	if int64(res) < 0 || controller == nil {
 		log.Printf("Creating controller failed with %08x", res)
 		atomic.StoreUintptr(&e.initFailed, 1)
+		if cb := e.readyCallback; cb != nil { // OK Browser addition
+			e.readyCallback = nil
+			cb(false)
+		}
 		return 1
 	}
 	_, _, _ = controller.vtbl.AddRef.Call(uintptr(unsafe.Pointer(controller)))
@@ -255,6 +267,11 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 		uintptr(unsafe.Pointer(e.newWindowRequested)),
 		uintptr(unsafe.Pointer(&token)),
 	)
+	_, _, _ = e.webview.vtbl.AddWindowCloseRequested.Call( // OK Browser addition
+		uintptr(unsafe.Pointer(e.webview)),
+		uintptr(unsafe.Pointer(e.windowCloseRequested)),
+		uintptr(unsafe.Pointer(&token)),
+	)
 	_, _, _ = e.webview.vtbl.AddProcessFailed.Call( // OK Browser addition
 		uintptr(unsafe.Pointer(e.webview)),
 		uintptr(unsafe.Pointer(e.processFailed)),
@@ -271,6 +288,15 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 
 	if e.focusOnInit {
 		e.Focus()
+	}
+
+	// OK Browser addition: the asynchronous (popup) creation path never
+	// runs Embed's message pump, so it performs Embed's trailing work here
+	// and then tells the host the child view is ready.
+	if cb := e.readyCallback; cb != nil {
+		e.readyCallback = nil
+		e.Init("window.external={invoke:s=>window.chrome.webview.postMessage(s)}")
+		cb(true)
 	}
 
 	return 0
@@ -424,6 +450,49 @@ func (e *Chromium) DownloadStarting(args *ICoreWebView2DownloadStartingEventArgs
 func (e *Chromium) ProcessFailed(_ *ICoreWebView2, args *ICoreWebView2ProcessFailedEventArgs) uintptr {
 	if e.ProcessFailedCallback != nil { e.ProcessFailedCallback(args.GetProcessFailedKind()) }
 	return 0
+}
+
+// WindowCloseRequested fires when the content calls window.close(); the
+// host tears the popup down. (OK Browser addition.)
+func (e *Chromium) WindowCloseRequested(_ *ICoreWebView2, _ uintptr) uintptr {
+	if e.WindowCloseRequestedCallback != nil {
+		e.WindowCloseRequestedCallback()
+	}
+	return 0
+}
+
+// WebView2 exposes the raw ICoreWebView2 so the host can hand this view to
+// the engine as the answer to a NewWindowRequested event (put_NewWindow).
+// (OK Browser addition.)
+func (e *Chromium) WebView2() *ICoreWebView2 { return e.webview }
+
+// EmbedInEnvironment creates this engine's controller inside an EXISTING
+// WebView2 environment instead of creating a new one, and returns without
+// pumping messages: ready is invoked later on the UI thread.
+//
+// Sharing the environment is what makes a popup a real popup - it is the
+// same browser process and the same user-data folder, so cookies, the
+// signed-in session and window.opener all stay intact. It is also the only
+// safe way to create a view from inside a COM event callback, where Embed's
+// nested message pump would deadlock. (OK Browser addition.)
+func (e *Chromium) EmbedInEnvironment(hwnd uintptr, env *ICoreWebView2Environment, ready func(ok bool)) bool {
+	if env == nil {
+		return false
+	}
+	e.hwnd = hwnd
+	e.readyCallback = ready
+	_, _, _ = env.vtbl.AddRef.Call(uintptr(unsafe.Pointer(env)))
+	e.environment = env
+	r, _, _ := env.vtbl.CreateCoreWebView2Controller.Call(
+		uintptr(unsafe.Pointer(env)),
+		hwnd,
+		uintptr(unsafe.Pointer(e.controllerCompleted)),
+	)
+	if int64(r) < 0 {
+		e.readyCallback = nil
+		return false
+	}
+	return true
 }
 
 // DevToolsProtocolMethodCompleted ignores CDP results (fire-and-forget).

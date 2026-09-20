@@ -119,7 +119,14 @@ just content:
   with a small glass toast
 - The address bar updates **the instant** you navigate (not after the page loads)
 - Back / forward / reload appear as tiny glyphs that light up only when usable (real history state)
-- `target="_blank"` links, middle-click on links and `window.open()` open a **new tab**; `Ctrl+N` opens a new window
+- `target="_blank"` links, middle-click on links and plain `window.open()` open a **new tab**; `Ctrl+N` opens a new window
+- **Real popup windows for sign-in flows**: a `window.open()` that asks for a
+  size or position (Google, Microsoft, GitHub OAuth…) gets a dedicated child
+  WebView2 in its own window, handed to the engine through
+  `NewWindowRequested.put_NewWindow` with an event deferral. It shares the
+  browser profile, so `window.opener`, cookies, the callback `postMessage`,
+  `window.close()` and the requested dimensions all behave exactly like
+  Chrome — **Google login works**
 - Zoom (`Ctrl+ +` / `Ctrl+-` / `Ctrl+0`), print (`Ctrl+P`), fullscreen (`F11`), mouse buttons 4/5 for back/forward
 - Right-click context menus, F12 DevTools, hover link preview, downloads (the engine's download UI)
 - **Find in page** (`Ctrl+F`) with a match counter, next / previous and highlight
@@ -170,9 +177,9 @@ just content:
 ## Diagnostics
 
 Run `OKBrowser.exe --selftest` to check every navigation path end to end:
-typed URL, plain link click, `window.open` via the bridge, native
-`window.open` via the engine's NewWindowRequested event, and `target=_blank`
-link clicks. It writes `selftest.txt` next to the
+typed URL, plain link click, featureless `window.open` via the engine's
+NewWindowRequested event, a trusted `target=_blank` engine click, and
+bridge-forwarded `target=_blank` link clicks. It writes `selftest.txt` next to the
 exe and exits 0 only when everything passes. CI runs this on every build.
 
 ## Build from source

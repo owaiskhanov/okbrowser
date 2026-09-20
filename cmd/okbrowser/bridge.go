@@ -18,8 +18,9 @@ import (
 // It provides:
 //
 //   - window.__ok(obj):  post a JSON message to the host application
-//   - target=_blank links, middle-clicks and window.open() forwarded to the
-//     host so they can open as a new tab
+//   - target=_blank links and middle-clicks forwarded to the host so they
+//     can open as a new tab (window.open() is left native, so the engine
+//     raises NewWindowRequested and real popups stay real popups)
 const bridgeJS = `
 window.__ok = function (o) {
   try { window.chrome.webview.postMessage(JSON.stringify(o)); } catch (e) {}
@@ -85,10 +86,11 @@ window.__ok = function (o) {
     if (edgeLink) edgeSignal("end", e);
     edgeLink = "";
   }, true);
-  window.open = function (u) {
-    if (u) window.__ok({ t: "open", u: String(u) });
-    return null;
-  };
+  // window.open is deliberately NOT overridden. Replacing it used to turn
+  // every popup into a plain tab, which severed window.opener and broke
+  // OAuth sign-in popups (Google, Microsoft, GitHub...). The native call is
+  // left intact so the engine raises NewWindowRequested, where the host
+  // either builds a real popup window (features given) or opens a tab.
 })();
 `
 
