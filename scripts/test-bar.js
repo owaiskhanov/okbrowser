@@ -80,7 +80,7 @@ let createdHost = null;
 const docListeners = {};
 global.setInterval = () => 0;
 global.clearInterval = () => {};
-const win = { __ok: o => sent.push(o), __okBarInstalled: false };
+const win = { __ok: o => sent.push(o), __okBarInstalled: false, __okShellToken: 'test-shell-token' };
 win.top = win; // act as the top frame
 global.window = win;
 global.document = {
@@ -98,6 +98,7 @@ const shadow = global.__shadow;
 assert.strictEqual(createdHost.parentNode, global.document.body, 'shell should mount immediately when the document is ready');
 assert.strictEqual(typeof win.__okBar, 'function', 'shell API not installed');
 assert.strictEqual(typeof win.__okBubbleFocus, 'function', 'bubble focus API not installed');
+assert.strictEqual(win.__okShellToken, undefined, 'permission capability must not remain visible to page scripts');
 assert.ok(!shadow.getElementById('strip').classList.contains('open'), 'bar starts hidden (immersive)');
 
 // --- tabs in the frameless top bar ---
@@ -191,6 +192,16 @@ assert.ok(!input.selected, 'a push must not re-select text while typing');
 input.blur();
 win.__okBar({ tabs: [{ t: 'Example' }], a: 0, u: 'https://example.com/', b: false, f: false, m: false });
 assert.ok(!input.focused, 'a loaded page must not steal focus into the address bar');
+
+// --- notification permissions are a trusted browser prompt ---------------
+sent.length = 0;
+win.__okBar({ tabs: [{ t: 'Mail' }], a: 0, u: 'https://mail.example/', b: false, f: false, m: false, p: 'notifications', po: 'https://mail.example' });
+const permtoast = shadow.getElementById('permtoast');
+assert.ok(permtoast.classList.contains('show'), 'a notification request must be visible in browser chrome');
+assert.ok(shadow.getElementById('permtext').textContent.includes('https://mail.example'), 'the notification prompt names the requesting origin');
+shadow.getElementById('permallow').dispatch('click', EV); expect({ t: 'ui', a: 'permission-prompt', u: 'allow', n: 'test-shell-token' });
+win.__okBar({ tabs: [{ t: 'Mail' }], a: 0, u: 'https://mail.example/', b: false, f: false, m: false });
+assert.ok(!permtoast.classList.contains('show'), 'the notification prompt clears when the request is resolved');
 
 // --- keyed rendering: pills update in place, only genuinely new ones animate ---
 const pill0 = tz.children[0];

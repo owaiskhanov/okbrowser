@@ -107,6 +107,12 @@ const barJS = `
   if (window.__okBarInstalled) return;
   window.__okBarInstalled = true;
 
+  // Supplied by the native host before this document starts, then kept only
+  // in this closed-shell closure. A web page can post ordinary bridge
+  // messages, but cannot forge a notification-permission decision.
+  var shellToken = window.__okShellToken || '';
+  try { delete window.__okShellToken; } catch (e) { window.__okShellToken = undefined; }
+
   var S = { tabs: [{ t: "New Tab" }], a: 0, u: "", b: false, f: false, m: false, k: false, e: "Google" };
 
   var SV = function (inner) {
@@ -235,6 +241,9 @@ const barJS = `
     ".permrow{display:flex;align-items:center;justify-content:space-between;padding:7px 4px;border-top:1px solid rgba(120,128,138,.14)}",
     ".permrow select{border:0;border-radius:9px;padding:4px 6px;background:rgba(120,128,138,.13);color:inherit}",
     "@media(prefers-color-scheme:dark){.sitepanel{background:rgba(28,28,32,.9);color:#f2f2f7}}",
+    ".permtoast{position:fixed;top:44px;right:12px;z-index:2147483647;display:none;align-items:center;gap:9px;max-width:370px;padding:9px 10px 9px 13px;border-radius:15px;pointer-events:auto;font:12px -apple-system,'Segoe UI',sans-serif;color:#202124;background:rgba(250,250,252,.90);backdrop-filter:blur(28px) saturate(1.8);box-shadow:0 14px 42px rgba(0,0,0,.25)}",
+    ".permtoast.show{display:flex;animation:okin .16s ease}.permtext{line-height:1.3;flex:1}.permbtn{border:0;border-radius:10px;padding:6px 9px;cursor:default;font:600 12px inherit;color:#fff;background:#0a84ff}.permbtn.deny{color:#3c4043;background:rgba(120,128,138,.17)}",
+    "@media(prefers-color-scheme:dark){.permtoast{color:#f2f2f7;background:rgba(28,28,32,.92)}.permbtn.deny{color:#e8eaed;background:rgba(255,255,255,.14)}}",
     ".menu,.ctx{position:fixed;top:34px;right:6px;width:224px;padding:6px;border-radius:16px;",
     "z-index:2147483647;pointer-events:auto;display:none;",
     "font-family:-apple-system,'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;",
@@ -410,6 +419,7 @@ const barJS = `
       '<div class="permrow">Clipboard<select data-perm="clipboard"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div>' +
       '<div class="permrow">Sensors<select data-perm="sensors"><option value="default">Ask</option><option value="allow">Allow</option><option value="deny">Block</option></select></div>' +
       '<div class="permrow"><div class="mrow" id="clear-perms">Reset permissions</div><div class="mrow" id="clear-site">Clear site data</div></div></div>' +
+    '<div class="permtoast" id="permtoast"><div class="permtext" id="permtext"></div><div class="permbtn deny" id="permdeny">Block</div><div class="permbtn" id="permallow">Allow</div></div>' +
     '<div class="menu" id="menu">' +
       '<div class="mrow" id="m-newtab" data-m="newtab">' + I_PLUS + 'New tab</div>' +
       '<div class="mrow" id="m-incognito" data-m="incognito">' + I_INC + 'New incognito window</div>' +
@@ -445,7 +455,7 @@ const barJS = `
 
   var live = root.getElementById('live');
   function announce(text) { live.textContent = ''; setTimeout(function(){ live.textContent = text; }, 20); }
-  var buttonIDs = ['plus','lens','bsite','bback','bfwd','brl','bstar','go','wmenu','wmin','wmax','wclose','fprev','fnext','fclose','split-swap','split-tab','split-close'];
+  var buttonIDs = ['plus','lens','bsite','bback','bfwd','brl','bstar','go','wmenu','wmin','wmax','wclose','fprev','fnext','fclose','split-swap','split-tab','split-close','permallow','permdeny'];
   for (var ai=0;ai<buttonIDs.length;ai++) {
     var control=root.getElementById(buttonIDs[ai]); if(!control)continue;
     control.setAttribute('role','button'); control.setAttribute('tabindex','0');
@@ -800,10 +810,23 @@ const barJS = `
   });
   var permissionSelects = sitepanel.querySelectorAll ? sitepanel.querySelectorAll('select[data-perm]') : [];
   for (var pi=0;pi<permissionSelects.length;pi++) permissionSelects[pi].addEventListener('change', function () {
-    post({t:'ui',a:'permission',m:this.getAttribute('data-perm'),u:this.value});
+    post({t:'ui',a:'permission',m:this.getAttribute('data-perm'),u:this.value,n:shellToken});
   });
   root.getElementById('clear-perms').addEventListener('click', function(){post({t:'ui',a:'clear-permissions'});sitepanel.classList.remove('open');});
   root.getElementById('clear-site').addEventListener('click', function(){if(confirm('Clear cookies and storage for this site?'))post({t:'ui',a:'clear-site-data'});sitepanel.classList.remove('open');});
+
+  // Notifications do not get WebView2's stock permission dialog. This is
+  // browser chrome, not page content, so the requesting site cannot spoof
+  // it. The same choice is also available from the lock/site icon above.
+  var permtoast = root.getElementById('permtoast');
+  var permtext = root.getElementById('permtext');
+  function renderPermissionPrompt() {
+    var asked = S.p === 'notifications';
+    permtoast.classList.toggle('show', asked);
+    if (asked) permtext.textContent = (S.po || 'This site') + ' wants to send notifications';
+  }
+  root.getElementById('permallow').addEventListener('click', function () { post({t:'ui',a:'permission-prompt',u:'allow',n:shellToken}); });
+  root.getElementById('permdeny').addEventListener('click', function () { post({t:'ui',a:'permission-prompt',u:'deny',n:shellToken}); });
 
   // --- the address bubble (in the top bar, beside the +) --------------------
   function setOpen(v) { okb.className = v ? 'okb open' : 'okb'; }
@@ -1163,7 +1186,7 @@ const barJS = `
   });
 
   window.__okBar = function (s) {
-    S = s; window.__okSplitActive = !!S.v; render(); sync(); stateLive = true;
+    S = s; window.__okSplitActive = !!S.v; render(); sync(); renderPermissionPrompt(); stateLive = true;
     root.getElementById('wclose').title = S.v ? 'Close Split View' : 'Close';
     // New Tab: the address bar is the whole point of the page, so it stays
     // open AND focused - you can type the instant the tab appears. Focus is
@@ -1257,6 +1280,10 @@ type barState struct {
 	Q    bool              `json:"q"` // this is the focused split pane
 	L    bool              `json:"l"` // this is the left/original pane
 	G    bool              `json:"g"` // larger browser controls
+	// P/PO name an unresolved browser permission and the requesting
+	// origin. The shell owns the prompt; page JavaScript cannot spoof it.
+	P    string            `json:"p,omitempty"`
+	PO   string            `json:"po,omitempty"`
 }
 
 func (a *app) permissionStateFor(t *tab) map[string]string {
@@ -1300,6 +1327,9 @@ func (a *app) pushBarState() {
 			Q:    a.commandTab() == view,
 			L:    view == a.active(),
 			G:    a.store.Settings().LargeControls,
+		}
+		if p := view.permissionPrompt; p != nil {
+			st.P, st.PO = p.kind, p.origin
 		}
 		b, err := json.Marshal(st)
 		if err == nil {
@@ -1388,6 +1418,7 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		F  string  `json:"f"`
 		A  string  `json:"a"`
 		M  string  `json:"m"`
+		N  string  `json:"n"` // closed-shell capability for privileged actions
 		I  int     `json:"i"`
 		To int     `json:"to"`
 		X  float64 `json:"x"`
@@ -1641,7 +1672,32 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			from, to := m.I, m.To
 			a.postTask(func() { a.reorderTab(from, to) })
 			return
+		case "permission-prompt":
+			// Only the closed browser shell knows this capability. A page can
+			// send ordinary bridge messages, so never let it grant itself a
+			// sensitive permission by forging this action.
+			if m.N == "" || m.N != t.permissionToken {
+				return
+			}
+			// Complete the deferred notification request outside WebView2's
+			// message callback. The user has made an explicit browser-chrome
+			// choice, so persist it for this exact requesting origin.
+			choice := m.U
+			a.postTask(func() { a.resolvePermissionPrompt(t, choice) })
+			return
 		case "permission":
+			if m.N == "" || m.N != t.permissionToken {
+				return
+			}
+			// The site-information panel is an equally valid way to answer a
+			// visible notification prompt (the familiar "icon next to the
+			// address bar" flow). Use the request's origin, not a redirect's
+			// current URL, when doing so.
+			if p := t.permissionPrompt; p != nil && p.kind == m.M && (m.U == "allow" || m.U == "deny") {
+				choice := m.U
+				a.postTask(func() { a.resolvePermissionPrompt(t, choice) })
+				return
+			}
 			kinds := map[string]edge.CoreWebView2PermissionKind{"camera":edge.CoreWebView2PermissionKindCamera,"microphone":edge.CoreWebView2PermissionKindMicrophone,"location":edge.CoreWebView2PermissionKindGeolocation,"notifications":edge.CoreWebView2PermissionKindNotifications,"clipboard":edge.CoreWebView2PermissionKindClipboardRead,"sensors":edge.CoreWebView2PermissionKindOtherSensors}
 			kind, ok := kinds[m.M]
 			if ok {

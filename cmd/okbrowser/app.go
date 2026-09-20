@@ -331,6 +331,12 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		return 0
 	case win.WM_DESTROY:
 		a.saveSession()
+// Do not leave a WebView2 permission deferral behind while Windows
+		// tears the controller down; an unanswered browser prompt is simply
+		// dismissed, never persisted.
+		for _, t := range a.tabs {
+			a.cancelPermissionPrompt(t)
+		}
 		a.discardSpare() // the warm engine is never part of the session
 		if a.store != nil {
 			a.store.Flush()

@@ -3,6 +3,8 @@
 package main
 
 import (
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -18,6 +20,26 @@ import (
 
 	"github.com/owaiskhanov/okbrowser/internal/nav"
 )
+
+// pendingPermission is an unresolved WebView2 permission request. Keeping it
+// on the tab lets the trusted shell render an explicit Allow/Block choice
+// while WebView2's deferral keeps the page's request alive.
+type pendingPermission struct {
+	origin  string
+	kind    string
+	request *edge.PermissionRequest
+}
+
+// newShellToken creates a capability known only to the native host and the
+// closed-shadow shell. Page JavaScript can use the general web-message bridge,
+// so a notification Allow/Block decision must carry this unguessable value.
+func newShellToken() string {
+	b := make([]byte, 24)
+	if _, err := cryptorand.Read(b); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b)
+}
 
 // tab is one browser tab: its own host window and web engine, switched in
 // and out of the shared content area. All tabs share one engine process via
@@ -35,6 +57,8 @@ type tab struct {
 	altTried bool // the apex/www alternate was already retried in this chain
 	warmStart   bool // carries a pre-rendered start page (skip re-rendering)
 	warmPainted bool // that start page has already painted (instant reveal)
+	permissionPrompt *pendingPermission // unresolved notification permission
+	permissionToken  string             // closed-shell capability for permission actions
 	zoom         float64
 	inactiveSince time.Time
 	sleeping     bool
@@ -120,18 +144,25 @@ func (a *app) buildTab(secondary bool) *tab {
 		return nil
 	}
 
-	t := &tab{host: h, title: "New Tab", zoom: 1.0}
+	t := &tab{host: h, title: "New Tab", zoom: 1.0, permissionToken: newShellToken()}
 
 	c := edge.NewChromium()
 	c.DataPath = dataPath()
 	c.MessageCallback = func(msg string) { a.onWebMessage(t, msg) }
 	c.AcceleratorKeyCallback = func(vk uint) bool { a.focusedTab = t; return a.onAccelerator(vk) }
-	c.PermissionRequestedCallback = func(raw string, kind edge.CoreWebView2PermissionKind) edge.CoreWebView2PermissionState {
-		name := permissionName(kind)
-		saved := a.store.Permission(permissionOrigin(raw), name)
-		if saved == "allow" { return edge.CoreWebView2PermissionStateAllow }
-		if saved == "deny" { return edge.CoreWebView2PermissionStateDeny }
-		return edge.CoreWebView2PermissionStateDefault
+	c.PermissionRequestedCallback = func(raw string, kind edge.CoreWebView2PermissionKind, request *edge.PermissionRequest) (edge.CoreWebView2PermissionState, bool) {
+		name, origin := permissionName(kind), permissionOrigin(raw)
+		saved := a.store.Permission(origin, name)
+		if saved == "allow" { return edge.CoreWebView2PermissionStateAllow, false }
+		if saved == "deny" { return edge.CoreWebView2PermissionStateDeny, false }
+		if name != "notifications" || origin == "" || request == nil {
+			return edge.CoreWebView2PermissionStateDefault, false
+		}
+		// WebView2 has no built-in permission prompt for notifications: its
+		// Default result simply rejects Notification.requestPermission().
+		// Keep its deferral alive and ask through our trusted browser shell.
+		a.postTask(func() { a.queuePermissionPrompt(t, origin, name, request) })
+		return edge.CoreWebView2PermissionStateDefault, true
 	}
 	// The engine-level safety net for new windows (target=_blank,
 	// window.open) - covers cases the page-side bridge cannot see (e.g.
@@ -195,6 +226,10 @@ func (a *app) buildTab(secondary bool) *tab {
 		_ = st.PutIsPasswordAutosaveEnabled(a.store.Settings().Autofill && !incognitoMode)
 		_ = st.PutIsGeneralAutofillEnabled(a.store.Settings().Autofill && !incognitoMode)
 	}
+	// This runs before bridgeJS/barJS and is deleted by barJS after it has
+	// captured the value in its private closure. Page scripts therefore
+	// cannot forge privileged permission-button web messages.
+	c.Init("window.__okShellToken=" + strconv.Quote(t.permissionToken) + ";")
 	c.Init(bridgeJS)
 	if secondary { c.Init("window.__okSecondary=true;") }
 	c.Init(barJS)
@@ -219,7 +254,11 @@ func (a *app) attachTab(t *tab, url string, activate bool) {
 			// before adoption. Arm it here or the fade would sit through
 			// its full ~700ms fallback - the opposite of instant.
 			if t.warmPainted {
+				// It is safe to reveal a proved-painted spare as a single
+				// opaque frame. A 250ms cosmetic cross-fade made Ctrl+T look
+				// slow even though its engine was ready.
 				a.fadeReady = true
+				a.fadeAlpha = 255
 			}
 		}
 		a.switchToTab(len(a.tabs) - 1)
@@ -309,7 +348,10 @@ func (a *app) warmSpare() {
 		// flash as well as the delay.
 		t.isStart = true
 		t.title = "New Tab"
-		t.warmStart, t.warmPainted = true, true
+		// NavigateToString is asynchronous. It is only safe to call this
+		// painted after NavigationCompleted confirms the document's first
+		// frame exists; claiming it here was the remaining flash on Ctrl+T.
+		t.warmStart, t.warmPainted = true, false
 		a.spareStamp = a.store.HistoryStamp()
 		t.chromium.NavigateToString(StartPageHTML(a.store.MostVisited(12), a.store.Settings().Engine))
 	}
@@ -436,8 +478,14 @@ func (a *app) switchToTab(i int) {
 	a.splitTab = nil
 	if cur := a.active(); cur != nil {
 		cur.inactiveSince = time.Now()
-		win.ShowWindow(cur.host, win.SW_HIDE)
-		cur.chromium.Hide()
+		// beginTabFade deliberately leaves the old host visible below the
+		// incoming one. Hiding it here created a blank flash while the new
+		// host was still waiting for its first paint.
+		keepForFade := a.fading && cur.host == a.fadePrev && a.tabs[i].host == a.fadeHost
+		if !keepForFade {
+			win.ShowWindow(cur.host, win.SW_HIDE)
+			cur.chromium.Hide()
+		}
 	}
 	a.activeIdx = i
 	t := a.tabs[i]
@@ -457,16 +505,71 @@ func (a *app) switchToTab(i int) {
 	}
 }
 
+// queuePermissionPrompt turns a deferred WebView2 notification request into a
+// browser-chrome prompt. Notifications are special in WebView2: unlike camera
+// or microphone, StateDefault has no built-in prompt and simply rejects the
+// web request, so it must be an explicit host decision.
+func (a *app) queuePermissionPrompt(t *tab, origin, kind string, request *edge.PermissionRequest) {
+	if request == nil {
+		return
+	}
+	if t == nil || t.chromium == nil || !a.tabAlive(t) {
+		request.Resolve(edge.CoreWebView2PermissionStateDefault)
+		return
+	}
+	// A page can ask more than once. Resolve the older one non-persistently
+	// rather than leaking a COM deferral or letting a stale prompt decide it.
+	a.cancelPermissionPrompt(t)
+	t.permissionPrompt = &pendingPermission{origin: origin, kind: kind, request: request}
+	if a.isActive(t) {
+		a.pushBarState()
+	}
+}
+
+func (a *app) cancelPermissionPrompt(t *tab) {
+	if t == nil || t.permissionPrompt == nil {
+		return
+	}
+	t.permissionPrompt.request.Resolve(edge.CoreWebView2PermissionStateDefault)
+	t.permissionPrompt = nil
+}
+
+// resolvePermissionPrompt persists the user's Allow/Block choice for the
+// requesting origin, then completes the WebView2 deferral that is awaiting it.
+func (a *app) resolvePermissionPrompt(t *tab, choice string) {
+	if t == nil || t.permissionPrompt == nil {
+		return
+	}
+	p := t.permissionPrompt
+	state := edge.CoreWebView2PermissionStateDeny
+	if choice == "allow" {
+		state = edge.CoreWebView2PermissionStateAllow
+	} else {
+		choice = "deny"
+	}
+	a.store.SetPermission(p.origin, p.kind, choice)
+	if t.chromium != nil {
+		t.chromium.SetPermission(edge.CoreWebView2PermissionKindNotifications, state)
+	}
+	t.permissionPrompt = nil
+	p.request.Resolve(state)
+	if a.isActive(t) {
+		a.pushBarState()
+	}
+}
+
 // closeTab removes tab i. Closing the last tab closes the window.
 func (a *app) closeTab(i int) {
 	if i < 0 || i >= len(a.tabs) {
 		return
 	}
 	if len(a.tabs) == 1 {
+		a.cancelPermissionPrompt(a.tabs[0])
 		win.DestroyWindow(a.hwnd)
 		return
 	}
 	t := a.tabs[i]
+	a.cancelPermissionPrompt(t)
 	if a.splitTab == t { a.splitTab = nil }
 	if t.url != "" && !t.isStart {
 		// Remember it for Ctrl+Shift+T (reopen closed tab).
@@ -511,6 +614,9 @@ func (a *app) navigateTab(t *tab, raw string) {
 	if u == "" {
 		return
 	}
+	// A permission prompt belongs to the old document, not a URL the user
+	// is navigating to. Complete it with the non-persistent default first.
+	a.cancelPermissionPrompt(t)
 	t.isStart = false
 	t.errPage = false
 	// A fresh user-initiated navigation earns a fresh apex/www retry.
@@ -525,6 +631,7 @@ func (a *app) navigateTab(t *tab, raw string) {
 
 // showInternal renders one of the built-in okbrowser:// pages in tab t.
 func (a *app) showInternal(t *tab, page string) {
+	a.cancelPermissionPrompt(t)
 	var html, title string
 	isStart := false
 	switch page {
@@ -671,6 +778,14 @@ func (a *app) fadeTick() {
 			t.chromium.Show()
 			t.chromium.Resize()
 		}
+		// A genuinely pre-painted spare needs no cosmetic fade: it can
+		// replace the old frame at full opacity on this first tick. Besides
+		// feeling instant, avoiding the translucent ramp eliminates the
+		// visible double-image of the old start page underneath it.
+		if a.fadeAlpha >= 255 {
+			a.endTabFade()
+			return
+		}
 		a.fadeRamping = true // revealed - the liquid ramp begins next tick
 		return
 	}
@@ -805,6 +920,12 @@ func (a *app) onNavStarting(t *tab, args *edge.ICoreWebView2NavigationStartingEv
 func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompletedEventArgs) {
 	if t.chromium == nil {
 		return
+	}
+	// A spare is only eligible for the zero-flicker, instant hand-off once
+	// WebView2 confirms its start page has completed. NavigateToString is
+	// asynchronous, so setting this when it is issued is too early.
+	if t.warmStart {
+		t.warmPainted = true
 	}
 	if a.fading && t.host == a.fadeHost {
 		a.fadeReady = true // first paint done - begin the liquid ramp
