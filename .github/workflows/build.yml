@@ -67,9 +67,19 @@ jobs:
 
       - name: Stamp automatic build version
         shell: pwsh
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
+          # Version precedence: the workflow_dispatch input, then a
+          # "[version=X.Y.Z.B]" marker in the commit message, else the
+          # automatic VERSION_BASE.<run number>.
           $override = "${{ github.event.inputs.version }}"
+          if (-not $override) {
+            $m = [regex]::Match($env:COMMIT_MSG, '\[version=(\d+\.\d+\.\d+\.\d+)\]')
+            if ($m.Success) { $override = $m.Groups[1].Value }
+          }
           if ($override) { $version = $override } else { $version = "$env:VERSION_BASE.${{ github.run_number }}" }
+          Write-Host "Building version $version"
           $parts = $version.Split('.')
           $info = Get-Content res/versioninfo.json -Raw | ConvertFrom-Json
           $info.FixedFileInfo.FileVersion.Major = [int]$parts[0]
@@ -184,8 +194,12 @@ jobs:
       - name: Publish automatic version
         env:
           GH_TOKEN: ${{ github.token }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
           VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION="$(printf '%s' "$COMMIT_MSG" | sed -n 's/.*\[version=\([0-9]*\.[0-9]*\.[0-9]*\.[0-9]*\)\].*/\1/p' | head -1)"
+          fi
           if [ -z "$VERSION" ]; then VERSION="${VERSION_BASE}.${GITHUB_RUN_NUMBER}"; fi
           TAG="v${VERSION}"
           cat > notes.md <<EOF
