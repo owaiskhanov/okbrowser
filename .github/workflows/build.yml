@@ -15,7 +15,10 @@ permissions:
   attestations: write
 
 env:
-  VERSION_BASE: "1.12.2"
+  # Must stay ahead of every published release: the in-app updater only
+  # offers a build when its version sorts higher (see newerVersion), so a
+  # base below the latest tag silently strands users on an older build.
+  VERSION_BASE: "1.17.1"
 
 jobs:
   windows:
