@@ -336,6 +336,9 @@ func (a *app) switchToTab(i int) {
 	a.pushBarState()
 	a.applyZoomTab(t)
 	if t.chromium != nil {
+		// A keyboard-driven tab switch has no pointer event to wake the
+		// auto-hidden shell, so briefly reveal the tabs before retiring it.
+		t.chromium.Eval("window.__okProximityReveal&&window.__okProximityReveal()")
 		t.chromium.Focus()
 	}
 }

@@ -492,9 +492,9 @@ const barJS = `
     return !!el && el.classList.contains('open');
   }
   function hideIfIdle() {
-    // New Tab is a persistent command surface: its tabs and URL field never
-    // retreat, even when the pointer leaves the top of the window.
-    if (!S.u || barPinned || document.activeElement === input) return;
+    // The shell is immersive everywhere, including New Tab. Keep it visible
+    // only while the pointer, address field or one of its popovers is active.
+    if (barPinned || addressHasFocus()) return;
     // Popovers anchored to the bar (menu, tab menu, suggestions, find)
     // are part of it: the bar must never retire while one is open.
     if (uiOpen('menu') || uiOpen('ctx') || uiOpen('sug') || uiOpen('find') || uiOpen('sitepanel')) return;
@@ -1183,7 +1183,9 @@ const barJS = `
     var firstState = !stateLive;
     S = s; window.__okSplitActive = !!S.v; render(); sync(); stateLive = true;
     root.getElementById('wclose').title = S.v ? 'Close Split View' : 'Close';
-    if (!S.u) { revealBar(false); setOpen(true); if (firstState) focusAddress(true); }
+    // Present a fresh New Tab ready for typing, then let it auto-hide just
+    // like every other page once the user leaves the controls.
+    if (!S.u && firstState) { revealBar(false); focusAddress(true); }
   };
   window.__okProximityReveal = function () { revealBar(true); };
 

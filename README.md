@@ -32,9 +32,10 @@ just content:
 
 - **Immersive, content-first**: the page fills the whole window — nothing
   sits on top of your content while you browse. The glass bar (tabs, `+`,
-  address bubble) **with the min / max / close capsule** hides away and
-  glides back together the instant your mouse touches the top edge, and
-  reveals itself on `Ctrl+T`, `Ctrl+L` and tab switches. It also responds
+  address bubble) **with the min / max / close capsule** hides away when idle,
+  including on New Tab, and glides back the instant your mouse touches the
+  top edge. It also reveals itself on `Ctrl+T`, `Ctrl+L` and tab switches,
+  and responds
   continuously to cursor proximity: tabs and window controls begin gliding
   into view within 160 px of the top (or 210 px during a fast upward gesture),
   becoming fully interactive before the pointer arrives; it slides away again

@@ -135,8 +135,10 @@ assert.ok(wmax._html.includes('<path'), 'restore icon adds the second window out
 // --- the address bubble ---
 const okb = shadow.getElementById('okb');
 const input = shadow.getElementById('q');
-assert.ok(okb.className.includes('open'), 'bubble stays open on the home screen');
-// Simulate navigation before testing the normal collapsed/hover behavior.
+win.__okBubbleFocus();
+assert.ok(okb.className.includes('open'), 'focused address bubble opens');
+input.blur();
+// Start collapsed before testing the normal hover behavior.
 okb.className = 'okb';
 
 okb.dispatch('mouseenter', EV);
@@ -397,12 +399,12 @@ expect({ t: 'menu', m: 'downloads' });
 }
 
 // --- immersive auto-hide bar ---
-// Auto-hide applies to normal pages; New Tab intentionally remains visible.
+// Auto-hide applies to both normal pages and New Tab.
 win.__okBar({ tabs: [{ t: 'Example' }], a: 0, u: 'https://example.com', b: false, f: false, m: false, v: false });
 const strip = shadow.getElementById('strip');
 assert.ok(strip, 'strip element exists');
 assert.ok(shadow.getElementById('edge'), 'top-edge tripwire exists');
-assert.ok(shadow.getElementById('wcap'), 'always-visible window capsule exists');
+assert.ok(shadow.getElementById('wcap'), 'window-control capsule exists');
 
 // the bar may be open from the tests above; retire it first
 input.blur();
@@ -439,7 +441,20 @@ setTimeout(() => {
       setTimeout(() => {
         assert.ok(!menu.classList.contains('open'), 'menu closes once the bar retires');
         assert.ok(!strip.classList.contains('open'), 'bar retires after leaving the menu');
-        console.log('shell UI logic tests: ALL PASSED');
+
+        // New Tab is immersive too: it opens ready for typing, then retires
+        // after focus and the pointer leave. Hovering the top edge restores it.
+        win.__okBar({ tabs: [{ t: 'New Tab' }], a: 0, u: '', b: false, f: false, m: false, v: false });
+        win.__okBubbleFocus();
+        assert.ok(strip.classList.contains('open'), 'New Tab controls can be revealed');
+        input.blur();
+        strip.dispatch('mouseleave', {});
+        setTimeout(() => {
+          assert.ok(!strip.classList.contains('open'), 'New Tab bar hides when no longer in use');
+          (docListeners['mousemove'] || []).forEach(f => f({ clientY: 2 }));
+          assert.ok(strip.classList.contains('open'), 'top-edge hover reveals New Tab bar again');
+          console.log('shell UI logic tests: ALL PASSED');
+        }, 550);
       }, 600);
     }, 600);
   }, 550);
