@@ -61,6 +61,13 @@ func (a *app) startSelfTest() {
 	}
 	a.selfTestFile = f
 	a.inSelfTest = true
+	// New tabs now start navigation before layout. On a warm CI runner the
+	// startup URL can finish inside WebView2's nested initialization pump before
+	// main enables the self-test hook. Re-issue phase 1 after the hook is armed
+	// so faster real navigation cannot turn into a false 150-second timeout.
+	if t := a.active(); t != nil && t.chromium != nil && t.url != "" {
+		t.chromium.Navigate(t.url)
+	}
 	go func() {
 		time.Sleep(150 * time.Second)
 		fmt.Fprintf(f, "[selftest] FAIL: timed out in phase %d\n", a.selfPhase+1)
