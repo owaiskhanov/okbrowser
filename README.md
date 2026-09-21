@@ -60,8 +60,9 @@ just content:
   normally a pointer swap rather than engine startup. Even a rare cold blank
   tab shows its final themed background immediately—never a spinner, progress
   line or loading label. Speed-dial history, tile DOM and favicons are added
-  only after the first frame. Opening a real link still selects its pill and
-  shows target-host feedback immediately, then hands off on its first
+  only after the first frame. Opening a real link also uses the indicator-free
+  themed handoff and starts navigation before tab layout; bounded hover hints
+  warm DNS/TLS ahead of the click. The destination appears on its first
   paintable frame—not after the full load. The engine's fallback background
   and every window erase are **dark** (not WebView2's default white), so
   nothing can ever flash white

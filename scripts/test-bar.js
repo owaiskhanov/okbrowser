@@ -17,10 +17,12 @@ const js = m[1];
 const bm = src.match(/const bridgeJS = `\r?\n([\s\S]*?)`/);
 assert(bm, 'bridgeJS not found in bridge.go');
 function runFirstPaintProbe({ href = 'https://example.com/', children = [], text = '', ready = 'loading' } = {}) {
-  const listeners = {}, messages = [];
+  const listeners = {}, messages = [], hints = [];
   const document = {
     readyState: ready,
     body: { children, textContent: text },
+    head: { appendChild(n) { hints.push(n); } },
+    createElement(tag) { return { tagName: tag.toUpperCase() }; },
     addEventListener(n, f) { (listeners[n] = listeners[n] || []).push(f); },
     querySelectorAll() { return []; }
   };
@@ -35,7 +37,7 @@ function runFirstPaintProbe({ href = 'https://example.com/', children = [], text
   new Function('window', 'document', 'location', 'CustomEvent', 'innerWidth', 'setTimeout', 'MutationObserver', bm[1])(
     window, document, { href }, function () {}, 1200, f => f(), MutationObserver
   );
-  return { listeners, messages, notify: () => observer && observer.fn() };
+  return { listeners, messages, hints, notify: () => observer && observer.fn() };
 }
 const ownShell = { tagName: 'DIV', hasAttribute: n => n === 'data-ok-shell' };
 let paintProbe = runFirstPaintProbe({ href: 'about:blank', children: [ownShell] });
@@ -45,6 +47,10 @@ const pageMain = { tagName: 'MAIN', hasAttribute: () => false };
 paintProbe = runFirstPaintProbe({ children: [ownShell, pageMain] });
 paintProbe.notify();
 assert.ok(paintProbe.messages.some(x => x.t === 'content-ready'), 'first real body node releases the new tab');
+const hoveredLink = { href: 'https://fast.example/path', closest: () => hoveredLink };
+paintProbe.listeners.pointerover[0]({ target: hoveredLink });
+assert.ok(paintProbe.hints.some(x => x.rel === 'dns-prefetch' && x.href === '//fast.example'), 'hover warms destination DNS');
+assert.ok(paintProbe.hints.some(x => x.rel === 'preconnect' && x.href === 'https://fast.example'), 'hover warms destination TLS');
 
 class FakeElement {
   constructor(tag) {
@@ -334,26 +340,22 @@ assert.ok(shadow.getElementById('prog').classList.contains('on'), 'loading line 
 win.__okLoad(false);
 assert.ok(shadow.getElementById('prog').classList.contains('done'), 'loading line completes');
 
-// immediate browser-owned surfaces while a selected WebView reaches first paint
-assert.strictEqual(typeof win.__okBlankTab, 'function', 'blank-tab surface API installed');
-assert.strictEqual(typeof win.__okTabLoading, 'function', 'destination loading surface API installed');
+// indicator-free browser-owned surface while a selected WebView first paints
+assert.strictEqual(typeof win.__okTabPlaceholder, 'function', 'tab placeholder API installed');
 const loadscreen = shadow.getElementById('loadscreen');
-win.__okBlankTab(true);
+win.__okTabPlaceholder(true, true);
 assert.ok(loadscreen.classList.contains('on'), 'blank New Tab background appears immediately');
-assert.ok(loadscreen.classList.contains('blank'), 'blank New Tab uses the indicator-free surface');
 assert.ok(!shadow.getElementById('prog').classList.contains('on'), 'blank New Tab never starts the progress line');
 assert.ok(!shadow.getElementById('prog').classList.contains('done'), 'blank New Tab never flashes a completed progress line');
 win.__okTabHandoffDone();
 assert.ok(!loadscreen.classList.contains('on'), 'blank New Tab surface retires at first paint');
-assert.ok(!shadow.getElementById('prog').classList.contains('done'), 'blank handoff retires without any progress completion');
-assert.ok(!loadscreen.classList.contains('blank'), 'blank mode is cleared after handoff');
-win.__okTabLoading(true, 'https://www.example.com/path');
-assert.ok(loadscreen.classList.contains('on'), 'destination loading surface appears immediately');
-assert.ok(!loadscreen.classList.contains('blank'), 'destination loading keeps its progress UI');
-assert.strictEqual(shadow.getElementById('loadhost').textContent, 'example.com', 'loading surface shows target host');
-assert.ok(shadow.getElementById('prog').classList.contains('on'), 'destination loading starts progress line');
+win.__okTabPlaceholder(true, false);
+assert.ok(loadscreen.classList.contains('on'), 'foreground link gets an immediate themed background');
+assert.ok(!shadow.getElementById('prog').classList.contains('on'), 'foreground link never starts a progress line');
+assert.ok(!shadow.getElementById('prog').classList.contains('done'), 'foreground link has no completion flash');
 win.__okTabHandoffDone();
-assert.ok(!loadscreen.classList.contains('on'), 'destination loading retires at first paint');
+assert.ok(!loadscreen.classList.contains('on'), 'link placeholder retires at first paint');
+assert.ok(!shadow.getElementById('prog').classList.contains('done'), 'link handoff stays indicator-free');
 
 // menu: clicks retargeted to the shadow host (what document-level
 // listeners see in a real browser for ALL shadow content) must NOT close

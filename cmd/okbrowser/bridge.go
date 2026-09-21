@@ -88,6 +88,29 @@ window.__ok = function (o) {
   document.addEventListener('ended', reportAudio, true);
   var formDirty=false;
   document.addEventListener('input',function(e){if(!formDirty && e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)){formDirty=true;window.__ok({t:'form-dirty',a:'1'});}},true);
+  // Warm DNS/TLS while the pointer settles over a link. Resource hints are
+  // bounded and do not request page content; separate controllers still
+  // benefit from the OS DNS cache and may reuse the runtime's connection work.
+  var hintedOrigins = Object.create(null), hintCount = 0, hintTimer = 0, hintTarget = null;
+  function preconnect(a) {
+    if (!a || !a.href || hintCount >= 8) return;
+    var u;
+    try { u = new URL(a.href, location.href); } catch (_) { return; }
+    if ((u.protocol !== 'http:' && u.protocol !== 'https:') || hintedOrigins[u.origin]) return;
+    hintedOrigins[u.origin] = true; hintCount++;
+    var dns = document.createElement('link'); dns.rel = 'dns-prefetch'; dns.href = '//' + u.host;
+    var conn = document.createElement('link'); conn.rel = 'preconnect'; conn.href = u.origin; conn.crossOrigin = 'anonymous';
+    (document.head || document.documentElement).appendChild(dns);
+    (document.head || document.documentElement).appendChild(conn);
+  }
+  document.addEventListener('pointerover', function (e) {
+    var a = anchor(e.target); if (!a || a === hintTarget) return;
+    hintTarget = a; clearTimeout(hintTimer); hintTimer = setTimeout(function () { preconnect(a); }, 65);
+  }, true);
+  document.addEventListener('pointerout', function (e) {
+    var a = anchor(e.target); if (a && a === hintTarget) { clearTimeout(hintTimer); hintTarget = null; }
+  }, true);
+  document.addEventListener('pointerdown', function (e) { preconnect(anchor(e.target)); }, true);
   document.addEventListener("click", function (e) {
     var a = anchor(e.target);
     if (a && a.target && a.target !== "_self" && !a.hasAttribute("data-ok-engine")) {
@@ -221,24 +244,12 @@ const barJS = `
     ".tz.mini .tab,.tab.pin{flex:0 0 auto;width:23px;padding:0 3px;justify-content:center;gap:0}",
     ".tz.mini .tt,.tab.pin .tt{display:none}",
     ".tz.mini .tx,.tab.pin .tx{display:none !important}",
-    ".loadscreen{position:fixed;inset:0;z-index:2147483642;display:grid;place-items:center;",
-    "pointer-events:none;visibility:hidden;opacity:0;background:rgba(247,247,249,.985);",
-    "font-family:-apple-system,'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;",
-    "transition:opacity .06s linear,visibility 0s linear .06s}",
-    ".loadscreen.on{pointer-events:auto;visibility:visible;opacity:1;transition:opacity .04s linear}",
-    ".loadscreen.blank{background:linear-gradient(160deg,#f6f7fa 0%,#eceef4 55%,#e7e9f2 100%)}",
-    ".loadscreen.blank .loadcenter{display:none}",
-    "@media (prefers-color-scheme:dark){.loadscreen{background:rgba(24,24,28,.99)}.loadscreen.blank{background:linear-gradient(160deg,#151519 0%,#101014 55%,#0c0c10 100%)}}",
-    ".loadcenter{display:flex;flex-direction:column;align-items:center;gap:15px;transform:translateY(-4vh)}",
-    ".loadorb{width:36px;height:36px;border-radius:50%;position:relative;overflow:hidden;",
-    "background:linear-gradient(145deg,rgba(10,132,255,.2),rgba(90,200,250,.08));",
-    "box-shadow:inset 0 0 0 1px rgba(10,132,255,.18),0 8px 28px rgba(10,132,255,.12)}",
-    ".loadorb:after{content:'';position:absolute;inset:5px;border-radius:50%;border:2px solid transparent;",
-    "border-top-color:#0a84ff;border-right-color:rgba(90,200,250,.72);animation:okspin .65s linear infinite}",
-    ".loadhost{max-width:min(70vw,520px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;",
-    "font-size:12px;font-weight:550;letter-spacing:.01em;color:#72727a}",
-    "@media (prefers-color-scheme:dark){.loadhost{color:#aaaab2}}",
-    "@keyframes okspin{to{transform:rotate(360deg)}}",
+    ".loadscreen{position:fixed;inset:0;z-index:2147483642;display:block;",
+    "pointer-events:none;visibility:hidden;opacity:0;",
+    "background:linear-gradient(160deg,#f6f7fa 0%,#eceef4 55%,#e7e9f2 100%);",
+    "transition:opacity .04s linear,visibility 0s linear .04s}",
+    ".loadscreen.on{pointer-events:auto;visibility:visible;opacity:1;transition:opacity .025s linear}",
+    "@media (prefers-color-scheme:dark){.loadscreen{background:linear-gradient(160deg,#151519 0%,#101014 55%,#0c0c10 100%)}}",
     ".prog{position:fixed;top:0;left:0;height:2.5px;width:0;z-index:2147483644;pointer-events:none;",
     "background:linear-gradient(90deg,#0a84ff,#5ac8fa);border-radius:0 2px 2px 0;opacity:0;",
     "transition:opacity .25s}",
@@ -443,7 +454,7 @@ const barJS = `
 
   root.innerHTML =
     '<div class="sr" id="live" role="status" aria-live="polite"></div>' +
-    '<div class="loadscreen" id="loadscreen"><div class="loadcenter"><div class="loadorb"></div><div class="loadhost" id="loadhost">Opening…</div></div></div>' +
+    '<div class="loadscreen" id="loadscreen"></div>' +
     '<div class="prog" id="prog"></div>' +
     '<div class="edge" id="edge"></div>' +
     '<div class="strip" id="strip">' +
@@ -1254,44 +1265,25 @@ const barJS = `
   };
   window.__okProximityReveal = function () { revealBar(true); };
 
-  // Browser-owned handoff surfaces are rendered by the already-visible
-  // compositor, so acknowledgement is immediate even on a cold engine path.
-  // A blank tab gets only its final themed background; loading visuals are
-  // reserved for real destination URLs.
+  // Indicator-free handoff surface rendered by the already-visible compositor.
+  // Both blank tabs and foreground links get only the final themed background;
+  // the destination WebView replaces it on its first paintable frame.
   var loadingScreen = root.getElementById('loadscreen');
-  var loadingHost = root.getElementById('loadhost');
   window.__okTabHandoffDone = function () {
     if (!loadingScreen) return;
-    var wasBlank = loadingScreen.classList.contains('blank');
     loadingScreen.classList.remove('on');
-    loadingScreen.classList.remove('blank');
-    if (wasBlank && window.__okLoadReset) window.__okLoadReset();
-    else if (window.__okLoad) window.__okLoad(false);
+    if (window.__okLoadReset) window.__okLoadReset();
   };
-  window.__okBlankTab = function (on) {
+  window.__okTabPlaceholder = function (on, focus) {
     if (!loadingScreen) return;
     if (!on) { window.__okTabHandoffDone(); return; }
     if (window.__okLoadReset) window.__okLoadReset();
-    loadingScreen.classList.add('blank');
     loadingScreen.classList.add('on');
     revealBar(true);
-    focusAddress(true);
-    announce('New tab opened');
-  };
-  window.__okTabLoading = function (on, raw) {
-    if (!loadingScreen) return;
-    if (!on) { window.__okTabHandoffDone(); return; }
-    var label = 'Opening…';
-    if (raw) {
-      try { label = new URL(raw).hostname.replace(/^www\./, '') || raw; }
-      catch (_) { label = raw; }
+    if (focus) {
+      focusAddress(true);
+      announce('New tab opened');
     }
-    loadingScreen.classList.remove('blank');
-    loadingHost.textContent = label;
-    loadingScreen.classList.add('on');
-    if (window.__okLoad) window.__okLoad(true);
-    revealBar(true);
-    announce('Opening ' + label);
   };
 
   // Liquid loading hairline at the top edge while a page loads.
@@ -1431,9 +1423,9 @@ func (a *app) pushBarState() {
 		}
 	}
 	push(t, t, a.activeIdx)
-	// Until the target's first frame, the previous WebView is the visible
-	// loading canvas. Mirror the new active state into its shell so the pill,
-	// URL and loading line react in the same frame as the click.
+	// Until the target's first frame, the previous WebView owns the neutral
+	// themed surface. Mirror the new active state into its shell so the selected
+	// pill and URL react in the same frame as the click.
 	if a.fading {
 		if previous := a.tabByHost(a.fadePrev); previous != nil && previous != t {
 			push(previous, t, a.activeIdx)
@@ -1609,8 +1601,8 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		target := t
 		if a.fading && t != nil && t.host == a.fadePrev {
 			target = a.active()
-			if m.U != "" {
-				a.showTabLoading(t, m.U)
+			if target != nil {
+				target.quietLoad = true
 			}
 		}
 		a.navigateTab(target, m.U)

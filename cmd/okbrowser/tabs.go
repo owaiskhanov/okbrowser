@@ -38,6 +38,7 @@ type tab struct {
 	audioPlaying     bool
 	dirtyForm        bool
 	paintReady       bool // this document has produced its first paintable frame
+	quietLoad        bool // initial navigation uses the indicator-free handoff
 	startTilesQueued bool // speed-dial data is loaded only after New Tab first paint
 	crashCount       int
 	lastCrash        time.Time
@@ -215,8 +216,8 @@ func (a *app) closeSpare() {
 }
 
 // newTab claims the prewarmed view whenever possible. New Tab is then a
-// pointer swap plus ShowWindow, while links select their tab immediately and
-// display a browser-owned loading surface until the first real page frame.
+// pointer swap plus ShowWindow, while links start navigating before layout and
+// use the same indicator-free themed surface until the first real page frame.
 func (a *app) newTab(raw string, activate bool) *tab {
 	prev := a.active()
 	t := a.spareTab
@@ -228,11 +229,7 @@ func (a *app) newTab(raw string, activate bool) *tab {
 		// WebView creation. Blank tabs get their final themed background—not a
 		// spinner or progress indicator—while the controller starts behind it.
 		if activate && prev != nil {
-			if raw == "" {
-				a.showBlankTab(prev)
-			} else {
-				a.showTabLoading(prev, raw)
-			}
+			a.showTabPlaceholder(prev, raw == "")
 		}
 		t = a.createTabEngine(true)
 		if t == nil {
@@ -256,6 +253,7 @@ func (a *app) newTab(raw string, activate bool) *tab {
 	t.sleeping = false
 	t.audioPlaying = false
 	t.dirtyForm = false
+	t.quietLoad = raw != ""
 	t.zoom = 1.0
 
 	a.tabs = append(a.tabs, t)
@@ -265,22 +263,24 @@ func (a *app) newTab(raw string, activate bool) *tab {
 		a.showStartPage(t)
 	}
 	if raw != "" {
-		// Populate the selected pill/address immediately; navigateTab will
-		// normalize the value once the view has been selected.
+		// Populate the pill/address and start the network request before window
+		// layout or shell synchronization. The engine is already warm and hidden.
 		t.url = raw
 		t.isStart = false
 		t.paintReady = false
+		a.navigateTab(t, raw)
 	}
 
 	if activate || len(a.tabs) == 1 {
 		readyNewTab := raw == "" && prewarmed && t.paintReady
 		if prev != nil && prev != t && isWnd(prev.host) && !readyNewTab {
 			a.beginTabFade(t, prev.host)
-			if raw == "" {
-				a.showBlankTab(prev)
-			} else {
-				a.showTabLoading(prev, raw)
+			// Navigation starts before layout. A cached/local destination may
+			// already have crossed its paint boundary by the time fade state exists.
+			if t.paintReady {
+				a.fadeReady = true
 			}
+			a.showTabPlaceholder(prev, raw == "")
 		}
 		a.switchToTab(len(a.tabs) - 1)
 		if a.inSelfTest && a.fading && prev != nil && !win.IsWindowVisible(prev.host) {
@@ -294,9 +294,7 @@ func (a *app) newTab(raw string, activate bool) *tab {
 		a.pushBarState()
 	}
 
-	if raw != "" {
-		a.navigateTab(t, raw)
-	} else if activate || len(a.tabs) == 1 {
+	if raw == "" && (activate || len(a.tabs) == 1) {
 		// Keep typing live even on the rare cold path: the visible placeholder's
 		// address bubble forwards navigation to the newly selected tab.
 		if a.fading && prev != nil && prev.chromium != nil {
@@ -527,7 +525,9 @@ func (a *app) navigateTab(t *tab, raw string) {
 		a.pushBarState()
 	}
 	t.chromium.Navigate(u)
-	t.chromium.Focus()
+	if a.isActive(t) {
+		t.chromium.Focus()
+	}
 }
 
 // showInternal renders one of the built-in okbrowser:// pages in tab t.
@@ -663,23 +663,13 @@ func (a *app) sleepInactiveTabs() {
 	a.pushBarState()
 }
 
-// showBlankTab immediately covers the previous page with the final New Tab
-// background. It is deliberately not a loading UI: there is no spinner,
-// progress line or loading copy while a rare cold controller starts behind it.
-func (a *app) showBlankTab(view *tab) {
+// showTabPlaceholder immediately covers the previous page with the final
+// themed background. It is deliberately not a loading UI: blank tabs and
+// foreground links both avoid spinners, progress lines and loading copy.
+func (a *app) showTabPlaceholder(view *tab, focusAddress bool) {
 	if view != nil && view.chromium != nil {
-		view.chromium.Eval("window.__okBlankTab&&window.__okBlankTab(true)")
+		view.chromium.Eval(fmt.Sprintf("window.__okTabPlaceholder&&window.__okTabPlaceholder(true,%t)", focusAddress))
 	}
-}
-
-// showTabLoading is reserved for actual destination URLs, where network wait
-// is real and target-host feedback is useful.
-func (a *app) showTabLoading(view *tab, raw string) {
-	if view == nil || view.chromium == nil {
-		return
-	}
-	b, _ := json.Marshal(raw)
-	view.chromium.Eval(fmt.Sprintf("window.__okTabLoading&&window.__okTabLoading(true,%s)", string(b)))
 }
 
 func (a *app) hideTabHandoff(view *tab) {
@@ -887,7 +877,11 @@ func (a *app) onNavStarting(t *tab, args *edge.ICoreWebView2NavigationStartingEv
 	t.errPage = false
 	if a.isActive(t) {
 		a.pushBarState()
-		a.execActive("window.__okLoad&&window.__okLoad(true)")
+		if t.quietLoad {
+			a.execActive("window.__okLoadReset&&window.__okLoadReset()")
+		} else {
+			a.execActive("window.__okLoad&&window.__okLoad(true)")
+		}
 	}
 }
 
@@ -899,7 +893,7 @@ func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompleted
 		return
 	}
 	if a.isActive(t) {
-		if t.isStart {
+		if t.isStart || t.quietLoad {
 			a.execActive("window.__okLoadReset&&window.__okLoadReset()")
 		} else {
 			a.execActive("window.__okLoad&&window.__okLoad(false)")
@@ -908,7 +902,7 @@ func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompleted
 	// The mutation/frame signal normally arrives first. Navigation completion
 	// is a conservative fallback for WebView2 versions that throttle animation
 	// frames in a hidden controller; it is later than first paintable content,
-	// but must never leave the loading canvas stuck indefinitely.
+	// but must never leave the themed handoff surface stuck indefinitely.
 	paintableFallback := args == nil
 	if args != nil {
 		if ok, err := args.GetIsSuccess(); err == nil {
@@ -930,6 +924,7 @@ func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompleted
 			a.fadeReady = true
 		}
 		a.loadStartTiles(t)
+		t.quietLoad = false
 	}
 	a.applyZoomTab(t)
 	a.pushBarState()
