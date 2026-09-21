@@ -842,24 +842,32 @@ func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompleted
 	if t.chromium == nil {
 		return
 	}
-	// requestAnimationFrame may be throttled for a hidden controller. The
-	// spare's local New Tab document is fully deterministic, so completion is
-	// sufficient to mark it ready for an immediate ShowWindow handoff.
-	if t == a.spareTab && t.isStart {
-		t.paintReady = true
-	}
 	if a.isActive(t) {
 		a.execActive("window.__okLoad&&window.__okLoad(false)")
 	}
-	if args != nil && !t.errPage {
-		if ok, err := args.GetIsSuccess(); err == nil && !ok {
-			code, _ := args.GetWebErrorStatus()
-			// 14 = OperationCanceled (user stopped or replaced the
-			// navigation) - not an error worth showing.
-			if code != 0 && code != 14 && t.url != "" {
-				a.showErrorPage(t, code)
-				return
+	// The mutation/frame signal normally arrives first. Navigation completion
+	// is a conservative fallback for WebView2 versions that throttle animation
+	// frames in a hidden controller; it is later than first paintable content,
+	// but must never leave the loading canvas stuck indefinitely.
+	paintableFallback := args == nil
+	if args != nil {
+		if ok, err := args.GetIsSuccess(); err == nil {
+			paintableFallback = ok
+			if !ok && !t.errPage {
+				code, _ := args.GetWebErrorStatus()
+				// 14 = OperationCanceled (user stopped or replaced the
+				// navigation) - not an error worth showing.
+				if code != 0 && code != 14 && t.url != "" {
+					a.showErrorPage(t, code)
+					return
+				}
 			}
+		}
+	}
+	if paintableFallback {
+		t.paintReady = true
+		if a.fading && a.fadeNew == t && a.isActive(t) {
+			a.beginTabFade(t)
 		}
 	}
 	a.applyZoomTab(t)
