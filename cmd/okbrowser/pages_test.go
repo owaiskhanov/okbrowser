@@ -10,26 +10,27 @@ import (
 	"testing"
 )
 
-// TestStartPageIconOnly verifies the start page tiles carry no text labels.
-func TestStartPageIconOnly(t *testing.T) {
-	html := StartPageHTML([]Tile{{URL: "https://example.com/", Title: "Example", Favicon: "https://example.com/icon.png"}}, "Google")
-	if !strings.Contains(html, `class="tile"`) {
-		t.Fatal("tiles missing")
+// TestStartPageDefersTiles verifies first-frame HTML stays minimal and exposes
+// the post-paint hook used to add speed-dial data later.
+func TestStartPageDefersTiles(t *testing.T) {
+	html := StartPageHTML("Google")
+	for _, want := range []string{
+		`id=\"q\"`,
+		`Search with Google`,
+		`id=\"tiles\"`,
+		`window.__okStartTiles`,
+		`img.loading='lazy'`,
+		`img.decoding='async'`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("start page missing %q", want)
+		}
 	}
-	if strings.Contains(html, `font-size:11.5px;font-weight:550;white-space`) {
-		t.Fatal("tile text label leaked back")
+	if strings.Contains(html, `id=\"toast\"`) {
+		t.Fatal("unused toast script leaked into the New Tab critical path")
 	}
-	if !strings.Contains(html, `title="Example"`) {
-		t.Fatal("tile tooltip (title) missing")
-	}
-	if !strings.Contains(html, `id="toast"`) {
-		t.Fatal("toast mount missing")
-	}
-	if !strings.Contains(html, `data-u="https://example.com/"`) {
-		t.Fatal("tile target URL missing")
-	}
-	if !strings.Contains(html, `src="https://example.com/icon.png"`) {
-		t.Fatal("tile favicon missing")
+	if strings.Contains(html, `class=\"wrap fade\"`) {
+		t.Fatal("first-frame entrance animation leaked into New Tab")
 	}
 }
 

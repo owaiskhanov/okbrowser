@@ -133,53 +133,56 @@ func tileFavicon(t Tile) string {
 	return ""
 }
 
-// StartPageHTML renders the start page: big search field plus the
-// most-visited speed dial.
-func StartPageHTML(tiles []Tile, engine string) string {
+// StartPageHTML renders only the first-frame New Tab shell. Speed-dial data
+// is queried and injected after first paint so history aggregation, tile DOM,
+// favicon decoding and glass effects never sit on the Ctrl+T critical path.
+func StartPageHTML(engine string) string {
 	var b strings.Builder
 	b.WriteString(pageBase)
-	b.WriteString(toastMount)
-	b.WriteString(`<div class="wrap fade" style="text-align:center">`)
-	b.WriteString(`<div style="width:64px;height:64px;margin:8vh auto 22px;border-radius:20px;display:grid;place-items:center;font-size:24px;font-weight:800;color:#0a84ff;background:rgba(255,255,255,.6);backdrop-filter:blur(24px) saturate(1.8);-webkit-backdrop-filter:blur(24px) saturate(1.8);box-shadow:0 14px 40px rgba(10,132,255,.18),inset 0 1px 0 rgba(255,255,255,.8),inset 0 0 0 .5px rgba(255,255,255,.4)">OK</div>`)
-	b.WriteString(`<div class="card" style="display:flex;align-items:center;gap:10px;padding:6px 8px 6px 18px;margin-bottom:34px">`)
+	b.WriteString(`<div class="wrap" style="text-align:center">`)
+	b.WriteString(`<div style="width:64px;height:64px;margin:8vh auto 22px;border-radius:20px;display:grid;place-items:center;font-size:24px;font-weight:800;color:#0a84ff;background:rgba(255,255,255,.6);box-shadow:0 14px 40px rgba(10,132,255,.18),inset 0 1px 0 rgba(255,255,255,.8),inset 0 0 0 .5px rgba(255,255,255,.4)">OK</div>`)
+	b.WriteString(`<div class="card" style="display:flex;align-items:center;gap:10px;padding:6px 8px 6px 18px;margin-bottom:34px;backdrop-filter:none;-webkit-backdrop-filter:none">`)
 	b.WriteString(`<input id="q" placeholder="Search with ` + htmlEsc(engine) + ` or enter address" spellcheck="false" autocomplete="off" style="all:unset;flex:1;font-size:15px;padding:12px 0;cursor:text">`)
 	b.WriteString(`<div id="go" style="flex:0 0 auto;width:38px;height:38px;border-radius:50%;display:grid;place-items:center;color:#fff;background:rgba(10,132,255,.92);cursor:pointer">`)
 	b.WriteString(`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13"/><path d="M13 6l6 6-6 6"/></svg></div>`)
-	b.WriteString(`</div><div id="tiles" style="display:grid;grid-template-columns:repeat(6,1fr);gap:12px">`)
-	// Icon-only tiles: no text labels (the full title shows as a tooltip).
-	for _, t := range tiles {
-		title := t.Title
-		if title == "" {
-			title = t.URL
-		}
-		icon := tileFavicon(t)
-		b.WriteString(`<div class="tile" data-u="` + htmlEsc(t.URL) + `" title="` + htmlEsc(title) + `" style="padding:14px 4px;border-radius:16px;cursor:pointer;background:rgba(255,255,255,.5);backdrop-filter:blur(20px) saturate(1.7);-webkit-backdrop-filter:blur(20px) saturate(1.7);box-shadow:0 6px 20px rgba(0,0,0,.08),inset 0 1px 0 rgba(255,255,255,.6),inset 0 0 0 .5px rgba(255,255,255,.3);transition:transform .16s,background .16s">` +
-			`<div class="tileicon" style="margin:0 auto;width:44px;height:44px;border-radius:14px;display:grid;place-items:center;font-size:19px;font-weight:600;color:#3c4043;background:rgba(120,128,138,.14);overflow:hidden">` +
-			`<span>` + htmlEsc(avChar(t.URL)) + `</span>` + func() string {
-			if icon == "" {
-				return ""
-			}
-			return `<img src="` + htmlEsc(icon) + `" alt="" style="width:28px;height:28px;object-fit:contain" onerror="this.remove()">`
-		}() + `</div></div>`)
-	}
-	b.WriteString(`</div>`)
-	b.WriteString(`<style>.tileicon>*{grid-area:1/1}.tileicon img{position:relative;z-index:1;background:inherit}@media (prefers-color-scheme:dark){.tile{background:rgba(38,38,42,.5) !important;box-shadow:0 6px 20px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.07),inset 0 0 0 .5px rgba(255,255,255,.06) !important}}</style>`)
+	b.WriteString(`</div><div id="tiles"></div></div>`)
+	b.WriteString(`<style>
+#tiles{display:grid;grid-template-columns:repeat(6,1fr);gap:12px}
+#tiles:empty{display:none}
+.tile{all:unset;box-sizing:border-box;padding:14px 4px;border-radius:16px;cursor:pointer;
+background:rgba(255,255,255,.5);box-shadow:0 6px 20px rgba(0,0,0,.08),inset 0 1px 0 rgba(255,255,255,.6),inset 0 0 0 .5px rgba(255,255,255,.3);transition:transform .16s,background .16s}
+.tile:hover{transform:translateY(-2px);background:rgba(255,255,255,.8)}
+.tileicon{margin:0 auto;width:44px;height:44px;border-radius:14px;display:grid;place-items:center;font-size:19px;font-weight:600;color:#3c4043;background:rgba(120,128,138,.14);overflow:hidden}
+.tileicon>*{grid-area:1/1}.tileicon img{position:relative;z-index:1;width:28px;height:28px;object-fit:contain;background:inherit}
+@media (prefers-color-scheme:dark){.tile{background:rgba(38,38,42,.5);box-shadow:0 6px 20px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.07),inset 0 0 0 .5px rgba(255,255,255,.06)}.tile:hover{background:rgba(48,48,54,.72)}}
+</style>`)
 	b.WriteString(`<script>
 (function(){
   var post=function(o){try{window.__ok(o)}catch(e){}};
-  var q=document.getElementById('q');
+  var q=document.getElementById('q'), box=document.getElementById('tiles');
   function go(){ if(q.value.trim()) post({t:'go',u:q.value.trim()}); }
   q.addEventListener('keydown',function(e){ if(e.key==='Enter'){e.preventDefault();go();} });
   document.getElementById('go').addEventListener('click',go);
-  var tiles=document.querySelectorAll('.tile');
-  for(var i=0;i<tiles.length;i++){
-    (function(el){
-      var u=el.getAttribute('data-u');
-      el.addEventListener('mouseenter',function(){ el.style.transform='translateY(-2px)'; el.style.background='rgba(255,255,255,.8)'; });
-      el.addEventListener('mouseleave',function(){ el.style.transform=''; el.style.background='rgba(255,255,255,.5)'; });
-      el.addEventListener('click',function(){ post({t:'go',u:u}); });
-    })(tiles[i]);
-  }
+  window.__okStartTiles=function(items){
+    if(!box)return;
+    box.textContent='';
+    for(var i=0;i<items.length;i++){
+      (function(item){
+        var u=item.URL||'', title=item.Title||u;
+        var tile=document.createElement('button');
+        tile.type='button'; tile.className='tile'; tile.title=title;
+        var icon=document.createElement('span'); icon.className='tileicon';
+        var fallback=document.createElement('span'), letter='•';
+        try{letter=(new URL(u).hostname.charAt(0)||'•').toUpperCase();}catch(_){if(u)letter=u.charAt(0).toUpperCase();}
+        fallback.textContent=letter; icon.appendChild(fallback);
+        if(item.Favicon){
+          var img=document.createElement('img'); img.alt=''; img.loading='lazy'; img.decoding='async';
+          img.addEventListener('error',function(){img.remove();}); img.src=item.Favicon; icon.appendChild(img);
+        }
+        tile.appendChild(icon); tile.addEventListener('click',function(){post({t:'go',u:u});}); box.appendChild(tile);
+      })(items[i]);
+    }
+  };
   try{q.focus();}catch(e){}
 })();
 </script>`)

@@ -226,7 +226,9 @@ const barJS = `
     "font-family:-apple-system,'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;",
     "transition:opacity .06s linear,visibility 0s linear .06s}",
     ".loadscreen.on{pointer-events:auto;visibility:visible;opacity:1;transition:opacity .04s linear}",
-    "@media (prefers-color-scheme:dark){.loadscreen{background:rgba(24,24,28,.99)}}",
+    ".loadscreen.blank{background:linear-gradient(160deg,#f6f7fa 0%,#eceef4 55%,#e7e9f2 100%)}",
+    ".loadscreen.blank .loadcenter{display:none}",
+    "@media (prefers-color-scheme:dark){.loadscreen{background:rgba(24,24,28,.99)}.loadscreen.blank{background:linear-gradient(160deg,#151519 0%,#101014 55%,#0c0c10 100%)}}",
     ".loadcenter{display:flex;flex-direction:column;align-items:center;gap:15px;transform:translateY(-4vh)}",
     ".loadorb{width:36px;height:36px;border-radius:50%;position:relative;overflow:hidden;",
     "background:linear-gradient(145deg,rgba(10,132,255,.2),rgba(90,200,250,.08));",
@@ -1252,32 +1254,52 @@ const barJS = `
   };
   window.__okProximityReveal = function () { revealBar(true); };
 
-  // Browser-owned loading canvas used while a newly selected WebView is
-  // producing its first real frame. It is rendered by the already-visible
+  // Browser-owned handoff surfaces are rendered by the already-visible
   // compositor, so acknowledgement is immediate even on a cold engine path.
+  // A blank tab gets only its final themed background; loading visuals are
+  // reserved for real destination URLs.
   var loadingScreen = root.getElementById('loadscreen');
   var loadingHost = root.getElementById('loadhost');
-  window.__okTabLoading = function (on, raw, fresh) {
+  window.__okTabHandoffDone = function () {
     if (!loadingScreen) return;
-    if (!on) {
-      loadingScreen.classList.remove('on');
-      if (window.__okLoad) window.__okLoad(false);
-      return;
-    }
-    var label = fresh ? 'New Tab' : 'Opening…';
-    if (!fresh && raw) {
+    var wasBlank = loadingScreen.classList.contains('blank');
+    loadingScreen.classList.remove('on');
+    loadingScreen.classList.remove('blank');
+    if (wasBlank && window.__okLoadReset) window.__okLoadReset();
+    else if (window.__okLoad) window.__okLoad(false);
+  };
+  window.__okBlankTab = function (on) {
+    if (!loadingScreen) return;
+    if (!on) { window.__okTabHandoffDone(); return; }
+    if (window.__okLoadReset) window.__okLoadReset();
+    loadingScreen.classList.add('blank');
+    loadingScreen.classList.add('on');
+    revealBar(true);
+    focusAddress(true);
+    announce('New tab opened');
+  };
+  window.__okTabLoading = function (on, raw) {
+    if (!loadingScreen) return;
+    if (!on) { window.__okTabHandoffDone(); return; }
+    var label = 'Opening…';
+    if (raw) {
       try { label = new URL(raw).hostname.replace(/^www\./, '') || raw; }
       catch (_) { label = raw; }
     }
+    loadingScreen.classList.remove('blank');
     loadingHost.textContent = label;
     loadingScreen.classList.add('on');
     if (window.__okLoad) window.__okLoad(true);
     revealBar(true);
-    announce(fresh ? 'New tab opened' : 'Opening ' + label);
+    announce('Opening ' + label);
   };
 
   // Liquid loading hairline at the top edge while a page loads.
   var prog = root.getElementById('prog');
+  window.__okLoadReset = function () {
+    prog.classList.remove('on');
+    prog.classList.remove('done');
+  };
   window.__okLoad = function (on) {
     if (on) {
       announce('Page loading');
@@ -1543,6 +1565,7 @@ func (a *app) onWebMessage(t *tab, msg string) {
 			if a.fading && t.host == a.fadeHost {
 				a.fadeReady = true
 			}
+			a.loadStartTiles(t)
 		}
 
 	case "proximity":
@@ -1580,7 +1603,17 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		}
 
 	case "go": // address bubble, start page or built-in pages
-		a.navigateTab(t, m.U)
+		// During a cold blank-tab handoff the previous WebView renders the
+		// immediate New Tab surface. Route typing from that mirrored shell to
+		// the newly selected tab rather than navigating the old page.
+		target := t
+		if a.fading && t != nil && t.host == a.fadePrev {
+			target = a.active()
+			if m.U != "" {
+				a.showTabLoading(t, m.U)
+			}
+		}
+		a.navigateTab(target, m.U)
 
 	case "nav": // page reported its URL, title and favicon
 		if !a.inSelfTest && m.U != "" && m.U != "about:blank" && !strings.HasPrefix(m.U, "okbrowser://") {

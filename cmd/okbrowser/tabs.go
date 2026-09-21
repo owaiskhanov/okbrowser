@@ -26,20 +26,21 @@ type tab struct {
 	host     win.HWND
 	chromium *edge.Chromium
 
-	title         string
-	url           string
-	favicon       string // page-reported icon URL ('' = letter avatar)
-	isStart       bool
-	errPage       bool // the currently shown page is our error page
-	pinned        bool // pinned tabs render as favicon-only pills
-	zoom          float64
-	inactiveSince time.Time
-	sleeping      bool
-	audioPlaying  bool
-	dirtyForm     bool
-	paintReady    bool // this document has produced its first paintable frame
-	crashCount    int
-	lastCrash     time.Time
+	title            string
+	url              string
+	favicon          string // page-reported icon URL ('' = letter avatar)
+	isStart          bool
+	errPage          bool // the currently shown page is our error page
+	pinned           bool // pinned tabs render as favicon-only pills
+	zoom             float64
+	inactiveSince    time.Time
+	sleeping         bool
+	audioPlaying     bool
+	dirtyForm        bool
+	paintReady       bool // this document has produced its first paintable frame
+	startTilesQueued bool // speed-dial data is loaded only after New Tab first paint
+	crashCount       int
+	lastCrash        time.Time
 }
 
 func permissionName(kind edge.CoreWebView2PermissionKind) string {
@@ -166,12 +167,13 @@ func (a *app) createTabEngine(required bool) *tab {
 	return t
 }
 
-// scheduleSpare creates the next tab after the current interaction has
-// settled. WebView2 controllers must be created on the window thread, so a
-// short idle timer gives us Chrome-style prewarming without startup jank.
+// scheduleSpare creates the next tab on the next UI frame. WebView2
+// controllers must be created on the window thread, but waiting hundreds of
+// milliseconds left an avoidable cold Ctrl+T window after startup and after a
+// spare was claimed.
 func (a *app) scheduleSpare() {
 	if a.hwnd != 0 && a.spareTab == nil && !a.inSelfTest && !selfTestMode {
-		win.SetTimer(a.hwnd, 7, 450, 0)
+		win.SetTimer(a.hwnd, 7, 16, 0)
 	}
 }
 
@@ -180,7 +182,7 @@ func (a *app) ensureSpare() {
 		return
 	}
 	if a.fading {
-		win.SetTimer(a.hwnd, 7, 300, 0) // never steal time from the visible handoff
+		win.SetTimer(a.hwnd, 7, 32, 0) // retry right after the visible handoff
 		return
 	}
 	t := a.createTabEngine(false)
@@ -221,22 +223,28 @@ func (a *app) newTab(raw string, activate bool) *tab {
 	prewarmed := t != nil
 	if prewarmed {
 		a.spareTab = nil
-		a.scheduleSpare()
 	} else {
 		// A click must receive visual acknowledgement before a rare cold
-		// WebView creation. The usual path never reaches this because a spare
-		// is kept ready after startup.
+		// WebView creation. Blank tabs get their final themed background—not a
+		// spinner or progress indicator—while the controller starts behind it.
 		if activate && prev != nil {
-			a.showTabLoading(prev, raw, raw == "")
+			if raw == "" {
+				a.showBlankTab(prev)
+			} else {
+				a.showTabLoading(prev, raw)
+			}
 		}
 		t = a.createTabEngine(true)
 		if t == nil {
 			if prev != nil {
-				a.hideTabLoading(prev)
+				a.hideTabHandoff(prev)
 			}
 			return nil
 		}
 	}
+	// Replenish on the next frame whether this was a warm claim or a cold
+	// fallback. SetTimer coalesces any already-pending spare request.
+	a.scheduleSpare()
 
 	// Reset state that may have been populated while rendering the spare.
 	t.title = "New Tab"
@@ -268,7 +276,11 @@ func (a *app) newTab(raw string, activate bool) *tab {
 		readyNewTab := raw == "" && prewarmed && t.paintReady
 		if prev != nil && prev != t && isWnd(prev.host) && !readyNewTab {
 			a.beginTabFade(t, prev.host)
-			a.showTabLoading(prev, raw, raw == "")
+			if raw == "" {
+				a.showBlankTab(prev)
+			} else {
+				a.showTabLoading(prev, raw)
+			}
 		}
 		a.switchToTab(len(a.tabs) - 1)
 		if a.inSelfTest && a.fading && prev != nil && !win.IsWindowVisible(prev.host) {
@@ -284,10 +296,14 @@ func (a *app) newTab(raw string, activate bool) *tab {
 
 	if raw != "" {
 		a.navigateTab(t, raw)
-	} else if prewarmed {
-		// The page and shell already exist: Ctrl+T can focus the address field
-		// in the same frame instead of waiting for the deferred sync timer.
-		t.chromium.Eval("window.__okBubbleFocus&&window.__okBubbleFocus()")
+	} else if activate || len(a.tabs) == 1 {
+		// Keep typing live even on the rare cold path: the visible placeholder's
+		// address bubble forwards navigation to the newly selected tab.
+		if a.fading && prev != nil && prev.chromium != nil {
+			prev.chromium.Eval("window.__okBubbleFocus&&window.__okBubbleFocus()")
+		} else {
+			t.chromium.Eval("window.__okBubbleFocus&&window.__okBubbleFocus()")
+		}
 	}
 	a.scheduleBarPush(false)
 	if a.inSelfTest {
@@ -528,12 +544,13 @@ func (a *app) showInternal(t *tab, page string) {
 	case "downloads":
 		html, title = DownloadsHTML(a.downloadFiles()), "Downloads"
 	default: // start
-		html, title = StartPageHTML(a.store.MostVisited(12), a.store.Settings().Engine), "New Tab"
+		html, title = StartPageHTML(a.store.Settings().Engine), "New Tab"
 		page, isStart = "start", true
 	}
 	t.isStart = isStart
 	t.errPage = false
 	t.paintReady = false
+	t.startTilesQueued = !isStart
 	t.title = title
 	if isStart {
 		t.url = ""
@@ -545,6 +562,32 @@ func (a *app) showInternal(t *tab, page string) {
 		a.pushBarState()
 	}
 	t.chromium.NavigateToString(html)
+}
+
+// loadStartTiles keeps history aggregation and favicon/tile construction off
+// the first-frame path. MostVisited is safe to run on a worker (the store is
+// locked internally); only the final Eval returns to the window thread.
+func (a *app) loadStartTiles(t *tab) {
+	if t == nil || t.chromium == nil || !t.isStart || t.startTilesQueued {
+		return
+	}
+	t.startTilesQueued = true
+	go func() {
+		tiles := a.store.MostVisited(12)
+		for i := range tiles {
+			tiles[i].Favicon = tileFavicon(tiles[i])
+		}
+		payload, err := json.Marshal(tiles)
+		if err != nil {
+			return
+		}
+		a.postTask(func() {
+			if t.chromium == nil || !t.isStart || !isWnd(t.host) {
+				return
+			}
+			t.chromium.Eval("window.__okStartTiles&&window.__okStartTiles(" + string(payload) + ")")
+		})
+	}()
 }
 
 // recoverFailedTab reloads an isolated renderer/GPU failure without taking
@@ -620,20 +663,28 @@ func (a *app) sleepInactiveTabs() {
 	a.pushBarState()
 }
 
-// showTabLoading turns the still-visible previous view into a browser-owned
-// loading canvas. The selected tab and address are pushed separately, so the
-// response to a click is immediate even though the target WebView is hidden.
-func (a *app) showTabLoading(view *tab, raw string, newTab bool) {
+// showBlankTab immediately covers the previous page with the final New Tab
+// background. It is deliberately not a loading UI: there is no spinner,
+// progress line or loading copy while a rare cold controller starts behind it.
+func (a *app) showBlankTab(view *tab) {
+	if view != nil && view.chromium != nil {
+		view.chromium.Eval("window.__okBlankTab&&window.__okBlankTab(true)")
+	}
+}
+
+// showTabLoading is reserved for actual destination URLs, where network wait
+// is real and target-host feedback is useful.
+func (a *app) showTabLoading(view *tab, raw string) {
 	if view == nil || view.chromium == nil {
 		return
 	}
 	b, _ := json.Marshal(raw)
-	view.chromium.Eval(fmt.Sprintf("window.__okTabLoading&&window.__okTabLoading(true,%s,%t)", string(b), newTab))
+	view.chromium.Eval(fmt.Sprintf("window.__okTabLoading&&window.__okTabLoading(true,%s)", string(b)))
 }
 
-func (a *app) hideTabLoading(view *tab) {
+func (a *app) hideTabHandoff(view *tab) {
 	if view != nil && view.chromium != nil {
-		view.chromium.Eval("window.__okTabLoading&&window.__okTabLoading(false,'',false)")
+		view.chromium.Eval("window.__okTabHandoffDone&&window.__okTabHandoffDone()")
 	}
 }
 
@@ -749,12 +800,17 @@ func (a *app) endTabFade() {
 	a.fadeHost = 0
 	a.fadePrev = 0
 	if old := a.tabByHost(prev); old != nil {
-		a.hideTabLoading(old)
+		a.hideTabHandoff(old)
 	}
 	if isWnd(prev) {
 		win.ShowWindow(prev, win.SW_HIDE)
 	}
 	a.layout()
+	if t := a.active(); t != nil && t.isStart && t.chromium != nil {
+		// Transfer address focus from the temporary blank-tab surface to the
+		// real New Tab shell without making the user click a second time.
+		t.chromium.Eval("window.__okBubbleFocus&&window.__okBubbleFocus()")
+	}
 }
 
 // reorderTab moves the tab at index from to index to.
@@ -843,7 +899,11 @@ func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompleted
 		return
 	}
 	if a.isActive(t) {
-		a.execActive("window.__okLoad&&window.__okLoad(false)")
+		if t.isStart {
+			a.execActive("window.__okLoadReset&&window.__okLoadReset()")
+		} else {
+			a.execActive("window.__okLoad&&window.__okLoad(false)")
+		}
 	}
 	// The mutation/frame signal normally arrives first. Navigation completion
 	// is a conservative fallback for WebView2 versions that throttle animation
@@ -869,6 +929,7 @@ func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompleted
 		if a.fading && a.fadeHost == t.host && a.isActive(t) {
 			a.fadeReady = true
 		}
+		a.loadStartTiles(t)
 	}
 	a.applyZoomTab(t)
 	a.pushBarState()

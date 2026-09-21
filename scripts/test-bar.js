@@ -334,15 +334,26 @@ assert.ok(shadow.getElementById('prog').classList.contains('on'), 'loading line 
 win.__okLoad(false);
 assert.ok(shadow.getElementById('prog').classList.contains('done'), 'loading line completes');
 
-// immediate browser-owned surface while a selected WebView reaches first paint
-assert.strictEqual(typeof win.__okTabLoading, 'function', 'new-tab loading surface API installed');
+// immediate browser-owned surfaces while a selected WebView reaches first paint
+assert.strictEqual(typeof win.__okBlankTab, 'function', 'blank-tab surface API installed');
+assert.strictEqual(typeof win.__okTabLoading, 'function', 'destination loading surface API installed');
 const loadscreen = shadow.getElementById('loadscreen');
-win.__okTabLoading(true, 'https://www.example.com/path', false);
-assert.ok(loadscreen.classList.contains('on'), 'loading surface appears immediately');
+win.__okBlankTab(true);
+assert.ok(loadscreen.classList.contains('on'), 'blank New Tab background appears immediately');
+assert.ok(loadscreen.classList.contains('blank'), 'blank New Tab uses the indicator-free surface');
+assert.ok(!shadow.getElementById('prog').classList.contains('on'), 'blank New Tab never starts the progress line');
+assert.ok(!shadow.getElementById('prog').classList.contains('done'), 'blank New Tab never flashes a completed progress line');
+win.__okTabHandoffDone();
+assert.ok(!loadscreen.classList.contains('on'), 'blank New Tab surface retires at first paint');
+assert.ok(!shadow.getElementById('prog').classList.contains('done'), 'blank handoff retires without any progress completion');
+assert.ok(!loadscreen.classList.contains('blank'), 'blank mode is cleared after handoff');
+win.__okTabLoading(true, 'https://www.example.com/path');
+assert.ok(loadscreen.classList.contains('on'), 'destination loading surface appears immediately');
+assert.ok(!loadscreen.classList.contains('blank'), 'destination loading keeps its progress UI');
 assert.strictEqual(shadow.getElementById('loadhost').textContent, 'example.com', 'loading surface shows target host');
-assert.ok(shadow.getElementById('prog').classList.contains('on'), 'loading surface starts progress line');
-win.__okTabLoading(false, '', false);
-assert.ok(!loadscreen.classList.contains('on'), 'loading surface retires at first paint');
+assert.ok(shadow.getElementById('prog').classList.contains('on'), 'destination loading starts progress line');
+win.__okTabHandoffDone();
+assert.ok(!loadscreen.classList.contains('on'), 'destination loading retires at first paint');
 
 // menu: clicks retargeted to the shadow host (what document-level
 // listeners see in a real browser for ALL shadow content) must NOT close
@@ -362,6 +373,37 @@ expect({ t: 'menu', m: 'incognito' });
 wmenu.dispatch('click', { stopPropagation() {} });
 shadow.getElementById('m-downloads').dispatch('click', EV);
 expect({ t: 'menu', m: 'downloads' });
+
+// --- New Tab: first frame is tile-free; speed-dial DOM arrives afterward ---
+{
+  const pagesSrc = fs.readFileSync(path.join(__dirname, '..', 'cmd', 'okbrowser', 'pages.go'), 'utf8');
+  const hookAt = pagesSrc.indexOf('window.__okStartTiles');
+  const scriptAt = pagesSrc.lastIndexOf('<script>\n', hookAt);
+  const scriptEnd = pagesSrc.indexOf('\n</script>', hookAt);
+  assert.ok(hookAt > 0 && scriptAt > 0 && scriptEnd > scriptAt, 'New Tab script found');
+  const startJS = pagesSrc.slice(scriptAt + '<script>\n'.length, scriptEnd);
+
+  const previousWindow = global.window, previousDocument = global.document;
+  const sent3 = [];
+  const q3 = new FakeElement('input'); q3.id = 'q'; q3.value = '';
+  const go3 = new FakeElement('div'); go3.id = 'go';
+  const tiles3 = new FakeElement('div'); tiles3.id = 'tiles';
+  global.window = { __ok: o => sent3.push(o) };
+  global.document = {
+    activeElement: null,
+    getElementById(id) { return { q: q3, go: go3, tiles: tiles3 }[id] || null; },
+    createElement(tag) { return new FakeElement(tag); }
+  };
+  new Function(startJS)();
+  assert.strictEqual(tiles3.children.length, 0, 'first-frame New Tab has no speed-dial DOM');
+  global.window.__okStartTiles([{ URL: 'https://example.com/', Title: 'Example', Favicon: 'https://example.com/icon.png' }]);
+  assert.strictEqual(tiles3.children.length, 1, 'speed-dial tile is injected after first frame');
+  assert.strictEqual(tiles3.children[0].title, 'Example', 'deferred tile keeps its tooltip');
+  assert.strictEqual(tiles3.children[0].children[0].children[1].loading, 'lazy', 'deferred favicon is lazy');
+  tiles3.children[0].dispatch('click', EV);
+  assert.deepStrictEqual(sent3.shift(), { t: 'go', u: 'https://example.com/' }, 'deferred tile still navigates');
+  global.window = previousWindow; global.document = previousDocument;
+}
 
 // --- settings page: the REAL page script against a fake settings DOM ---
 {

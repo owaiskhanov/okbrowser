@@ -56,12 +56,15 @@ just content:
   fullscreen video and printing
 
 - **Instant new tabs, zero flash**: one fully initialized, pre-rendered New
-  Tab is kept warm offscreen, so `Ctrl+T` is a pointer swap rather than engine
-  startup. Opening a link selects its pill and shows a themed loading canvas
-  immediately, then hands off to the page on its first paintable frame—not
-  after the full load. A replacement spare is prepared during idle time. The
-  engine's fallback background and every window erase are **dark** (not
-  WebView2's default white), so nothing can ever flash white
+  Tab is kept warm offscreen and prepared on the next UI frame, so `Ctrl+T` is
+  normally a pointer swap rather than engine startup. Even a rare cold blank
+  tab shows its final themed background immediately—never a spinner, progress
+  line or loading label. Speed-dial history, tile DOM and favicons are added
+  only after the first frame. Opening a real link still selects its pill and
+  shows target-host feedback immediately, then hands off on its first
+  paintable frame—not after the full load. The engine's fallback background
+  and every window erase are **dark** (not WebView2's default white), so
+  nothing can ever flash white
 - **Tabs with favicons**: each tab shows the site's own icon (letter
   avatar as fallback). Pills **auto-collapse to favicon-only** when the tab
   strip gets crowded and grow back when there's room; hover a collapsed
@@ -112,9 +115,9 @@ just content:
 - **Suggestions while you type**: your history and bookmarks appear in a glass dropdown under the address bubble (↑/↓ to pick, Enter to go)
 - **Bookmarks**: tap the ★ in the address bubble (or `Ctrl+D`); manage them on the bookmarks page (`Ctrl+Shift+O` or the ☰ menu)
 - **History**: every visit is logged locally (`Ctrl+H`) with per-entry delete, search and clear-all
-- **New Tab speed dial**: your most-visited sites as icon-only glass tiles with
-  their real persisted favicons (letter fallback when unavailable; hover for the
-  title), plus a big search field
+- **New Tab speed dial**: an immediate search surface, followed after first
+  paint by your most-visited sites as icon-only glass tiles with their real
+  persisted favicons (letter fallback when unavailable; hover for the title)
 - **Session restore**: your tabs and window position come back on the next start (toggle in Settings)
 - **☰ menu** beside the minimize button: new tab, incognito, bookmarks,
   history, downloads and settings — all in glass. Settings actions confirm
