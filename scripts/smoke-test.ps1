@@ -220,6 +220,12 @@ finally {
 if ($fail -ne "") {
     Log "FAIL: $fail"
     $diag | Set-Content -Encoding UTF8 $DiagFile
+    if ($env:GITHUB_ACTIONS -eq "true") {
+        # Preserve the full diagnostic in the check annotation. Raw Actions
+        # logs/artifacts can be unavailable when a runner or CDN is flaky.
+        $detail = ($diag -join "`n").Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
+        Write-Host "::error title=Windows smoke test failed::$detail"
+    }
     exit 1
 }
 Log "PASS: window, web engine and real navigation all OK."
