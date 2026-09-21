@@ -32,6 +32,25 @@ window.__ok = function (o) {
     }, true);
     return;
   }
+  // Tell the host as soon as real document content has reached a paintable
+  // state. New links can then replace the old tab immediately instead of
+  // waiting for every image and subresource to finish loading. Ignore the
+  // WebView's initial about:blank document so it can never flash onscreen.
+  function reportContentReady() {
+    // NavigateToString pages also use about:blank; accept those once they
+    // contain real markup, but reject the empty document created with a view.
+    if (location.href === "about:blank") {
+      var body = document.body;
+      if (!body || (!body.firstElementChild && !(body.textContent || "").trim())) return;
+    }
+    var frame = window.requestAnimationFrame || function (fn) { setTimeout(fn, 0); };
+    frame(function () { window.__ok({ t: "content-ready" }); });
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", reportContentReady, { once: true });
+  } else {
+    reportContentReady();
+  }
   function anchor(el) { return el && el.closest ? el.closest("a") : null; }
   function reportAudio() {
     var media = document.querySelectorAll('audio,video'), playing = false;
@@ -1439,6 +1458,13 @@ func (a *app) onWebMessage(t *tab, msg string) {
 	case "audio":
 		t.audioPlaying = m.A == "1"
 		a.pushBarState()
+
+	case "content-ready":
+		// DOMContentLoaded + one animation frame is early enough to feel
+		// instant and late enough that switching cannot expose about:blank.
+		if a.fading && t != nil && t.host == a.fadeHost {
+			a.fadeReady = true
+		}
 
 	case "proximity":
 		if t == a.active() {

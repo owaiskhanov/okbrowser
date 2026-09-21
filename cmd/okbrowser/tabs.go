@@ -181,6 +181,13 @@ func (a *app) newTab(url string, activate bool) *tab {
 			a.beginTabFade(t, prev.host)
 		}
 		a.switchToTab(len(a.tabs) - 1)
+		if a.inSelfTest && a.fading && prev != nil && !win.IsWindowVisible(prev.host) {
+			a.stlog("[selftest] FAIL: previous tab was hidden before the new tab painted")
+			if a.selfTestFile != nil {
+				_ = a.selfTestFile.Close()
+			}
+			os.Exit(1)
+		}
 	} else {
 		a.pushBarState() // update the visible tab strip
 	}
@@ -319,8 +326,14 @@ func (a *app) switchToTab(i int) {
 	a.splitTab = nil
 	if cur := a.active(); cur != nil {
 		cur.inactiveSince = time.Now()
-		win.ShowWindow(cur.host, win.SW_HIDE)
-		cur.chromium.Hide()
+		// A newly opened link is hidden until its document has painted. Keep
+		// the current page on screen underneath it in the meantime; hiding
+		// both WebViews exposed the empty window background as a blank flash.
+		keepUntilReady := a.fading && cur.host == a.fadePrev
+		if !keepUntilReady {
+			win.ShowWindow(cur.host, win.SW_HIDE)
+			cur.chromium.Hide()
+		}
 	}
 	a.activeIdx = i
 	t := a.tabs[i]
@@ -529,7 +542,9 @@ func (a *app) beginTabFade(t *tab, prevHost win.HWND) {
 	a.fadeReady = false
 	a.fadeHost = t.host
 	a.fadePrev = prevHost
-	a.fadeAlpha = 60
+	// Chrome-like handoff: retain just enough opacity ramp to avoid a hard
+	// compositor pop, but finish in roughly five frames instead of 250 ms.
+	a.fadeAlpha = 120
 	a.fadeTicks = 0
 	win.SetTimer(a.hwnd, 2, 16, 0)
 }
@@ -582,7 +597,7 @@ func (a *app) fadeTick() {
 		a.fadeRamping = true // revealed - the liquid ramp begins next tick
 		return
 	}
-	a.fadeAlpha += 13 // gentle ~250ms ramp
+	a.fadeAlpha += 28 // quick ~80ms handoff, close to an immediate tab switch
 	if a.fadeAlpha >= 255 {
 		a.endTabFade()
 		return
@@ -713,9 +728,6 @@ func (a *app) onNavStarting(t *tab, args *edge.ICoreWebView2NavigationStartingEv
 func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompletedEventArgs) {
 	if t.chromium == nil {
 		return
-	}
-	if a.fading && t.host == a.fadeHost {
-		a.fadeReady = true // first paint done - begin the liquid ramp
 	}
 	if a.isActive(t) {
 		a.execActive("window.__okLoad&&window.__okLoad(false)")
