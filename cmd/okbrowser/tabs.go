@@ -37,6 +37,7 @@ type tab struct {
 	sleeping      bool
 	audioPlaying  bool
 	dirtyForm     bool
+	paintReady    bool // this document has produced its first paintable frame
 	crashCount    int
 	lastCrash     time.Time
 }
@@ -86,22 +87,22 @@ func (a *app) commandTab() *tab {
 // isActive reports whether t is the displayed tab.
 func (a *app) isActive(t *tab) bool { return a.active() == t }
 
-// newTab creates a tab, embeds a web engine in it and navigates to the
-// start page or the given URL. Returns nil when the engine fails to start.
-func (a *app) newTab(url string, activate bool) *tab {
+// createTabEngine performs the expensive WebView construction without adding
+// the result to the visible tab model. This lets us keep one fully initialized,
+// pre-rendered New Tab offscreen and claim it without doing any work on click.
+func (a *app) createTabEngine(required bool) *tab {
 	tn, _ := syscall.UTF16PtrFromString(tabHostClassName)
 	a.hostSeq++
 	h := win.CreateWindowEx(0, tn, nil, win.WS_CHILD,
 		0, 0, 0, 0, a.hwnd, win.HMENU(uintptr(a.hostSeq)), a.instance, nil)
 	if h == 0 {
-		if selfTestMode {
+		if required && selfTestMode {
 			selfTestFileInit(fmt.Sprintf("[selftest] FAIL: tab host window creation failed (seq %d)\n", a.hostSeq))
 		}
 		return nil
 	}
 
 	t := &tab{host: h, title: "New Tab", zoom: 1.0}
-
 	c := edge.NewChromium()
 	c.DataPath = dataPath()
 	c.MessageCallback = func(msg string) { a.onWebMessage(t, msg) }
@@ -117,13 +118,8 @@ func (a *app) newTab(url string, activate bool) *tab {
 		}
 		return edge.CoreWebView2PermissionStateDefault
 	}
-	// Engine-level new-window handling. Requests that carry window
-	// features (window.open('...','...','width=..,height=..')) become
-	// REAL popup windows backed by a dedicated child WebView2 in this
-	// same profile, so window.opener, the shared session, the callback
-	// postMessage and window.close() all keep working - that is what
-	// Google's OAuth sign-in popup requires. Plain requests still open as
-	// ordinary tabs. See popups.go.
+	// Sized/positioned window.open calls are real child windows so OAuth
+	// retains window.opener; ordinary requests continue to become tabs.
 	c.NewWindowRequestedCallback = func(args *edge.ICoreWebView2NewWindowRequestedEventArgs) {
 		a.onNewWindowRequested(t, args)
 	}
@@ -133,6 +129,7 @@ func (a *app) newTab(url string, activate bool) *tab {
 	}
 	c.NavigationStartingCallback = func(_ *edge.ICoreWebView2, args *edge.ICoreWebView2NavigationStartingEventArgs) {
 		t.dirtyForm = false
+		t.paintReady = false
 		a.onNavStarting(t, args)
 	}
 	c.NavigationCompletedCallback = func(_ *edge.ICoreWebView2, args *edge.ICoreWebView2NavigationCompletedEventArgs) {
@@ -142,43 +139,136 @@ func (a *app) newTab(url string, activate bool) *tab {
 
 	if !c.Embed(uintptr(h)) {
 		win.DestroyWindow(h)
-		if selfTestMode {
-			selfTestFileInit(fmt.Sprintf("[selftest] FAIL: web engine failed to start for tab %d (profile locked or runtime missing)\n", a.hostSeq))
-			os.Exit(1)
+		if required {
+			if selfTestMode {
+				selfTestFileInit(fmt.Sprintf("[selftest] FAIL: web engine failed to start for tab %d (profile locked or runtime missing)\n", a.hostSeq))
+				os.Exit(1)
+			}
+			showRuntimeMissingDialog()
 		}
-		showRuntimeMissingDialog()
 		return nil
 	}
 
-	// Dark engine background: what the engine paints before the page's own
-	// CSS applies - WebView2 defaults to white, which flashed on every new
-	// tab and every navigation in dark mode. Must run AFTER Embed: the
-	// controller only exists once the engine has been created.
+	// A themed engine background is the final fallback if a site takes too
+	// long to produce content; the user never sees WebView2's white default.
 	c.SetDefaultBackgroundColor(edge.COREWEBVIEW2_COLOR{A: 255, R: 28, G: 28, B: 30})
-
 	if st, err := c.GetSettings(); err == nil {
 		_ = st.PutAreDefaultContextMenusEnabled(true)
 		_ = st.PutAreDevToolsEnabled(true)
 		_ = st.PutIsStatusBarEnabled(true)
 		_ = st.PutIsZoomControlEnabled(true)
-		// Passwords, passkeys and profile autofill stay inside WebView2's
-		// Windows-protected profile; the browser host never sees the values.
-		_ = st.PutIsPasswordAutosaveEnabled(a.store.Settings().Autofill && !incognitoMode)
-		_ = st.PutIsGeneralAutofillEnabled(a.store.Settings().Autofill && !incognitoMode)
+		on := a.store.Settings().Autofill && !incognitoMode
+		_ = st.PutIsPasswordAutosaveEnabled(on)
+		_ = st.PutIsGeneralAutofillEnabled(on)
 	}
 	c.Init(bridgeJS)
 	c.Init(barJS)
+	return t
+}
+
+// scheduleSpare creates the next tab after the current interaction has
+// settled. WebView2 controllers must be created on the window thread, so a
+// short idle timer gives us Chrome-style prewarming without startup jank.
+func (a *app) scheduleSpare() {
+	if a.hwnd != 0 && a.spareTab == nil && !a.inSelfTest && !selfTestMode {
+		win.SetTimer(a.hwnd, 7, 450, 0)
+	}
+}
+
+func (a *app) ensureSpare() {
+	if a.spareTab != nil || a.hwnd == 0 || a.inSelfTest || selfTestMode {
+		return
+	}
+	if a.fading {
+		win.SetTimer(a.hwnd, 7, 300, 0) // never steal time from the visible handoff
+		return
+	}
+	t := a.createTabEngine(false)
+	if t == nil {
+		return // optimization only; ordinary tab creation remains available
+	}
+	a.spareTab = t
+	// Give the hidden controller its real viewport before navigation so layout,
+	// fonts and the shell are already warm when ShowWindow claims it.
+	var rc win.RECT
+	if win.GetClientRect(a.hwnd, &rc) && rc.Right > 0 && rc.Bottom > 0 {
+		win.MoveWindow(t.host, 0, 0, rc.Right, rc.Bottom, false)
+		t.chromium.Resize()
+	}
+	a.showStartPage(t) // pre-render the complete New Tab page offscreen
+	win.ShowWindow(t.host, win.SW_HIDE)
+}
+
+func (a *app) closeSpare() {
+	win.KillTimer(a.hwnd, 7)
+	if t := a.spareTab; t != nil {
+		a.spareTab = nil
+		if t.chromium != nil {
+			t.chromium.Close()
+		}
+		if isWnd(t.host) {
+			win.DestroyWindow(t.host)
+		}
+	}
+}
+
+// newTab claims the prewarmed view whenever possible. New Tab is then a
+// pointer swap plus ShowWindow, while links select their tab immediately and
+// display a browser-owned loading surface until the first real page frame.
+func (a *app) newTab(raw string, activate bool) *tab {
+	prev := a.active()
+	t := a.spareTab
+	prewarmed := t != nil
+	if prewarmed {
+		a.spareTab = nil
+		a.scheduleSpare()
+	} else {
+		// A click must receive visual acknowledgement before a rare cold
+		// WebView creation. The usual path never reaches this because a spare
+		// is kept ready after startup.
+		if activate && prev != nil {
+			a.showTabLoading(prev, raw, raw == "")
+		}
+		t = a.createTabEngine(true)
+		if t == nil {
+			if prev != nil {
+				a.hideTabLoading(prev)
+			}
+			return nil
+		}
+	}
+
+	// Reset state that may have been populated while rendering the spare.
+	t.title = "New Tab"
+	t.url = ""
+	t.favicon = ""
+	t.isStart = raw == ""
+	t.errPage = false
+	t.pinned = false
+	t.sleeping = false
+	t.audioPlaying = false
+	t.dirtyForm = false
+	t.zoom = 1.0
 
 	a.tabs = append(a.tabs, t)
 	win.SetTimer(a.hwnd, 4, 30000, 0) // periodic inactive-tab memory trim
+
+	if raw == "" && !prewarmed {
+		a.showStartPage(t)
+	}
+	if raw != "" {
+		// Populate the selected pill/address immediately; navigateTab will
+		// normalize the value once the view has been selected.
+		t.url = raw
+		t.isStart = false
+		t.paintReady = false
+	}
+
 	if activate || len(a.tabs) == 1 {
-		// The fade state MUST be armed BEFORE the tab is shown: layout()
-		// keeps a pending fade host hidden until its first paint. Setting
-		// it afterwards (the old order) let layout() show the unpainted
-		// host for one full-opacity frame - the white flash.
-		prev := a.active()
-		if prev != nil && prev != t && isWnd(prev.host) {
+		readyNewTab := raw == "" && prewarmed && t.paintReady
+		if prev != nil && prev != t && isWnd(prev.host) && !readyNewTab {
 			a.beginTabFade(t, prev.host)
+			a.showTabLoading(prev, raw, raw == "")
 		}
 		a.switchToTab(len(a.tabs) - 1)
 		if a.inSelfTest && a.fading && prev != nil && !win.IsWindowVisible(prev.host) {
@@ -189,17 +279,19 @@ func (a *app) newTab(url string, activate bool) *tab {
 			os.Exit(1)
 		}
 	} else {
-		a.pushBarState() // update the visible tab strip
+		a.pushBarState()
 	}
 
-	if url != "" {
-		a.navigateTab(t, url)
-	} else {
-		a.showStartPage(t)
+	if raw != "" {
+		a.navigateTab(t, raw)
+	} else if prewarmed {
+		// The page and shell already exist: Ctrl+T can focus the address field
+		// in the same frame instead of waiting for the deferred sync timer.
+		t.chromium.Eval("window.__okBubbleFocus&&window.__okBubbleFocus()")
 	}
 	a.scheduleBarPush(false)
 	if a.inSelfTest {
-		a.stlog("[selftest] tab %d created (url=%s)", len(a.tabs), url)
+		a.stlog("[selftest] tab %d created (url=%s prewarmed=%v)", len(a.tabs), raw, prewarmed)
 	}
 	return t
 }
@@ -441,6 +533,7 @@ func (a *app) showInternal(t *tab, page string) {
 	}
 	t.isStart = isStart
 	t.errPage = false
+	t.paintReady = false
 	t.title = title
 	if isStart {
 		t.url = ""
@@ -525,6 +618,23 @@ func (a *app) sleepInactiveTabs() {
 		t.sleeping = true
 	}
 	a.pushBarState()
+}
+
+// showTabLoading turns the still-visible previous view into a browser-owned
+// loading canvas. The selected tab and address are pushed separately, so the
+// response to a click is immediate even though the target WebView is hidden.
+func (a *app) showTabLoading(view *tab, raw string, newTab bool) {
+	if view == nil || view.chromium == nil {
+		return
+	}
+	b, _ := json.Marshal(raw)
+	view.chromium.Eval(fmt.Sprintf("window.__okTabLoading&&window.__okTabLoading(true,%s,%t)", string(b), newTab))
+}
+
+func (a *app) hideTabLoading(view *tab) {
+	if view != nil && view.chromium != nil {
+		view.chromium.Eval("window.__okTabLoading&&window.__okTabLoading(false,'',false)")
+	}
 }
 
 // beginTabFade starts the liquid cross-fade for a newly opened tab.
@@ -638,6 +748,9 @@ func (a *app) endTabFade() {
 	a.fading = false
 	a.fadeHost = 0
 	a.fadePrev = 0
+	if old := a.tabByHost(prev); old != nil {
+		a.hideTabLoading(old)
+	}
 	if isWnd(prev) {
 		win.ShowWindow(prev, win.SW_HIDE)
 	}
@@ -728,6 +841,12 @@ func (a *app) onNavStarting(t *tab, args *edge.ICoreWebView2NavigationStartingEv
 func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompletedEventArgs) {
 	if t.chromium == nil {
 		return
+	}
+	// requestAnimationFrame may be throttled for a hidden controller. The
+	// spare's local New Tab document is fully deterministic, so completion is
+	// sufficient to mark it ready for an immediate ShowWindow handoff.
+	if t == a.spareTab && t.isStart {
+		t.paintReady = true
 	}
 	if a.isActive(t) {
 		a.execActive("window.__okLoad&&window.__okLoad(false)")

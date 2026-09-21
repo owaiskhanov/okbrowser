@@ -12,6 +12,40 @@ const m = src.match(/const barJS = `\r?\n([\s\S]*?)`/);
 assert(m, 'barJS not found in bridge.go');
 const js = m[1];
 
+// The bridge's first-paint detector must ignore OK Browser's own shell and
+// release the pending tab as soon as real page content reaches a frame.
+const bm = src.match(/const bridgeJS = `\r?\n([\s\S]*?)`/);
+assert(bm, 'bridgeJS not found in bridge.go');
+function runFirstPaintProbe({ href = 'https://example.com/', children = [], text = '', ready = 'loading' } = {}) {
+  const listeners = {}, messages = [];
+  const document = {
+    readyState: ready,
+    body: { children, textContent: text },
+    addEventListener(n, f) { (listeners[n] = listeners[n] || []).push(f); },
+    querySelectorAll() { return []; }
+  };
+  let observer = null;
+  function MutationObserver(fn) {
+    observer = { fn, disconnect() {} };
+    this.observe = () => {};
+    this.disconnect = () => {};
+  }
+  const window = { chrome: { webview: { postMessage: s => messages.push(JSON.parse(s)) } }, requestAnimationFrame: f => f() };
+  window.top = window;
+  new Function('window', 'document', 'location', 'CustomEvent', 'innerWidth', 'setTimeout', 'MutationObserver', bm[1])(
+    window, document, { href }, function () {}, 1200, f => f(), MutationObserver
+  );
+  return { listeners, messages, notify: () => observer && observer.fn() };
+}
+const ownShell = { tagName: 'DIV', hasAttribute: n => n === 'data-ok-shell' };
+let paintProbe = runFirstPaintProbe({ href: 'about:blank', children: [ownShell] });
+paintProbe.notify();
+assert.ok(!paintProbe.messages.some(x => x.t === 'content-ready'), 'empty WebView + browser shell is not page content');
+const pageMain = { tagName: 'MAIN', hasAttribute: () => false };
+paintProbe = runFirstPaintProbe({ children: [ownShell, pageMain] });
+paintProbe.notify();
+assert.ok(paintProbe.messages.some(x => x.t === 'content-ready'), 'first real body node releases the new tab');
+
 class FakeElement {
   constructor(tag) {
     this.tagName = tag; this.children = []; this.style = { cssText: '', display: '' };
@@ -96,6 +130,7 @@ global.CSSStyleSheet = class { replaceSync() {} };
 new Function(js)();
 const shadow = global.__shadow;
 assert.strictEqual(createdHost.parentNode, global.document.body, 'shell should mount immediately when the document is ready');
+assert.notStrictEqual(createdHost.getAttribute('data-ok-shell'), null, 'shell is marked so first-paint detection ignores it');
 assert.strictEqual(typeof win.__okBar, 'function', 'shell API not installed');
 assert.strictEqual(typeof win.__okBubbleFocus, 'function', 'bubble focus API not installed');
 assert.ok(!shadow.getElementById('strip').classList.contains('open'), 'bar starts hidden (immersive)');
@@ -298,6 +333,16 @@ win.__okLoad(true);
 assert.ok(shadow.getElementById('prog').classList.contains('on'), 'loading line appears');
 win.__okLoad(false);
 assert.ok(shadow.getElementById('prog').classList.contains('done'), 'loading line completes');
+
+// immediate browser-owned surface while a selected WebView reaches first paint
+assert.strictEqual(typeof win.__okTabLoading, 'function', 'new-tab loading surface API installed');
+const loadscreen = shadow.getElementById('loadscreen');
+win.__okTabLoading(true, 'https://www.example.com/path', false);
+assert.ok(loadscreen.classList.contains('on'), 'loading surface appears immediately');
+assert.strictEqual(shadow.getElementById('loadhost').textContent, 'example.com', 'loading surface shows target host');
+assert.ok(shadow.getElementById('prog').classList.contains('on'), 'loading surface starts progress line');
+win.__okTabLoading(false, '', false);
+assert.ok(!loadscreen.classList.contains('on'), 'loading surface retires at first paint');
 
 // menu: clicks retargeted to the shadow host (what document-level
 // listeners see in a real browser for ALL shadow content) must NOT close

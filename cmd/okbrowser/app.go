@@ -71,6 +71,7 @@ type app struct {
 
 	tabs          []*tab
 	activeIdx     int
+	spareTab      *tab    // hidden, pre-rendered New Tab claimed by the next open
 	splitTab      *tab    // optional right-hand WebView opened by a link-edge drop
 	focusedTab    *tab    // pane receiving keyboard commands while split
 	splitRatio    float64 // width of the left pane, 0.28..0.72
@@ -305,6 +306,10 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		if wp == 6 {
 			a.selftestPopupTick()
 		}
+		if wp == 7 {
+			win.KillTimer(a.hwnd, 7)
+			a.ensureSpare()
+		}
 		return 0
 
 	case win.WM_DPICHANGED:
@@ -335,6 +340,7 @@ func wndProc(hwnd win.HWND, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
 		}
 		return 0
 	case win.WM_DESTROY:
+		a.closeSpare()
 		a.closeAllPopups()
 		a.saveSession()
 		if a.store != nil {
@@ -463,11 +469,13 @@ func NewApp(startURL string) (*app, bool) {
 			a.layout()
 		}
 		a.scheduleBarPush(false)
+		a.scheduleSpare()
 		return a, true
 	}
 	if a.newTab(startURL, true) == nil {
 		return nil, false
 	}
+	a.scheduleSpare()
 	return a, true
 }
 

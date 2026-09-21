@@ -55,12 +55,13 @@ just content:
 - Light and dark glass follow Windows automatically; everything hides during
   fullscreen video and printing
 
-- **Liquid new tabs, zero flash**: a new tab stays completely hidden while
-  its engine starts and paints — you keep seeing the previous tab — then
-  appears as a soft translucent layer and liquidly fades to full. The
-  engine's pre-paint background and every window erase are **dark** (not
-  WebView2's default white), so nothing can ever flash white — including
-  in dark mode
+- **Instant new tabs, zero flash**: one fully initialized, pre-rendered New
+  Tab is kept warm offscreen, so `Ctrl+T` is a pointer swap rather than engine
+  startup. Opening a link selects its pill and shows a themed loading canvas
+  immediately, then hands off to the page on its first paintable frame—not
+  after the full load. A replacement spare is prepared during idle time. The
+  engine's fallback background and every window erase are **dark** (not
+  WebView2's default white), so nothing can ever flash white
 - **Tabs with favicons**: each tab shows the site's own icon (letter
   avatar as fallback). Pills **auto-collapse to favicon-only** when the tab
   strip gets crowded and grow back when there's room; hover a collapsed

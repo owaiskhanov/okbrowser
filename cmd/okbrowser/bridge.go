@@ -32,25 +32,51 @@ window.__ok = function (o) {
     }, true);
     return;
   }
-  // Tell the host as soon as real document content has reached a paintable
-  // state. New links can then replace the old tab immediately instead of
-  // waiting for every image and subresource to finish loading. Ignore the
-  // WebView's initial about:blank document so it can never flash onscreen.
-  function reportContentReady() {
-    // NavigateToString pages also use about:blank; accept those once they
-    // contain real markup, but reject the empty document created with a view.
-    if (location.href === "about:blank") {
-      var body = document.body;
-      if (!body || (!body.firstElementChild && !(body.textContent || "").trim())) return;
+  // Detect the first frame that can contain visible page content. Waiting for
+  // DOMContentLoaded made fast links feel slow; a MutationObserver catches the
+  // first paintable body node, then requestAnimationFrame hands off exactly at
+  // the compositor boundary. DOMContentLoaded remains an empty-page fallback.
+  var contentReadySent = false;
+  var contentReadyQueued = false;
+  var contentObserver = null;
+  function hasPaintableBody() {
+    var body = document.body;
+    if (!body) return false;
+    if ((body.textContent || "").trim()) return true;
+    for (var i = 0; i < body.children.length; i++) {
+      var el = body.children[i];
+      if (el.hasAttribute && el.hasAttribute('data-ok-shell')) continue;
+      var tag = el.tagName;
+      if (tag !== 'SCRIPT' && tag !== 'STYLE' && tag !== 'LINK' && tag !== 'META' && tag !== 'NOSCRIPT') return true;
     }
+    return false;
+  }
+  function reportContentReady(force) {
+    if (contentReadySent || contentReadyQueued) return;
+    // Reject only the truly empty about:blank created with a WebView. Built-in
+    // NavigateToString pages also use that URL but already contain real markup.
+    if (!force && !hasPaintableBody()) return;
+    if (location.href === "about:blank" && !hasPaintableBody()) return;
+    contentReadyQueued = true;
     var frame = window.requestAnimationFrame || function (fn) { setTimeout(fn, 0); };
-    frame(function () { window.__ok({ t: "content-ready" }); });
+    frame(function () {
+      // A second frame guarantees style/layout from the detected node has
+      // reached Chromium's compositor before the hidden view is revealed.
+      frame(function () {
+        contentReadyQueued = false;
+        if (contentReadySent) return;
+        contentReadySent = true;
+        if (contentObserver) contentObserver.disconnect();
+        window.__ok({ t: "content-ready" });
+      });
+    });
   }
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", reportContentReady, { once: true });
-  } else {
-    reportContentReady();
-  }
+  try {
+    contentObserver = new MutationObserver(function () { reportContentReady(false); });
+    contentObserver.observe(document, { childList: true, subtree: true, characterData: true });
+  } catch (_) {}
+  document.addEventListener("DOMContentLoaded", function () { reportContentReady(true); }, { once: true });
+  if (document.readyState !== "loading") reportContentReady(true);
   function anchor(el) { return el && el.closest ? el.closest("a") : null; }
   function reportAudio() {
     var media = document.querySelectorAll('audio,video'), playing = false;
@@ -155,6 +181,7 @@ const barJS = `
   var I_SET  = SV('<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>');
 
   var host = document.createElement('div');
+  host.setAttribute('data-ok-shell', ''); // excluded from first-page-paint detection
   var root = host.attachShadow({ mode: 'closed' });
 
   var css = [
@@ -194,6 +221,22 @@ const barJS = `
     ".tz.mini .tab,.tab.pin{flex:0 0 auto;width:23px;padding:0 3px;justify-content:center;gap:0}",
     ".tz.mini .tt,.tab.pin .tt{display:none}",
     ".tz.mini .tx,.tab.pin .tx{display:none !important}",
+    ".loadscreen{position:fixed;inset:0;z-index:2147483642;display:grid;place-items:center;",
+    "pointer-events:none;visibility:hidden;opacity:0;background:rgba(247,247,249,.985);",
+    "font-family:-apple-system,'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;",
+    "transition:opacity .06s linear,visibility 0s linear .06s}",
+    ".loadscreen.on{pointer-events:auto;visibility:visible;opacity:1;transition:opacity .04s linear}",
+    "@media (prefers-color-scheme:dark){.loadscreen{background:rgba(24,24,28,.99)}}",
+    ".loadcenter{display:flex;flex-direction:column;align-items:center;gap:15px;transform:translateY(-4vh)}",
+    ".loadorb{width:36px;height:36px;border-radius:50%;position:relative;overflow:hidden;",
+    "background:linear-gradient(145deg,rgba(10,132,255,.2),rgba(90,200,250,.08));",
+    "box-shadow:inset 0 0 0 1px rgba(10,132,255,.18),0 8px 28px rgba(10,132,255,.12)}",
+    ".loadorb:after{content:'';position:absolute;inset:5px;border-radius:50%;border:2px solid transparent;",
+    "border-top-color:#0a84ff;border-right-color:rgba(90,200,250,.72);animation:okspin .65s linear infinite}",
+    ".loadhost{max-width:min(70vw,520px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;",
+    "font-size:12px;font-weight:550;letter-spacing:.01em;color:#72727a}",
+    "@media (prefers-color-scheme:dark){.loadhost{color:#aaaab2}}",
+    "@keyframes okspin{to{transform:rotate(360deg)}}",
     ".prog{position:fixed;top:0;left:0;height:2.5px;width:0;z-index:2147483644;pointer-events:none;",
     "background:linear-gradient(90deg,#0a84ff,#5ac8fa);border-radius:0 2px 2px 0;opacity:0;",
     "transition:opacity .25s}",
@@ -388,8 +431,8 @@ const barJS = `
     ":host(.large) .wcap{height:34px}:host(.large) .wbtn{height:30px;width:46px}",
     ":host(.large) .okb{height:34px;border-radius:18px}",
     "@media (prefers-reduced-motion:reduce){*{animation:none !important;transition-duration:.01ms !important}}",
-    "@media (forced-colors:active){.strip,.wcap,.okb,.menu,.ctx,.sug,.find{background:Canvas;border:1px solid CanvasText;backdrop-filter:none}.tab.on{outline:2px solid Highlight}}",
-    "@media print{.strip,.wcap,.edge,.find,.edgeact{display:none !important}}"
+    "@media (forced-colors:active){.strip,.wcap,.okb,.menu,.ctx,.sug,.find,.loadscreen{background:Canvas;border:1px solid CanvasText;backdrop-filter:none}.tab.on{outline:2px solid Highlight}}",
+    "@media print{.strip,.wcap,.edge,.find,.edgeact,.loadscreen{display:none !important}}"
   ].join("");
 
   var sheet = new CSSStyleSheet();
@@ -398,6 +441,7 @@ const barJS = `
 
   root.innerHTML =
     '<div class="sr" id="live" role="status" aria-live="polite"></div>' +
+    '<div class="loadscreen" id="loadscreen"><div class="loadcenter"><div class="loadorb"></div><div class="loadhost" id="loadhost">Opening…</div></div></div>' +
     '<div class="prog" id="prog"></div>' +
     '<div class="edge" id="edge"></div>' +
     '<div class="strip" id="strip">' +
@@ -1208,6 +1252,30 @@ const barJS = `
   };
   window.__okProximityReveal = function () { revealBar(true); };
 
+  // Browser-owned loading canvas used while a newly selected WebView is
+  // producing its first real frame. It is rendered by the already-visible
+  // compositor, so acknowledgement is immediate even on a cold engine path.
+  var loadingScreen = root.getElementById('loadscreen');
+  var loadingHost = root.getElementById('loadhost');
+  window.__okTabLoading = function (on, raw, fresh) {
+    if (!loadingScreen) return;
+    if (!on) {
+      loadingScreen.classList.remove('on');
+      if (window.__okLoad) window.__okLoad(false);
+      return;
+    }
+    var label = fresh ? 'New Tab' : 'Opening…';
+    if (!fresh && raw) {
+      try { label = new URL(raw).hostname.replace(/^www\./, '') || raw; }
+      catch (_) { label = raw; }
+    }
+    loadingHost.textContent = label;
+    loadingScreen.classList.add('on');
+    if (window.__okLoad) window.__okLoad(true);
+    revealBar(true);
+    announce(fresh ? 'New tab opened' : 'Opening ' + label);
+  };
+
   // Liquid loading hairline at the top edge while a page loads.
   var prog = root.getElementById('prog');
   window.__okLoad = function (on) {
@@ -1316,35 +1384,43 @@ func (a *app) pushBarState() {
 		}
 		tabs[i] = barTab{T: title, U: tb.url, F: tb.favicon, P: tb.pinned, S: tb.sleeping, A: tb.audioPlaying, N: a.store.Settings().NeverSleep[permissionOrigin(tb.url)]}
 	}
-	push := func(view *tab, idx int) {
-		if view == nil || view.chromium == nil {
+	push := func(target, source *tab, idx int) {
+		if target == nil || target.chromium == nil || source == nil || source.chromium == nil {
 			return
 		}
 		st := barState{
 			Tabs: tabs,
 			A:    idx,
-			U:    view.url,
-			B:    view.chromium.CanGoBack(),
-			F:    view.chromium.CanGoForward(),
+			U:    source.url,
+			B:    source.chromium.CanGoBack(),
+			F:    source.chromium.CanGoForward(),
 			M:    a.maximized,
-			K:    view.url != "" && !view.isStart && a.store.IsBookmarked(view.url),
+			K:    source.url != "" && !source.isStart && a.store.IsBookmarked(source.url),
 			E:    a.store.Settings().Engine,
 			V:    a.splitTab != nil,
-			Pms:  a.permissionStateFor(view),
-			Q:    a.commandTab() == view,
-			L:    view == a.active(),
+			Pms:  a.permissionStateFor(source),
+			Q:    a.commandTab() == source,
+			L:    source == a.active(),
 			G:    a.store.Settings().LargeControls,
 		}
 		b, err := json.Marshal(st)
 		if err == nil {
-			view.chromium.Eval("window.__okBar&&window.__okBar(" + string(b) + ")")
+			target.chromium.Eval("window.__okBar&&window.__okBar(" + string(b) + ")")
 		}
 	}
-	push(t, a.activeIdx)
+	push(t, t, a.activeIdx)
+	// Until the target's first frame, the previous WebView is the visible
+	// loading canvas. Mirror the new active state into its shell so the pill,
+	// URL and loading line react in the same frame as the click.
+	if a.fading {
+		if previous := a.tabByHost(a.fadePrev); previous != nil && previous != t {
+			push(previous, t, a.activeIdx)
+		}
+	}
 	if a.splitTab != nil {
 		for i, candidate := range a.tabs {
 			if candidate == a.splitTab {
-				push(candidate, i)
+				push(candidate, candidate, i)
 				break
 			}
 		}
@@ -1460,10 +1536,13 @@ func (a *app) onWebMessage(t *tab, msg string) {
 		a.pushBarState()
 
 	case "content-ready":
-		// DOMContentLoaded + one animation frame is early enough to feel
-		// instant and late enough that switching cannot expose about:blank.
-		if a.fading && t != nil && t.host == a.fadeHost {
-			a.fadeReady = true
+		// The first paintable frame is enough—do not wait for images, ads or
+		// analytics. A prewarmed New Tab records this while still offscreen.
+		if t != nil {
+			t.paintReady = true
+			if a.fading && t.host == a.fadeHost {
+				a.fadeReady = true
+			}
 		}
 
 	case "proximity":
