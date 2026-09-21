@@ -866,8 +866,8 @@ func (a *app) onNavCompleted(t *tab, args *edge.ICoreWebView2NavigationCompleted
 	}
 	if paintableFallback {
 		t.paintReady = true
-		if a.fading && a.fadeNew == t && a.isActive(t) {
-			a.beginTabFade(t)
+		if a.fading && a.fadeHost == t.host && a.isActive(t) {
+			a.fadeReady = true
 		}
 	}
 	a.applyZoomTab(t)
