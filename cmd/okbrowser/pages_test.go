@@ -15,9 +15,9 @@ import (
 func TestStartPageDefersTiles(t *testing.T) {
 	html := StartPageHTML("Google")
 	for _, want := range []string{
-		`id=\"q\"`,
+		`id="q"`,
 		`Search with Google`,
-		`id=\"tiles\"`,
+		`id="tiles"`,
 		`window.__okStartTiles`,
 		`img.loading='lazy'`,
 		`img.decoding='async'`,
@@ -26,10 +26,10 @@ func TestStartPageDefersTiles(t *testing.T) {
 			t.Errorf("start page missing %q", want)
 		}
 	}
-	if strings.Contains(html, `id=\"toast\"`) {
+	if strings.Contains(html, `id="toast"`) {
 		t.Fatal("unused toast script leaked into the New Tab critical path")
 	}
-	if strings.Contains(html, `class=\"wrap fade\"`) {
+	if strings.Contains(html, `class="wrap fade"`) {
 		t.Fatal("first-frame entrance animation leaked into New Tab")
 	}
 }
